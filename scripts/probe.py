@@ -16,68 +16,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
-import socket
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import goodwe
-from dotenv import load_dotenv
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+from solar_monitor.collector import device_info
+from solar_monitor.config import REPO_ROOT, resolve_target
+
 CAPTURE_DIR = REPO_ROOT / "captures"
-DEFAULT_PORT = 502  # Modbus TCP. goodwe uses UDP only when the port is 8899.
-
-# goodwe.search_inverters() can't be used here: it passes its timeout in the
-# comm_addr position and only enables broadcast on macOS. Same packet, sent directly.
-DISCOVERY_MESSAGE = b"WIFIKIT-214028-READ"
-DISCOVERY_PORT = 48899
-DISCOVERY_WAIT_SECONDS = 3
-
-
-def discover_host() -> str | None:
-    """Broadcast on the LAN and return the IP of the first inverter dongle to reply."""
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        sock.settimeout(DISCOVERY_WAIT_SECONDS)
-        try:
-            sock.sendto(DISCOVERY_MESSAGE, ("255.255.255.255", DISCOVERY_PORT))
-            _, (address, _) = sock.recvfrom(1024)
-        except OSError:  # includes TimeoutError
-            return None
-    return address
-
-
-def resolve_target(host: str | None, port: int | None) -> tuple[str, int] | None:
-    """Work out the inverter's address: arguments, then .env, then broadcast."""
-    load_dotenv(REPO_ROOT / ".env")
-    host = host or os.environ.get("INVERTER_IP", "").strip()
-    port = port or int(os.environ.get("INVERTER_PORT") or DEFAULT_PORT)
-
-    if not host:
-        print("No INVERTER_IP set, broadcasting to find the inverter...")
-        host = discover_host()
-        if not host:
-            print(
-                "No reply. Set INVERTER_IP in .env (see the router's device list or "
-                "the GoodWe app), and check this PC is on the inverter's network.",
-                file=sys.stderr,
-            )
-            return None
-    return host, port
-
-
-def device_info(inverter: goodwe.Inverter) -> dict[str, object]:
-    """Identifying details that are safe to print (no serial number)."""
-    return {
-        "family": type(inverter).__name__,
-        "model": inverter.model_name,
-        "rated_power_w": inverter.rated_power,
-        "firmware": inverter.firmware,
-        "arm_firmware": inverter.arm_firmware,
-        "modbus_version": inverter.modbus_version,
-    }
 
 
 def print_readings(inverter: goodwe.Inverter, readings: dict[str, object]) -> None:

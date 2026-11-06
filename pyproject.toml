@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "solar-monitor"
 version = "0.1.0"
@@ -9,3 +13,18 @@ dependencies = [
     "python-dotenv",
     "uvicorn",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+solar-monitor = "solar_monitor.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+solar_monitor = ["*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -25,7 +25,7 @@ Runs on a Raspberry Pi 5 (8GB, wired Ethernet). Developed on Windows.
 
 | Layer | Choice |
 |-------|--------|
-| Collector | Python 3.11+, `goodwe` library (UDP, local) |
+| Collector | Python 3.11+, `goodwe` library (Modbus TCP on port 502, local) |
 | Storage | SQLite (WAL mode) |
 | API | FastAPI + uvicorn |
 | UI | Vue 3 + Vite, built on the PC, static files served by FastAPI |
@@ -45,9 +45,11 @@ solar-monitor/
     config.py            # loads .env
     collector.py         # poll loop: read_runtime_data -> buffer -> batched SQLite writes
     db.py                # schema, migrations, queries
-    api.py               # FastAPI: /api/live, /api/history, /api/daily
+    api.py               # FastAPI: /api/latest now; /api/history, /api/daily in phase 3
+    dashboard.html       # current data-check page
     main.py              # runs collector + API
-  web/                   # Vue app (Vite)
+  scripts/probe.py       # one-off read of the inverter
+  web/                   # Vue app (Vite), if phase 3 still needs it
   deploy/
     solar-monitor.service
     backup.sh            # on the Pi: sqlite3 .backup to /var/backups/solar-monitor
@@ -64,13 +66,13 @@ solar-monitor/
 
 **Phase 1: read-only probe (PC)**
 - Script that connects to the inverter IP and prints `read_runtime_data()`.
-- Confirm the inverter model and family first. Install notes mention a Solis inverter, but GoodWe ESA batteries need a GoodWe inverter. If it is really Solis, this library does not apply, so stop and re-plan.
-- Check firmware: old ARM firmware can block UDP, and GoodWe support must upgrade it.
+- Confirmed: a GoodWe GW5K-EHA-G20, `goodwe` family ET. It answers Modbus TCP on port 502, and did not answer UDP on 8899.
 
 **Phase 2: collector + SQLite**
 - Poll every 10-30s, buffer in memory, flush to SQLite every ~5 minutes (SD card wear).
-- Tables: `samples` (timestamp, pv_w, load_w, battery_w, battery_soc, grid_w, raw JSON) and `daily_counters`.
-- Poll counters hourly or daily and store the differences. Gaps are harmless because counters catch up.
+- Tables: `samples` (timestamp, pv_w, load_w, battery_w, battery_soc, grid_w, compressed raw JSON) and `daily_counters`.
+- `daily_counters` keeps each day's first and last lifetime reading, and daily energy is the difference from the previous recorded day. Gaps are harmless because counters catch up. Each poll already returns the counters, so they need no separate polling.
+- Power readings are stored as reported. In particular `grid_w` keeps the inverter's sign, so confirming its direction never needs a data migration.
 
 **Phase 3: API + dashboard**
 - Endpoints: live values, history by range, daily totals.
@@ -93,6 +95,5 @@ solar-monitor/
 
 ## Open questions
 
-- Exact inverter model and firmware (label or app).
 - Which inverter settings matter most to change (battery charge/discharge schedule, backup reserve).
-- Any retention policy for raw samples (for example, downsample after 90 days).
+- Any retention policy for raw samples (for example, downsample after 90 days). At a 15s poll they grow by about 7 MB a day, or 2.4 GB a year.

@@ -4,7 +4,7 @@
     {
       "name": "dashboard",
       "runtimeExecutable": ".venv/Scripts/python",
-      "runtimeArgs": ["scripts/dashboard.py"],
+      "runtimeArgs": ["-m", "solar_monitor.main"],
       "port": 8000
     }
   ]

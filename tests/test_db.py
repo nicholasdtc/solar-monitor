@@ -1,0 +1,115 @@
+from datetime import datetime
+
+import pytest
+
+from solar_monitor import db
+
+
+@pytest.fixture
+def conn(tmp_path):
+    connection = db.connect(tmp_path / "nested" / "test.db")
+    yield connection
+    connection.close()
+
+
+def at(*when) -> int:
+    return int(datetime(*when).timestamp())
+
+
+def totals(conn, counter):
+    return {day: kwh for day, name, kwh in db.daily_totals(conn) if name == counter}
+
+
+def test_uses_wal_mode(conn):
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+def test_columns_keep_readings_as_reported(conn):
+    values = {"ppv": 700, "load_ptotal": 300, "pbattery1": -350, "battery_soc": 64, "active_power_total": -1400}
+    db.save_samples(conn, [db.Sample(1000, values)])
+    row = conn.execute("SELECT pv_w, load_w, battery_w, battery_soc, grid_w FROM samples").fetchone()
+    assert row == (700, 300, -350, 64, -1400)
+
+
+def test_raw_keeps_every_reading(conn):
+    values = {"ppv": 700, "work_mode_label": "Normal", "timestamp": datetime(2026, 11, 6, 12, 0)}
+    db.save_samples(conn, [db.Sample(1000, values)])
+    raw = conn.execute("SELECT raw FROM samples").fetchone()[0]
+    assert db.decode_raw(raw) == {"ppv": 700, "work_mode_label": "Normal", "timestamp": "2026-11-06 12:00:00"}
+
+
+def test_missing_or_non_numeric_reading_is_null(conn):
+    db.save_samples(conn, [db.Sample(1000, {"ppv": "n/a"})])
+    assert conn.execute("SELECT pv_w, load_w FROM samples").fetchone() == (None, None)
+
+
+def test_saving_a_sample_twice_keeps_one_row(conn):
+    sample = db.Sample(1000, {"ppv": 700})
+    db.save_samples(conn, [sample])
+    db.save_samples(conn, [sample])
+    assert conn.execute("SELECT COUNT(*) FROM samples").fetchone()[0] == 1
+
+
+def test_failed_batch_saves_nothing(conn):
+    conn.execute("CREATE TRIGGER fail BEFORE INSERT ON daily_counters BEGIN SELECT RAISE(ABORT, 'boom'); END")
+    with pytest.raises(Exception, match="boom"):
+        db.save_samples(conn, [db.Sample(1000, {"ppv": 700, "e_total": 5.0})])
+    assert conn.execute("SELECT COUNT(*) FROM samples").fetchone()[0] == 0
+
+
+def test_grid_counters_come_from_the_meter_not_the_inverter_ac_side(conn):
+    values = {"meter_e_total_imp": 67.1, "meter_e_total_exp": 7.0, "e_total_imp": 45.2, "e_total_exp": 37.8}
+    db.save_samples(conn, [db.Sample(at(2026, 11, 6, 12), values)])
+    stored = dict(conn.execute("SELECT counter, last_value FROM daily_counters"))
+    assert stored == {"grid_import": 67.1, "grid_export": 7.0, "inverter_ac_in": 45.2, "inverter_ac_out": 37.8}
+
+
+def test_first_day_counts_from_its_own_first_reading(conn):
+    db.save_samples(conn, [
+        db.Sample(at(2026, 11, 6, 8), {"e_total": 10.0}),
+        db.Sample(at(2026, 11, 6, 16), {"e_total": 12.5}),
+    ])
+    assert totals(conn, "pv") == {"2026-11-06": 2.5}
+
+
+def test_next_day_counts_from_the_previous_days_last_reading(conn):
+    # The overnight energy between the two readings belongs to the 7th, and isn't lost.
+    db.save_samples(conn, [
+        db.Sample(at(2026, 11, 6, 16), {"e_total": 12.0}),
+        db.Sample(at(2026, 11, 7, 9), {"e_total": 12.4}),
+        db.Sample(at(2026, 11, 7, 16), {"e_total": 15.0}),
+    ])
+    assert totals(conn, "pv")["2026-11-07"] == 3.0
+
+
+def test_a_gap_in_polling_catches_up_on_the_next_recorded_day(conn):
+    db.save_samples(conn, [
+        db.Sample(at(2026, 11, 6, 16), {"e_total": 12.0}),
+        db.Sample(at(2026, 11, 9, 16), {"e_total": 20.0}),
+    ])
+    assert totals(conn, "pv")["2026-11-09"] == 8.0
+
+
+def test_batch_across_midnight_is_split_into_its_local_days(conn):
+    db.save_samples(conn, [
+        db.Sample(at(2026, 11, 6, 23, 59), {"e_total": 12.0}),
+        db.Sample(at(2026, 11, 7, 0, 1), {"e_total": 12.1}),
+    ])
+    assert dict(conn.execute("SELECT day, last_value FROM daily_counters")) == {
+        "2026-11-06": 12.0,
+        "2026-11-07": 12.1,
+    }
+
+
+def test_restart_within_a_day_keeps_the_days_first_reading(conn):
+    db.save_samples(conn, [db.Sample(at(2026, 11, 6, 8), {"e_total": 10.0})])
+    db.save_samples(conn, [db.Sample(at(2026, 11, 6, 9), {"e_total": 11.0})])
+    assert conn.execute("SELECT first_value, last_value FROM daily_counters").fetchone() == (10.0, 11.0)
+
+
+def test_counter_that_drops_counts_as_zero_rather_than_negative(conn):
+    db.save_samples(conn, [
+        db.Sample(at(2026, 11, 6, 16), {"e_total": 500.0}),
+        db.Sample(at(2026, 11, 7, 16), {"e_total": 1.0}),
+    ])
+    assert totals(conn, "pv")["2026-11-07"] == 0

@@ -125,6 +125,7 @@
     <div id="connection"></div>
   </header>
   <p class="meta" id="device"></p>
+  <p class="meta" id="storage"></p>
   <p id="error" role="alert"></p>
 
   <section class="card flow frozen" id="flow">
@@ -524,6 +525,16 @@
     $("fields").replaceChildren(...rows);
   }
 
+  function renderStorage() {
+    const s = latest?.storage;
+    const node = $("storage");
+    const readings = (n) => `${n} reading${n === 1 ? "" : "s"}`;
+    if (!s) node.replaceChildren();
+    else if (s.error) node.replaceChildren(status("critical", `Logging is failing, ${readings(s.pending)} waiting to be saved: ${s.error}`));
+    else if (s.saved_at) node.textContent = `Logging: ${readings(s.saved)} saved since start, last at ${new Date(s.saved_at).toLocaleTimeString()}, ${s.pending} waiting.`;
+    else node.textContent = `Logging: ${readings(s.pending)} waiting for the first save.`;
+  }
+
   function renderConnection() {
     const age = latest?.read_at ? Math.round((Date.now() - new Date(latest.read_at)) / 1000) : null;
     const staleAfter = (latest?.poll_seconds ?? 15) * STALE_AFTER_POLLS;
@@ -548,6 +559,7 @@
       const d = latest.device;
       $("device").textContent = `${INVERTER_MODEL}, family ${d.family}, firmware ${d.firmware}, ARM ${d.arm_firmware}`;
     }
+    renderStorage();
     $("error").textContent = latest?.error
       ? `Last read failed at ${latest.error_at}: ${latest.error}${latest.readings ? " Values below are from the last good read." : ""}`
       : "";
