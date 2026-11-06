@@ -75,7 +75,18 @@ MAX_HISTORY_POINTS = 800
 BUCKET_SECONDS = (60, 120, 300, 900, 1800, 3600, 7200, 21600, 86400)
 
 # Planning choices the inverter can't report. An unset one isn't stored, and reads as None.
-SETTINGS = ("capacity_kwh", "target_soc", "limit_amps", "surge_limit_w")
+SETTINGS = (
+    "capacity_kwh",
+    "target_soc",
+    "limit_amps",
+    "surge_limit_w",
+    "outage_hours",  # the length of power cut to plan for
+    "run_until_minutes",  # the clock time to run until, in minutes after midnight
+    "tariff_day",  # the tariffs are per kWh, in whatever money unit they were entered
+    "tariff_peak",
+    "tariff_night",
+    "tariff_export",
+)
 
 _APPLIANCE_FIELDS = ("name", "typical_w", "peak_w", "surge_w", "use_in_outage", "notes")
 
@@ -226,12 +237,13 @@ def get_settings(conn: sqlite3.Connection) -> dict[str, float | None]:
 
 
 def save_settings(conn: sqlite3.Connection, settings: dict[str, float | None]) -> None:
-    """Replace every setting. One left out or None goes back to being unset."""
+    """Change only the settings given, so each form sends just its own. None makes one unset."""
+    given = [key for key in SETTINGS if key in settings]
     with conn:
-        conn.execute("DELETE FROM settings")
+        conn.executemany("DELETE FROM settings WHERE key = ?", [(key,) for key in given])
         conn.executemany(
             "INSERT INTO settings (key, value) VALUES (?, ?)",
-            [(key, settings[key]) for key in SETTINGS if settings.get(key) is not None],
+            [(key, settings[key]) for key in given if settings[key] is not None],
         )
 
 

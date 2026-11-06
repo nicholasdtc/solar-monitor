@@ -47,7 +47,7 @@ solar-monitor/
     login.html           # the login page
     collector.py         # poll loop: read_runtime_data -> buffer -> batched SQLite writes
     db.py                # schema, migrations, queries
-    planning.py          # battery time remaining, capacity measured from the log, appliance load sums
+    planning.py          # battery time remaining, capacity measured from the log, appliance load sums, load planners, tariff sums
     api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings
     dashboard.html       # the dashboard page
     main.py              # runs collector + API
@@ -84,6 +84,8 @@ solar-monitor/
 - History is averaged into at most 800 points per range, and battery and grid stay signed as reported, matching the SEMS app.
 - Battery time remaining uses live inverter values wherever they can be trusted: charge level, health, the minimum and reserve charge settings. Capacity isn't on the network, so it's measured from the log, with an optional entered figure until there's enough to measure. Hardware specs that labels would give aren't stored.
 - Appliances are entered by each user and live in the database, never in git.
+- The Appliances & tariffs tab also plans: the biggest load the battery could carry through a power cut of a chosen length (down to the reserve), and the average load it could carry until a chosen clock time (down to the minimum, ignoring solar and the grid). Both are capped at the user's current limit, and neither stores a hardware rating.
+- Tariff rates are entered by each user and live in the database, never in git. The sums use only the rates, so the times each rate applies aren't stored. Round-trip efficiency is a typical figure, because the log can't measure the whole path from the grid through the battery to the house.
 
 **Phase 4: deploy to the Pi**
 - Reflash the card with Raspberry Pi Imager: hostname, user, SSH key, SSH enabled. Remove the SD card before fitting the Pi in the case.
