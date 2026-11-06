@@ -276,6 +276,15 @@
   .add label.tick input { margin: 0; }
   .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
   .settings input[type="number"], .settings input[type="time"] { width: 120px; }
+
+  /* App data */
+  .export { display: grid; gap: 16px; justify-items: start; }
+  .export-formats { display: grid; gap: 12px; max-width: 68ch; }
+  .export-formats:empty { display: none; }
+  .export-formats label { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 2px 10px; cursor: pointer; }
+  .export-formats input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--ink); }
+  .export-formats .meta { grid-column: 2; }
+  .export button:disabled { color: var(--muted); cursor: default; background: var(--surface); }
 </style>
 </head>
 <body>
@@ -302,6 +311,7 @@
       <a href="#appliances">Appliances &amp; tariffs</a>
       <a href="#schedule">Battery schedule</a>
       <a href="#fields">All fields</a>
+      <a href="#app-data">App Data</a>
     </div>
     <div class="conn" id="conn"></div>
   </div>
@@ -510,6 +520,19 @@
       <h2>All fields</h2>
       <input id="filter" type="search" placeholder="Filter fields" aria-label="Filter fields">
       <div class="field-tables" id="field-tables"></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-app-data" aria-label="App data" hidden>
+    <div class="pane">
+      <h2>Export</h2>
+      <p class="note">Download a copy of what this app has saved. Nothing is removed from the app, and the download includes the latest readings.</p>
+      <p class="meta" id="export-contents"></p>
+      <form class="export" method="get" action="/api/export/download">
+        <div class="export-formats" id="export-formats" role="radiogroup" aria-label="File format"></div>
+        <div class="edit"><button id="export-button" disabled>Export</button></div>
+      </form>
+      <p class="meta">The download starts once the file is ready, which takes longer the more readings there are.</p>
     </div>
   </section>
 </main>
@@ -1945,6 +1968,43 @@
     });
   }
 
+  function exportContents({ first_ts, last_ts, appliances, settings, size_bytes }) {
+    const date = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+    const count = (n, what) => `${n} ${what}${n === 1 ? "" : "s"}`;
+    const span = first_ts === null ? "No readings yet" : `Readings from ${date(first_ts)} to ${date(last_ts)}`;
+    return `${span}, ${count(appliances, "appliance")} and ${count(settings, "setting")}. The full database is about ${number(size_bytes / 1e6, 1)} MB.`;
+  }
+
+  /*
+    The button is a plain form submit, so the browser saves the file as it arrives rather than
+    the page holding it all in memory. It stays off until the server has listed its formats.
+  */
+  async function refreshExport() {
+    const formats = $("export-formats");
+    const chosen = formats.querySelector("input:checked")?.value;
+    let answer;
+    try {
+      answer = await getJson("/api/export");
+    } catch {
+      formats.replaceChildren();
+      $("export-button").disabled = true;
+      $("export-contents").textContent = "Couldn't get the export options from the app. If it was updated recently, restart it and try again.";
+      return;
+    }
+    $("export-contents").textContent = exportContents(answer.contents);
+    formats.replaceChildren(...answer.formats.map(({ id, label, description }, index) => {
+      const option = el("label");
+      const input = el("input");
+      input.type = "radio";
+      input.name = "format";
+      input.value = id;
+      input.checked = chosen ? id === chosen : index === 0;
+      option.append(input, el("span", "", label), el("span", "meta", description));
+      return option;
+    }));
+    $("export-button").disabled = false;
+  }
+
   /*
     The tab is in the address, so a reload or the back button stays where it was. The views'
     ids aren't the tabs' hashes, so choosing a tab doesn't make the browser jump to it.
@@ -1956,7 +2016,14 @@
     "#appliances": "view-appliances",
     "#schedule": "view-schedule",
     "#fields": "view-fields",
+    "#app-data": "view-app-data",
   };
+
+  function centreTab() {
+    const row = $("tab-row");
+    const link = row.querySelector("a[aria-current]");
+    row.scrollLeft = link.offsetLeft - row.offsetLeft - (row.clientWidth - link.offsetWidth) / 2;
+  }
 
   function showTab() {
     // Links saved when the first tab was called Live still open it.
@@ -1964,17 +2031,14 @@
     const tab = TABS[location.hash] ? location.hash : "#dashboard";
     const returning = tab === "#statistics" && $("view-statistics").hidden;
     for (const [hash, view] of Object.entries(TABS)) $(view).hidden = hash !== tab;
-    const row = $("tab-row");
-    for (const link of row.querySelectorAll("a")) {
-      if (link.hash !== tab) {
-        link.removeAttribute("aria-current");
-        continue;
-      }
-      link.setAttribute("aria-current", "page");
-      row.scrollLeft = link.offsetLeft - row.offsetLeft - (row.clientWidth - link.offsetWidth) / 2;
+    for (const link of $("tab-row").querySelectorAll("a")) {
+      if (link.hash === tab) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
     }
+    centreTab();
     $("chart-tip").hidden = true;
     if (tab === "#appliances") refreshOverview();
+    if (tab === "#app-data") refreshExport();
     if (returning) {
       refreshHistory();
       refreshDaily();
@@ -1992,7 +2056,7 @@
   TWO_FIELD_COLUMNS.addEventListener("change", () => { if (latest?.readings) renderFields(); });
   showTab();
   new ResizeObserver(buildFlow).observe($("stage")); // Also draws the diagram when its tab opens.
-  refresh();
+  refresh().then(centreTab); // The connection status has now taken its share of the tab row.
   setInterval(refresh, REFRESH_MS);
   setInterval(renderConnection, 1000);
   $("history-day").max = isoDay(new Date());

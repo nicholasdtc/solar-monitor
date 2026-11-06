@@ -1,4 +1,4 @@
-"""The web app: serves the dashboard page, the latest readings, the logged history and appliances.
+"""The web app: serves the dashboard page, the latest readings, the logged history, appliances and exports.
 
 The serial number is never sent to the page. The only writes are to this app's own database:
 nothing here writes to the inverter. JSON bodies can't be sent cross-site without a preflight,
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -16,11 +17,12 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
+from starlette.background import BackgroundTask
 
-from solar_monitor import db, planning
+from solar_monitor import db, export, planning
 from solar_monitor.collector import Collector
 
 PAGE = Path(__file__).with_name("dashboard.html")
@@ -252,6 +254,31 @@ def create_app(collector: Collector) -> FastAPI:
     async def api_settings(settings: SettingsIn) -> dict[str, object]:
         db.save_settings(collector.conn, settings.model_dump(exclude_unset=True))
         return overview()
+
+    @app.get("/api/export")
+    async def api_export() -> dict[str, object]:
+        return {
+            "formats": [
+                {"id": name, "label": choice.label, "description": choice.description}
+                for name, choice in export.FORMATS.items()
+            ],
+            "contents": export.summary(collector.conn),
+        }
+
+    @app.get("/api/export/download")
+    async def api_export_download(format: str) -> FileResponse:
+        choice = export.FORMATS.get(format)
+        if choice is None:
+            raise HTTPException(status_code=404, detail="no such format")
+        collector.flush()  # So the file reaches the latest reading. It's saved early, nothing more.
+        path = await asyncio.to_thread(export.write, choice, export.database_path(collector.conn))
+        return FileResponse(
+            path,
+            media_type=choice.media_type,
+            filename=path.name,
+            headers={"Cache-Control": "no-store"},
+            background=BackgroundTask(shutil.rmtree, path.parent, ignore_errors=True),
+        )
 
     app.mount("/fonts", StaticFiles(directory=FONTS), name="fonts")
 

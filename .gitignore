@@ -9,6 +9,10 @@ captures/
 # Screenshots of the SEMS app (can show serial numbers and account details)
 sems-app-screenshots/
 
+# Data exported from the SEMS app (the same), and exports from this app
+sems-exports/
+solar-monitor-export-*.zip
+
 # Databases
 *.db
 *.db-wal

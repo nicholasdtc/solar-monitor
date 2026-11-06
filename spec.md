@@ -51,7 +51,8 @@ solar-monitor/
     db.py                # schema, migrations, queries
     planning.py          # battery time remaining, capacity measured from the log, appliance load sums, load planners, tariff sums
     schedule.py          # reads the working mode, mode switches and TOU time periods (never writes)
-    api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings
+    export.py            # downloadable copies of the app's data: one entry per format
+    api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings, /api/export
     dashboard.html       # the dashboard page
     fonts/               # the page's fonts, served locally so it works without internet
     main.py              # runs collector + API
