@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import threading
 from collections.abc import Callable
@@ -19,6 +20,7 @@ from solar_monitor.api import create_app
 from solar_monitor.auth import LoginRequired
 from solar_monitor.collector import FLUSH_SECONDS, POLL_SECONDS, Collector
 from solar_monitor.config import bind_host, db_path, is_local, login, resolve_target
+from solar_monitor.stop import on_stop_request
 
 BIND_PORT = 8000
 CLOSE_EVENTS = {2, 5, 6}  # Windows: console window closed, user logging off, computer shutting down.
@@ -86,6 +88,7 @@ def main() -> int:
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=BIND_PORT, log_level="warning", access_log=False))
     finished = threading.Event()
     stop_when_window_closes(server, finished)
+    on_stop_request(os.getpid(), lambda: setattr(server, "should_exit", True))
     try:
         server.run()
     except KeyboardInterrupt:

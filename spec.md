@@ -42,6 +42,7 @@ solar-monitor/
   .gitignore
   pyproject.toml
   start-dashboard.bat    # runs the app in a window; closing the window or Ctrl+C saves and stops it
+  stop-dashboard.bat     # saves and stops every running copy, including one in the background
   src/solar_monitor/
     config.py            # loads .env
     auth.py              # login page and session cookie around the whole app
@@ -53,6 +54,7 @@ solar-monitor/
     api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings
     dashboard.html       # the dashboard page
     main.py              # runs collector + API
+    stop.py              # asks every running copy to save and stop, for stop-dashboard.bat
   scripts/probe.py       # one-off read of the inverter
   deploy/
     solar-monitor.service
