@@ -51,6 +51,7 @@ solar-monitor/
   scripts/probe.py       # one-off read of the inverter
   deploy/
     solar-monitor.service
+    pi-setup.md          # flash the card, install, start the service
     backup.sh            # on the Pi: sqlite3 .backup to /var/backups/solar-monitor
     pull-backup.ps1      # on the PC: scp/rsync the latest backup
     restore.md
@@ -82,7 +83,8 @@ solar-monitor/
 **Phase 4: deploy to the Pi**
 - Reflash the card with Raspberry Pi Imager: hostname, user, SSH key, SSH enabled. Remove the SD card before fitting the Pi in the case.
 - Reserve fixed IPs for the Pi and the inverter in the router. Use a wired connection.
-- Copy the code, create a venv, run as a `systemd` service (`Restart=always`).
+- Copy the code, create a venv, run as a `systemd` service (`Restart=always`). Steps are in `deploy/pi-setup.md`.
+- The app listens on localhost unless `BIND_HOST` in `.env` says otherwise. Opening it to the home network is allowed; forwarding it at the router never is.
 
 **Phase 5: remote access + backup**
 - Install Tailscale on the Pi, PC and phone. Access the dashboard at `http://<pi-name>:<port>`.

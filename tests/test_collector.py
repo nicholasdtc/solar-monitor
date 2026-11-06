@@ -100,6 +100,41 @@ def test_shutdown_saves_what_is_still_buffered(monkeypatch, conn):
     assert app_collector.storage["pending"] == 0
 
 
+class SwallowsFirstCancel(FakeInverter):
+    """Like goodwe, which turns a cancel during a read into an ordinary failed read."""
+
+    blocked = False
+
+    async def read_runtime_data(self):
+        self.reads += 1
+        if self.reads == 1:
+            self.blocked = True
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                raise OSError("read failed") from None
+        return {"ppv": 700, "e_total": 5.0}
+
+
+def test_shutdown_still_saves_when_a_read_swallows_the_cancel(monkeypatch, conn):
+    monkeypatch.setattr(collector, "FLUSH_SECONDS", 3600)
+    inverter = SwallowsFirstCancel()
+    use_inverter(monkeypatch, inverter)
+    app_collector = Collector("host", 502, conn)
+    app_collector.buffer.append(db.Sample(1000, {"ppv": 700}))
+
+    async def lifetime():
+        async with create_app(app_collector).router.lifespan_context(None):
+            await wait_for(lambda: inverter.blocked)
+
+    async def scenario():
+        done, _ = await asyncio.wait([asyncio.create_task(lifetime())], timeout=2)
+        assert done, "shutdown never finished"
+
+    asyncio.run(scenario())
+    assert rows(conn) >= 1
+
+
 def test_flush_interval_saves_while_running(monkeypatch, conn):
     monkeypatch.setattr(collector, "FLUSH_SECONDS", 0)
     use_inverter(monkeypatch, FakeInverter())
@@ -129,6 +164,23 @@ def test_failed_read_saves_no_sample_and_polling_carries_on(monkeypatch, conn):
     assert rows(conn) == inverter.reads - 1
 
 
+def test_an_outage_logs_one_line_when_it_starts_and_one_when_it_ends(monkeypatch, conn, capsys):
+    monkeypatch.setattr(collector, "FLUSH_SECONDS", 3600)
+    inverter = FakeInverter(failures=[2, 3, 4])
+    use_inverter(monkeypatch, inverter)
+    app_collector = Collector("host", 502, conn)
+
+    async def scenario():
+        task = asyncio.create_task(app_collector.run())
+        await wait_for(lambda: inverter.reads >= 6)
+        task.cancel()
+
+    asyncio.run(scenario())
+    output = capsys.readouterr().out
+    assert output.count("Inverter reads failing: OSError: read failed") == 1
+    assert output.count("Inverter reads recovered") == 1
+
+
 def test_failed_write_keeps_readings_reports_it_and_recovers(monkeypatch, conn):
     use_inverter(monkeypatch, FakeInverter())
     app_collector = Collector("host", 502, conn)
@@ -145,6 +197,21 @@ def test_failed_write_keeps_readings_reports_it_and_recovers(monkeypatch, conn):
     assert app_collector.storage["error"] is None
     assert app_collector.buffer == []
     assert rows(conn) == 1
+
+
+def test_repeated_failed_writes_log_once_until_they_recover(conn, capsys):
+    app_collector = Collector("host", 502, conn)
+    app_collector.buffer.append(db.Sample(1000, {"ppv": 700}))
+    conn.execute("CREATE TRIGGER fail BEFORE INSERT ON samples BEGIN SELECT RAISE(ABORT, 'disk trouble'); END")
+
+    app_collector.flush()
+    app_collector.flush()
+    conn.execute("DROP TRIGGER fail")
+    app_collector.flush()
+
+    output = capsys.readouterr().out
+    assert output.count("Saving failed") == 1
+    assert output.count("Saving recovered") == 1
 
 
 def test_a_failing_write_does_not_stop_live_readings(monkeypatch, conn):

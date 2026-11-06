@@ -24,6 +24,11 @@ def timestamp() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def log(message: str) -> None:
+    """Goes to the journal on the Pi. Only state changes are logged, so a long outage is two lines."""
+    print(f"{timestamp()} {message}", flush=True)
+
+
 def device_info(inverter: goodwe.Inverter) -> dict[str, object]:
     """Identifying details that are safe to print (no serial number)."""
     return {
@@ -52,8 +57,12 @@ class Collector:
         try:
             db.save_samples(self.conn, self.buffer)
         except Exception as error:  # A storage problem must not stop the live readings.
+            if self.storage["error"] is None:
+                log(f"Saving failed, will keep trying: {type(error).__name__}: {error}")
             self.storage["error"] = f"{type(error).__name__}: {error}"
             return
+        if self.storage["error"] is not None:
+            log("Saving recovered")
         self.storage["saved"] += len(self.buffer)
         self.storage["saved_at"] = timestamp()
         self.storage["pending"] = 0
@@ -81,11 +90,15 @@ class Collector:
                     for sensor_id, value in values.items()
                 ]
                 self.latest["read_at"] = timestamp()
+                if self.latest.get("error"):
+                    log("Inverter reads recovered")
                 self.latest["error"] = None
                 self.buffer.append(db.Sample(int(time.time()), values))
                 self.storage["pending"] = len(self.buffer)
             except Exception as error:  # The loop must outlive any one failed read.
                 inverter = None
+                if not self.latest.get("error"):
+                    log(f"Inverter reads failing: {type(error).__name__}: {error}")
                 self.latest["error"] = f"{type(error).__name__}: {error}"
                 self.latest["error_at"] = timestamp()
             if time.monotonic() - flushed_at >= FLUSH_SECONDS:

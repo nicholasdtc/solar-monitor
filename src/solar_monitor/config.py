@@ -26,6 +26,12 @@ def db_path() -> Path:
     return REPO_ROOT / (os.environ.get("DB_PATH", "").strip() or "data/solar-monitor.db")
 
 
+def bind_host() -> str:
+    """BIND_HOST from .env, else this machine only. The app has no login, so opening it is a choice."""
+    load_dotenv(REPO_ROOT / ".env")
+    return os.environ.get("BIND_HOST", "").strip() or "127.0.0.1"
+
+
 def discover_host() -> str | None:
     """Broadcast on the LAN and return the IP of the first inverter dongle to reply.
 

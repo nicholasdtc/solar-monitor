@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -24,9 +24,11 @@ def create_app(collector: Collector) -> FastAPI:
     async def lifespan(_: FastAPI):
         task = asyncio.create_task(collector.run())
         yield
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+        # goodwe turns a cancel during a read into a failed read, which the collector
+        # survives, so one cancel isn't always enough to end it.
+        while not task.done():
+            task.cancel()
+            await asyncio.wait([task], timeout=0.1)
         collector.flush()  # Without this, every restart would lose the unsaved readings.
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)

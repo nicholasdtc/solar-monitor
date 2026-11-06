@@ -1,0 +1,27 @@
+# Installed to /etc/systemd/system/ by the steps in deploy/pi-setup.md.
+[Unit]
+Description=Solar monitor (GoodWe inverter logging and dashboard)
+# time-sync: the Pi has no battery-backed clock by default, so after a power cut its time is
+# wrong until NTP answers, and readings logged before then would land on the wrong day.
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+
+[Service]
+User=solar-monitor
+WorkingDirectory=/opt/solar-monitor
+ExecStart=/opt/solar-monitor/.venv/bin/solar-monitor
+# Takes priority over DB_PATH in .env. StateDirectory creates the folder, owned by the user above.
+Environment=DB_PATH=/var/lib/solar-monitor/solar-monitor.db
+Environment=PYTHONUNBUFFERED=1
+StateDirectory=solar-monitor
+Restart=always
+RestartSec=10
+
+# It only needs to read its code and write its database.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

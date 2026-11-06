@@ -32,6 +32,24 @@ def use_socket(monkeypatch, fake):
     monkeypatch.setattr(config.socket, "socket", lambda *_: fake)
 
 
+def without_env_file(monkeypatch):
+    monkeypatch.setattr(config, "load_dotenv", lambda *_: None)
+
+
+def test_dashboard_stays_on_this_machine_unless_told_otherwise(monkeypatch):
+    without_env_file(monkeypatch)
+    monkeypatch.delenv("BIND_HOST", raising=False)
+    assert config.bind_host() == "127.0.0.1"
+    monkeypatch.setenv("BIND_HOST", "  ")
+    assert config.bind_host() == "127.0.0.1"
+
+
+def test_bind_host_can_open_the_dashboard_to_the_network(monkeypatch):
+    without_env_file(monkeypatch)
+    monkeypatch.setenv("BIND_HOST", "0.0.0.0")
+    assert config.bind_host() == "0.0.0.0"
+
+
 def test_discovery_survives_a_missed_reply(monkeypatch):
     fake = FakeSocket([None, "10.0.0.5"])
     use_socket(monkeypatch, fake)
