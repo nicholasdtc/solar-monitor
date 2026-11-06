@@ -11,7 +11,7 @@ sems-app-screenshots/
 
 # Data exported from the SEMS app (the same), and exports from this app
 sems-exports/
-solar-monitor-export-*.zip
+solar-monitor-export-*
 
 # Databases
 *.db

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import shutil
 import sqlite3
 import tempfile
@@ -68,6 +69,14 @@ def _write_sqlite(source: sqlite3.Connection, path: Path) -> None:
         copy.close()
 
 
+def _write_appliances_json(source: sqlite3.Connection, path: Path) -> None:
+    appliances = db.list_appliances(source)
+    for appliance in appliances:
+        del appliance["id"]  # It only means something inside this database.
+    document = {"format": "solar-monitor-appliances", "version": 1, "appliances": appliances}
+    path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 @dataclass(frozen=True)
 class Format:
     label: str
@@ -91,6 +100,13 @@ FORMATS = {
         "db",
         "application/vnd.sqlite3",
         _write_sqlite,
+    ),
+    "appliances": Format(
+        "Appliances (JSON)",
+        "Just your appliance list, in a small file that's easy to read or edit. No readings or settings.",
+        "json",
+        "application/json",
+        _write_appliances_json,
     ),
 }
 

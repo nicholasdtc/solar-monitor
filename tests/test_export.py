@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import io
+import json
 import sqlite3
 import tempfile
 import zipfile
@@ -105,6 +106,23 @@ def test_sqlite_export_is_a_complete_working_copy(filled, temp_folder):
         copy.close()
 
 
+def test_appliances_json_holds_only_the_appliances(filled, temp_folder):
+    text = write(filled, "appliances").read_text(encoding="utf-8")
+    fridge = {"name": "Crème fridge", "typical_w": 120, "peak_w": None, "surge_w": 600, "use_in_outage": True, "notes": 'a "cold", one'}
+    assert json.loads(text) == {"format": "solar-monitor-appliances", "version": 1, "appliances": [fridge]}
+    assert "Crème" in text  # Readable, rather than escaped.
+
+
+def test_appliances_json_can_be_added_straight_back(filled, temp_folder):
+    appliance = json.loads(write(filled, "appliances").read_text(encoding="utf-8"))["appliances"][0]
+    new_id = db.add_appliance(filled.conn, appliance)
+    assert db.list_appliances(filled.conn)[-1] == {"id": new_id, **appliance}
+
+
+def test_appliances_json_of_an_empty_database_has_an_empty_list(collector, temp_folder):
+    assert json.loads(write(collector, "appliances").read_text(encoding="utf-8"))["appliances"] == []
+
+
 def test_a_failed_export_leaves_no_files(filled, temp_folder):
     def broken(source, path):
         path.write_text("partial")
@@ -141,7 +159,7 @@ def test_api_lists_every_format(call):
 
 @pytest.mark.parametrize(
     ("name", "media_type", "extension"),
-    [("csv", "application/zip", ".zip"), ("sqlite", "application/vnd.sqlite3", ".db")],
+    [("csv", "application/zip", ".zip"), ("sqlite", "application/vnd.sqlite3", ".db"), ("appliances", "application/json", ".json")],
 )
 def test_download_is_an_attachment_and_cleans_up_after_itself(call, filled, temp_folder, name, media_type, extension):
     response = call("GET", "/api/export/download", params={"format": name})
