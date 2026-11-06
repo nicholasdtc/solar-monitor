@@ -1,0 +1,9 @@
+[project]
+name = "solar-monitor"
+version = "0.1.0"
+description = "Local monitoring for a GoodWe hybrid inverter and battery system"
+requires-python = ">=3.11"
+dependencies = [
+    "goodwe",
+    "python-dotenv",
+]

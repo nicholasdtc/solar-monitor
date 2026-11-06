@@ -1,0 +1,36 @@
+# Secrets and local config (inverter IP, tokens, passwords)
+.env
+.env.*
+!.env.example
+
+# Raw probe output (contains the inverter serial number)
+captures/
+
+# Databases
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Node (web/ in phase 3)
+node_modules/
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
