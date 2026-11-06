@@ -192,7 +192,8 @@
     .appliances { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   }
   @media (min-width: 1100px) {
-    .counters { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); grid-auto-rows: auto; }
+    .counters { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); grid-template-rows: auto 1fr; }
+    .counters .tall { grid-column: 2; grid-row: 1 / span 2; }
     .schedule { grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); grid-auto-rows: auto; }
   }
   .range { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
@@ -363,6 +364,15 @@
       </table>
     </div>
     <div class="pane">
+      <h2>Inverter overhead</h2>
+      <p class="note">Battery power that doesn't reach the house, which the inverter uses or loses on the way. It can only be measured while the battery alone is supplying the house, and one reading can jump while a load switches on or off.</p>
+      <table>
+        <thead><tr><th class="num">House</th><th class="num">Battery</th><th class="num">Overhead</th><th class="num">% of battery</th></tr></thead>
+        <tbody id="overhead"></tbody>
+      </table>
+      <p class="meta" id="overhead-source"></p>
+    </div>
+    <div class="pane tall">
       <h2>Checks</h2>
       <p class="note">Do the readings agree with each other? A warning means a field needs a closer look, not that the equipment has a fault.</p>
       <div class="tally" id="tally"></div>
@@ -970,6 +980,47 @@
     }));
   }
 
+  const overheadFigures = ({ standby_w: standby, efficiency }) =>
+    `${number(standby, 0)} W plus ${number((1 / efficiency - 1) * 100, 1)}% of the load`;
+
+  function overheadRow({ house_w: house, battery_w: battery, overhead_w: overhead, share }) {
+    const row = el("tr");
+    row.append(
+      el("td", "num", watts(house)),
+      el("td", "num", watts(battery)),
+      el("td", "num", watts(overhead)),
+      el("td", "num", isNum(share) ? `${number(share * 100, 1)}%` : "—"),
+    );
+    return row;
+  }
+
+  function overheadRowAcross(tag, className, text) {
+    const row = el("tr");
+    const cell = el(tag, className, text);
+    cell.colSpan = 4;
+    row.append(cell);
+    return row;
+  }
+
+  function renderOverhead() {
+    const overhead = latest.overhead;
+    if (!overhead) {
+      $("overhead").replaceChildren();
+      $("overhead-source").textContent = "Restart the dashboard to measure this.";
+      return;
+    }
+    const { bands, now, source } = overhead;
+    $("overhead").replaceChildren(
+      overheadRowAcross("th", "", "Now"),
+      now ? overheadRow(now) : overheadRowAcross("td", "no-value", "Shows while the battery alone is supplying the house."),
+      ...(bands.length ? [overheadRowAcross("th", "", "From the log, at each level of load"), ...bands.map(overheadRow)] : []),
+    );
+    const readings = bands.reduce((sum, band) => sum + band.samples, 0);
+    $("overhead-source").textContent = source === "measured"
+      ? `The planners allow for ${overheadFigures(overhead)}, fitted to ${number(readings, 0)} readings with the house using ${watts(bands[0].house_w)} to ${watts(bands.at(-1).house_w)}. The grid was connected for all of them, so a power cut may differ.`
+      : `The planners allow for ${overheadFigures(overhead)}, a typical figure, until the log has readings like these at more levels of load.`;
+  }
+
   /* Wide screens read the long list in two columns instead of a very long, half-empty one. */
   const TWO_FIELD_COLUMNS = matchMedia("(min-width: 1400px)");
 
@@ -1102,6 +1153,7 @@
     renderReadings();
     renderChecks();
     renderEnergy();
+    renderOverhead();
     renderFields();
   }
 
@@ -1837,7 +1889,7 @@
   }
 
   function renderSources() {
-    const { volts, fallback_volts: fallback, reserve_soc: reserve, reserve_reported: reported, capacity, conversion_efficiency: efficiency, standby_w: standby } = overview;
+    const { volts, fallback_volts: fallback, reserve_soc: reserve, reserve_reported: reported, capacity, overhead } = overview;
     const parts = [
       isNum(volts)
         ? `Amps use the ${number(volts, 0)} V the inverter reports now.`
@@ -1847,7 +1899,10 @@
         : `Run times go down to ${reserve}%, an assumed reserve, because the inverter hasn't reported its own.`,
       capacity.kwh === null
         ? "They need the battery's capacity, which isn't known yet."
-        : `They use a capacity of ${kwh(capacity.kwh)}, and allow for ${number(efficiency * 100, 0)}% conversion efficiency and ${standby} W of standby, which are typical figures rather than measurements.`,
+        : `They use a capacity of ${kwh(capacity.kwh)}.`,
+      !overhead ? "" : overhead.source === "measured"
+        ? `They allow for ${overheadFigures(overhead)} going to the inverter, measured from the log with the grid connected, so a power cut may differ.`
+        : `They allow for ${overheadFigures(overhead)} going to the inverter, a typical figure, until the log has enough readings with the battery alone supplying the house.`,
     ];
     $("appliance-sources").textContent = parts.join(" ");
   }

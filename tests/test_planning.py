@@ -336,3 +336,121 @@ def test_no_appliances_sum_to_zero():
     cases = summary([])["cases"]
     assert cases["all_worst"]["watts"] == 0
     assert cases["all_worst"]["headroom_amps"] == 10
+
+
+MEASURED = planning.Overhead(standby_w=70, efficiency=0.996)
+
+
+def battery_only(load_w, overhead_w, count=10):
+    """Logged (solar, house, battery, grid) with no solar and no grid."""
+    return [(0, load_w, load_w + overhead_w, 0)] * count
+
+
+def along_a_line(standby_w, slope, loads=(200, 700, 1200, 1700, 2200)):
+    return [sample for load_w in loads for sample in battery_only(load_w, standby_w + slope * load_w)]
+
+
+def fit(samples):
+    return planning.fit_overhead(planning.overhead_bands(samples))
+
+
+def test_overhead_fit_finds_the_fixed_part_and_the_part_that_grows_with_load():
+    fitted = fit(along_a_line(70, 0.02))
+    assert fitted.standby_w == 70
+    assert fitted.efficiency == pytest.approx(1 / 1.02, abs=0.001)
+
+
+def test_overhead_bands_show_watts_and_their_share_of_the_battery():
+    band = planning.overhead_bands(battery_only(900, 100))[0]
+    assert band == {"house_w": 900, "battery_w": 1000, "overhead_w": 100, "share": 0.1, "samples": 10}
+
+
+def test_overhead_bands_subtract_exactly_in_whole_watts():
+    samples = battery_only(1000, 70, count=5) + battery_only(1001, 75, count=5)
+    band = planning.overhead_bands(samples)[0]
+    assert band["battery_w"] - band["house_w"] == band["overhead_w"]
+    assert band["overhead_w"] == int(band["overhead_w"])
+
+
+@pytest.mark.parametrize("sample", [
+    (300, 500, 900, 0),  # Solar is helping.
+    (0, 500, 900, 50),  # Importing.
+    (0, 500, 900, -50),  # Exporting.
+    (0, 500, -900, 0),  # Charging.
+    (0, 500, 40, 0),  # The battery is idle.
+    (0, 0, 900, 0),  # Nothing is being supplied.
+    (None, 500, 900, 0),
+    (0, None, 900, 0),
+    (0, 500, None, 0),
+    (0, 500, 900, None),
+])
+def test_overhead_counts_only_the_battery_alone_supplying_the_house(sample):
+    assert planning.overhead_now(*sample) is None
+    assert planning.overhead_bands([sample] * 20) == []
+
+
+def test_small_readings_of_solar_and_the_grid_do_not_rule_a_sample_out():
+    assert planning.overhead_now(20, 500, 570, -20)["overhead_w"] == 70
+
+
+def test_readings_during_a_load_change_do_not_move_the_overhead():
+    settled = battery_only(500, 70, count=20)
+    switching = [(0, 500, 1600, 0), (0, 510, 60, 0)]
+    assert planning.overhead_bands(settled + switching)[0]["overhead_w"] == 70
+
+
+def test_a_band_needs_enough_readings():
+    assert planning.overhead_bands(battery_only(500, 70, count=9)) == []
+    assert len(planning.overhead_bands(battery_only(500, 70, count=10))) == 1
+
+
+def test_overhead_is_not_fitted_from_too_few_levels_of_load():
+    assert fit(along_a_line(70, 0, loads=(200, 700, 1200))) is None
+    assert fit(along_a_line(70, 0, loads=(200, 700, 1200, 1700))) is not None
+
+
+def test_overhead_that_falls_with_load_counts_as_flat():
+    fitted = fit(along_a_line(100, -0.01))
+    assert fitted.efficiency == 1
+    assert fitted.standby_w == 88  # The average of 98, 93, 88, 83 and 78.
+
+
+@pytest.mark.parametrize("standby_w, slope", [(70, 0.5), (-50, 0.05)])
+def test_an_unbelievable_overhead_is_not_used(standby_w, slope):
+    assert fit(along_a_line(standby_w, slope)) is None
+
+
+def test_overhead_is_typical_until_it_can_be_measured():
+    typical = planning.measure_overhead([])
+    assert typical == {
+        "standby_w": planning.STANDBY_W,
+        "efficiency": planning.CONVERSION_EFFICIENCY,
+        "source": "typical",
+        "bands": [],
+    }
+    measured = planning.measure_overhead(along_a_line(70, 0))
+    assert (measured["standby_w"], measured["efficiency"], measured["source"]) == (70, 1, "measured")
+    assert len(measured["bands"]) == 5
+
+
+def test_overhead_now_is_in_watts_and_as_a_share_of_the_battery():
+    now = planning.overhead_now(0, 2267, 2349, 5)
+    assert (now["house_w"], now["battery_w"], now["overhead_w"]) == (2267, 2349, 82)
+    assert now["share"] == pytest.approx(82 / 2349)
+
+
+def test_run_time_allows_for_a_measured_overhead():
+    assert planning.outage_hours(996, 100, 0, 10, MEASURED) == pytest.approx(10000 / 1070)
+
+
+def test_max_load_is_run_time_in_reverse_with_a_measured_overhead():
+    hours = planning.outage_hours(800, 60, 10, 10, MEASURED)
+    assert planning.max_load_w(5000, hours, MEASURED) == pytest.approx(800)
+
+
+def test_planners_use_the_overhead_they_are_given():
+    expected = (1000 - 70) * 0.996  # 5 kWh over 5 hours, less the standby.
+    assert plan_outage(overhead=MEASURED)["from_now"]["max_w"] == pytest.approx(expected)
+    assert plan_run(overhead=MEASURED)["max_w"] == pytest.approx(expected)
+    case = summary([appliance(typical_w=996, use_in_outage=True)], capacity_kwh=10, overhead=MEASURED)["cases"]["all_typical"]
+    assert case["hours_from_full"] == pytest.approx(8000 / 1070)  # Down to the 20% reserve.

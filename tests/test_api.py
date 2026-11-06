@@ -109,6 +109,59 @@ def test_measured_capacity_takes_over_from_an_entered_one(collector):
     assert capacity["kwh"] == pytest.approx(10, abs=0.1)
 
 
+def log_battery_only(collector, overhead_w=100, loads=(200, 700, 1200, 1700)):
+    now = int(time.time())
+    db.save_samples(collector.conn, [
+        db.Sample(now - 7000 + i * 15, {"ppv": 0, "load_ptotal": load, "pbattery1": load + overhead_w, "active_power_total": 0})
+        for i, load in enumerate(load for load in loads for _ in range(10))
+    ])
+
+
+def test_overhead_is_typical_until_the_log_can_measure_it(call):
+    overhead = call("GET", "/api/appliances").json()["overhead"]
+    assert overhead["source"] == "typical"
+    assert overhead["standby_w"] == 40
+    assert overhead["efficiency"] == 0.93
+
+
+def test_measured_overhead_reaches_the_planners_and_the_checks_tab(call, collector):
+    log_battery_only(collector)
+    live(collector, backup_v1=200, battery_soc=60)
+    collector.latest["battery_limits"] = {"min_soc": 30, "reserve_soc": 10}
+    call("POST", "/api/appliances", json=lamp(typical_w=900, use_in_outage=True))
+    overview = call("PUT", "/api/settings", json={"capacity_kwh": 10, "outage_hours": 5, "run_until_minutes": 90}).json()
+
+    assert overview["overhead"]["source"] == "measured"
+    assert overview["overhead"]["standby_w"] == 100
+    assert overview["overhead"]["efficiency"] == 1
+    assert overview["outage_plan"]["from_now"]["max_w"] == pytest.approx(900)  # 1 kW, less the 100 W.
+    assert overview["run_plan"]["max_w"] == pytest.approx(3000 / overview["run_plan"]["hours"] - 100)
+    assert overview["cases"]["selected_typical"]["hours_from_full"] == pytest.approx(9)  # 9 kWh at 1 kW.
+
+    bands = call("GET", "/api/latest").json()["overhead"]["bands"]
+    assert [band["house_w"] for band in bands] == [200, 700, 1200, 1700]
+    assert bands[0]["overhead_w"] == 100
+    assert bands[0]["share"] == pytest.approx(100 / 300)
+
+
+def test_latest_says_what_the_overhead_is_now(call, collector):
+    live(collector, ppv=0, load_ptotal=900, pbattery1=1000, active_power_total=0)
+    now = call("GET", "/api/latest").json()["overhead"]["now"]
+    assert (now["house_w"], now["battery_w"], now["overhead_w"], now["share"]) == (900, 1000, 100, 0.1)
+
+
+def test_overhead_now_is_empty_unless_the_battery_alone_is_supplying_the_house(call, collector):
+    assert call("GET", "/api/latest").json()["overhead"]["now"] is None
+    live(collector, ppv=500, load_ptotal=900, pbattery1=1000, active_power_total=0)
+    assert call("GET", "/api/latest").json()["overhead"]["now"] is None
+
+
+def test_overhead_now_is_withdrawn_when_the_inverter_stops_answering(call, collector):
+    live(collector, ppv=0, load_ptotal=900, pbattery1=1000, active_power_total=0)
+    collector.latest["error"] = "TimeoutError: "
+    assert call("GET", "/api/latest").json()["overhead"]["now"] is None
+
+
 def test_add_edit_and_delete_an_appliance(call):
     response = call("POST", "/api/appliances", json=lamp(notes="Hall"))
     assert response.status_code == 201

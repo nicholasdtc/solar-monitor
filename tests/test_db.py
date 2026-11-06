@@ -248,3 +248,9 @@ def test_new_tables_are_added_to_an_existing_database(tmp_path):
     assert db.list_appliances(reopened) == []
     assert db.get_settings(reopened) == dict.fromkeys(db.SETTINGS)
     reopened.close()
+
+
+def test_overhead_samples_are_the_four_powers_from_the_start_on(conn):
+    values = {"ppv": 1, "load_ptotal": 2, "pbattery1": 3, "active_power_total": 4}
+    db.save_samples(conn, [db.Sample(1000, values), db.Sample(2000, {**values, "ppv": 5})])
+    assert db.overhead_samples(conn, 1500) == [(5, 2, 3, 4)]
