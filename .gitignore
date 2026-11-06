@@ -6,6 +6,9 @@
 # Raw probe output (contains the inverter serial number)
 captures/
 
+# Screenshots of the SEMS app (can show serial numbers and account details)
+sems-app-screenshots/
+
 # Databases
 *.db
 *.db-wal
@@ -22,9 +25,6 @@ build/
 dist/
 .pytest_cache/
 .ruff_cache/
-
-# Node (web/ in phase 3)
-node_modules/
 
 # Claude Code local settings
 .claude/settings.local.json

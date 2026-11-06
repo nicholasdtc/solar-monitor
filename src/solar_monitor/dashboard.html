@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solar monitor: data check</title>
+<title>Solar monitor</title>
 <style>
   :root {
     color-scheme: light;
@@ -21,6 +21,7 @@
     --flow-grid: #2a78d6;
     --flow-solar: #eb6834;
     --flow-battery: #1baf7a;
+    --flow-load: #6250d6;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -36,6 +37,7 @@
       --flow-grid: #3987e5;
       --flow-solar: #d95926;
       --flow-battery: #199e70;
+      --flow-load: #9085e9;
     }
   }
   * { box-sizing: border-box; }
@@ -116,12 +118,55 @@
     width: min(320px, 100%); margin-bottom: 8px; padding: 6px 10px; font: inherit; color: inherit;
     background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
   }
+
+  h3 { margin: 0; font-size: 13px; font-weight: 600; }
+  .range { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .range button, .range input {
+    padding: 4px 10px; font: inherit; color: inherit;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .range button { cursor: pointer; }
+  .range button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--page); }
+  .range label { display: inline-flex; gap: 6px; align-items: center; margin-left: 8px; color: var(--ink-2); }
+  .charts { padding: 12px 16px; }
+  .charts > .meta { margin-top: 12px; }
+  #history-charts { transition: opacity 0.15s; }
+  #history-charts.loading { opacity: 0.5; }
+  .chart + .chart { margin-top: 16px; }
+  .chart-head { display: flex; flex-wrap: wrap; gap: 2px 16px; align-items: baseline; justify-content: space-between; }
+  .legend { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); font-size: 12px; }
+  .legend i { display: inline-block; width: 14px; height: 2px; margin-right: 5px; vertical-align: middle; border-radius: 1px; }
+  .legend.bars i { width: 10px; height: 10px; border-radius: 2px; }
+  .chart svg { display: block; margin-top: 4px; touch-action: pan-y; }
+  .chart svg:focus-visible { outline: 2px solid var(--flow-grid); outline-offset: 2px; border-radius: 4px; }
+  .chart-grid { stroke: var(--hairline); }
+  .chart-zero { stroke: var(--baseline); }
+  .chart-cross { stroke: var(--muted); }
+  .chart-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .chart-dot { stroke: var(--surface); stroke-width: 2; }
+  .chart-band { fill: var(--hairline); opacity: 0.6; }
+  .chart-tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .chart-y { text-anchor: end; }
+  .chart-x { text-anchor: middle; }
+  #chart-tip {
+    position: fixed; z-index: 1; padding: 8px 10px; pointer-events: none; font-size: 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+  .tip-title { margin-bottom: 4px; color: var(--ink-2); }
+  .tip-row { display: grid; grid-template-columns: 1fr 14px auto; gap: 6px; align-items: center; }
+  .tip-row strong { text-align: right; font-variant-numeric: tabular-nums; }
+  .tip-row i { height: 2px; border-radius: 1px; }
+  .tip-row span { color: var(--ink-2); }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--ink-2); }
+  details .card { max-height: 360px; margin-top: 8px; overflow-y: auto; }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>Solar monitor: data check</h1>
+    <h1>Solar monitor</h1>
     <div id="connection"></div>
   </header>
   <p class="meta" id="device"></p>
@@ -135,6 +180,40 @@
   </section>
 
   <section class="tiles" id="tiles" aria-label="Live values"></section>
+
+  <h2>History</h2>
+  <div class="range" role="group" aria-label="History range">
+    <button type="button" data-hours="6">6 hours</button>
+    <button type="button" data-hours="24">24 hours</button>
+    <button type="button" data-hours="168">7 days</button>
+    <button type="button" data-hours="720">30 days</button>
+    <label>Day <input type="date" id="history-day"></label>
+  </div>
+  <section class="card charts">
+    <div id="history-charts"></div>
+    <p class="meta" id="history-note"></p>
+  </section>
+  <details id="history-details">
+    <summary>Show as a table</summary>
+    <div class="card">
+      <table>
+        <thead><tr><th>Time</th><th class="num">Solar (W)</th><th class="num">House (W)</th><th class="num">Battery (W)</th><th class="num">Grid (W)</th><th class="num">Battery charge (%)</th></tr></thead>
+        <tbody id="history-table"></tbody>
+      </table>
+    </div>
+  </details>
+
+  <h2>Daily energy</h2>
+  <section class="card charts">
+    <div id="daily-charts"></div>
+    <p class="meta" id="daily-note"></p>
+  </section>
+  <div class="card" style="margin-top: 12px">
+    <table>
+      <thead><tr><th>Day</th><th class="num">Solar</th><th class="num">House</th><th class="num">Battery charged</th><th class="num">Battery discharged</th><th class="num">Grid import</th><th class="num">Grid export</th></tr></thead>
+      <tbody id="daily-table"></tbody>
+    </table>
+  </div>
 
   <h2>Checks</h2>
   <p class="note">Do the readings agree with each other? A warning means a field needs a closer look, not that the equipment has a fault.</p>
@@ -163,6 +242,7 @@
     </table>
   </div>
 </main>
+<div id="chart-tip" role="status" hidden></div>
 
 <script>
   const REFRESH_MS = 5000;
@@ -244,7 +324,7 @@
       icon: "M2 5h13v8H2zM17 8v2M5 9h4M7 7v4",
     },
     load: {
-      label: "House", field: "load_ptotal", sign: -1, color: "--ink-2",
+      label: "House", field: "load_ptotal", sign: -1, color: "--flow-load",
       box: [302, 150], path: "M302 200 H242", arrow: [272, 200], angle: 180,
       toward: "Using power", away: "Using power", idle: "Idle",
       icon: "M2 9l7-7 7 7M4 7.5V16h10V7.5M7.5 16v-5h3v5",
@@ -583,11 +663,460 @@
     else renderConnection();
   }
 
+  /*
+    History and daily energy. Different units get separate charts on a shared time axis,
+    never two scales on one chart. Battery and grid stay signed as the inverter reports
+    them, which also matches the SEMS app, so the two can be compared directly.
+  */
+  const CHART_REFRESH_MS = 60000;
+  const DAILY_DAYS = 14;
+  const CHART_LEFT = 52;
+  const CHART_RIGHT = 12;
+  const CHART_TOP = 8;
+  const X_AXIS_HEIGHT = 24;
+  const MIN_TICK_SPACING_PX = 72;
+  const GRID_ABOVE_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "exporting" : "importing";
+  const GRID_BELOW_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "importing" : "exporting";
+
+  const HISTORY_CHARTS = [
+    { title: "Solar and house (W)", height: 170, series: [
+      { key: "pv_w", label: "Solar", unit: "W", color: "--flow-solar" },
+      { key: "load_w", label: "House", unit: "W", color: "--flow-load" },
+    ] },
+    { title: "Battery and grid (W)", height: 170, signed: true, series: [
+      { key: "battery_w", label: "Battery", unit: "W", color: "--flow-battery", above: "discharging", below: "charging" },
+      { key: "grid_w", label: "Grid", unit: "W", color: "--flow-grid", above: GRID_ABOVE_ZERO, below: GRID_BELOW_ZERO },
+    ], note: `Above zero: battery discharging, grid ${GRID_ABOVE_ZERO}. Below zero: battery charging, grid ${GRID_BELOW_ZERO}. ` +
+      "Grid direction hasn't been confirmed with a large grid flow yet." },
+    { title: "Battery charge (%)", height: 110, domain: [0, 100], series: [
+      { key: "battery_soc", label: "Battery charge", unit: "%", color: "--flow-battery" },
+    ] },
+  ];
+
+  /* Same layout as history: above the line is energy out of the battery or to the grid. */
+  const DAILY_CHARTS = [
+    { title: "Solar and house (kWh)", height: 150, columns: [
+      { above: "pv", aboveLabel: "Solar", label: "Solar", color: "--flow-solar" },
+      { above: "load", aboveLabel: "House", label: "House", color: "--flow-load" },
+    ] },
+    { title: "Battery and grid (kWh)", height: 170, columns: [
+      { above: "battery_discharge", aboveLabel: "Battery discharged", below: "battery_charge", belowLabel: "Battery charged", label: "Battery", color: "--flow-battery" },
+      { above: "grid_export", aboveLabel: "Grid export", below: "grid_import", belowLabel: "Grid import", label: "Grid", color: "--flow-grid" },
+    ], note: "Above the line: battery discharged, grid export. Below the line: battery charged, grid import." },
+  ];
+
+  let range = { hours: 24 };
+  let history = null;
+  let daily = null;
+  let historyRequest = 0;
+  let chartWidth = 0;
+
+  const clamp = (x, low, high) => Math.min(Math.max(x, low), high);
+  const isoDay = (when) => `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}-${String(when.getDate()).padStart(2, "0")}`;
+  const clockTime = (when) => when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const shortDate = (when) => when.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+
+  /* Round tick values that span low to high, always including both. */
+  function niceTicks(low, high) {
+    const rough = (high - low) / 4 || 1;
+    const power = 10 ** Math.floor(Math.log10(rough));
+    const step = [1, 2, 5, 10].find((m) => m * power >= rough) * power;
+    const first = Math.floor(low / step);
+    const count = Math.ceil(high / step) - first;
+    return Array.from({ length: count + 1 }, (_, i) => (first + i) * step);
+  }
+
+  function yScale(low, high, top, bottom) {
+    const ticks = niceTicks(low, high);
+    const [min, max] = [ticks[0], ticks.at(-1)];
+    return { ticks, digits: ticks[1] - ticks[0] < 1 ? 1 : 0, y: (v) => bottom - ((v - min) / (max - min)) * (bottom - top) };
+  }
+
+  /* Times to label on the x axis, on round local hours or days. */
+  function timeTicks(start, end, room) {
+    const hours = (end - start) / 3600;
+    const step = [1, 2, 3, 6, 12, 24, 48, 96, 168, 336, 672].find((h) => hours / h <= room) ?? 672;
+    const tick = new Date(start * 1000);
+    tick.setHours(step < 24 ? tick.getHours() - (tick.getHours() % step) : 0, 0, 0, 0);
+    const ticks = [];
+    while (tick / 1000 < end) {
+      if (tick / 1000 >= start) {
+        const showDate = step >= 24 || (hours > 24 && tick.getHours() === 0);
+        ticks.push({ ts: tick / 1000, label: showDate ? shortDate(tick) : clockTime(tick) });
+      }
+      if (step < 24) tick.setHours(tick.getHours() + step);
+      else tick.setDate(tick.getDate() + step / 24);
+    }
+    return ticks;
+  }
+
+  function drawYAxis(svg, width, scale) {
+    for (const tick of scale.ticks) {
+      const y = Math.round(scale.y(tick)) + 0.5;
+      svg.append(
+        svgEl("line", { x1: CHART_LEFT, x2: width - CHART_RIGHT, y1: y, y2: y, class: tick === 0 ? "chart-zero" : "chart-grid" }),
+        svgEl("text", { x: CHART_LEFT - 8, y: y + 4, class: "chart-tick chart-y" }, number(tick, scale.digits)),
+      );
+    }
+  }
+
+  /* A titled chart with its legend. Identity is never left to colour alone. */
+  function chartShell(chart, entries, legendClass) {
+    const node = el("div", "chart");
+    const head = el("div", "chart-head");
+    head.append(el("h3", "", chart.title));
+    if (entries.length > 1) {
+      const legend = el("div", `legend ${legendClass}`);
+      for (const entry of entries) {
+        const item = el("span");
+        const key = el("i");
+        key.style.background = `var(${entry.color})`;
+        item.append(key, entry.label);
+        legend.append(item);
+      }
+      head.append(legend);
+    }
+    node.append(head);
+    if (chart.note) node.append(el("p", "meta", chart.note));
+    return node;
+  }
+
+  /* The one tooltip. It enhances the charts: every value is also in a table. */
+  function showTip(x, y, title, rows) {
+    const tip = $("chart-tip");
+    tip.replaceChildren(el("div", "tip-title", title), ...rows.map((row) => {
+      const node = el("div", "tip-row");
+      const key = el("i");
+      key.style.background = `var(${row.color})`;
+      node.append(el("strong", "", row.value), key, el("span", "", row.label));
+      return node;
+    }));
+    tip.hidden = false;
+    const box = tip.getBoundingClientRect();
+    tip.style.left = `${x + 16 + box.width > innerWidth ? x - 16 - box.width : x + 16}px`;
+    tip.style.top = `${clamp(y - box.height / 2, 8, innerHeight - box.height - 8)}px`;
+  }
+
+  /* Pointer and arrow-key access to a chart's points. pick() maps an x offset to an index. */
+  function makeScrubbable(svg, label, { count, pick, xOf, show, hide }) {
+    let index = null;
+    const fromPointer = (event) => {
+      index = pick(event.clientX - svg.getBoundingClientRect().left);
+      if (index === null) hide();
+      else show(index, event.clientX, event.clientY);
+    };
+    svg.setAttribute("tabindex", "0");
+    svg.setAttribute("role", "group");
+    svg.setAttribute("aria-label", `${label}. Use the left and right arrow keys to read values.`);
+    svg.addEventListener("pointermove", fromPointer);
+    svg.addEventListener("pointerdown", fromPointer);
+    svg.addEventListener("pointerleave", hide);
+    svg.addEventListener("blur", hide);
+    svg.addEventListener("keydown", (event) => {
+      const move = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
+      if (!move) return;
+      event.preventDefault();
+      index = clamp((index ?? count) + move, 0, count - 1);
+      const box = svg.getBoundingClientRect();
+      show(index, box.left + xOf(index), box.top + box.height / 2);
+    });
+  }
+
+  /* Line path that breaks across gaps. "h0" makes a lone point draw as a dot. */
+  function linePath(points, key, x, y, maxGap) {
+    let path = "";
+    let previous = null;
+    for (const point of points) {
+      const value = point[key];
+      if (value === null) { previous = null; continue; }
+      const isBreak = previous === null || point.ts - previous > maxGap;
+      path += `${isBreak ? "M" : "L"}${x(point.ts).toFixed(1)} ${y(value).toFixed(1)}${isBreak ? "h0" : ""}`;
+      previous = point.ts;
+    }
+    return path;
+  }
+
+  function duration(seconds) {
+    const [size, unit] = seconds < 3600 ? [seconds / 60, "minute"] : [seconds / 3600, "hour"];
+    return `${size} ${unit}${size === 1 ? "" : "s"}`;
+  }
+
+  function formatPoint(point, series) {
+    const value = point[series.key];
+    if (value === null) return null;
+    const word = series.above && Math.abs(value) >= FLOW_MIN_W ? (value > 0 ? series.above : series.below) : "";
+    return { value: `${number(value, 0)} ${series.unit}`, label: word ? `${series.label}, ${word}` : series.label, color: series.color };
+  }
+
+  function renderHistory() {
+    const box = $("history-charts");
+    $("chart-tip").hidden = true;
+    if (!history) return;
+    const { points, start, end, bucket_seconds: bucket } = history;
+    $("history-note").textContent = points.length
+      ? `Each point averages ${duration(bucket)}, so short spikes look smaller, and a charge and a discharge in the same period partly cancel out. ` +
+        "A break in a line means the app wasn't running or the inverter didn't answer."
+      : "";
+    renderHistoryTable();
+    if (!points.length) {
+      box.replaceChildren(el("p", "no-value", "No readings in this range. Readings are only logged while the app is running."));
+      return;
+    }
+
+    box.replaceChildren();
+    const width = box.clientWidth;
+    const innerWidth_ = width - CHART_LEFT - CHART_RIGHT;
+    const x = (ts) => CHART_LEFT + (clamp(ts + bucket / 2, start, end) - start) / (end - start) * innerWidth_;
+    const xTicks = timeTicks(start, end, Math.max(2, Math.floor(innerWidth_ / MIN_TICK_SPACING_PX)));
+
+    const drawn = HISTORY_CHARTS.map((chart, i) => {
+      const lastChart = i === HISTORY_CHARTS.length - 1;
+      const bottom = chart.height - (lastChart ? X_AXIS_HEIGHT : 10);
+      const known = points.flatMap((p) => chart.series.map((s) => p[s.key])).filter(isNum);
+      let [low, high] = chart.domain ?? [Math.min(0, ...known), Math.max(0, ...known)];
+      if (high - low < 100 && !chart.domain) high = low + 100; // A flat night stays readable.
+      const scale = yScale(low, high, CHART_TOP, bottom);
+
+      const node = chartShell(chart, chart.series, "lines");
+      const svg = svgEl("svg", { width, height: chart.height });
+      drawYAxis(svg, width, scale);
+      for (const tick of xTicks) {
+        const tx = Math.round(CHART_LEFT + (tick.ts - start) / (end - start) * innerWidth_) + 0.5;
+        svg.append(svgEl("line", { x1: tx, x2: tx, y1: CHART_TOP, y2: bottom, class: "chart-grid" }));
+        if (lastChart && tx < width - 20) svg.append(svgEl("text", { x: tx, y: bottom + 16, class: "chart-tick chart-x" }, tick.label));
+      }
+      for (const series of chart.series) {
+        svg.append(svgEl("path", {
+          d: linePath(points, series.key, x, scale.y, bucket * 2), class: "chart-line", style: `stroke: var(${series.color})`,
+        }));
+      }
+      const overlay = svgEl("g", {});
+      svg.append(overlay);
+      node.append(svg);
+      box.append(node);
+      return { chart, svg, overlay, scale, bottom };
+    });
+
+    const hide = () => {
+      $("chart-tip").hidden = true;
+      for (const { overlay } of drawn) overlay.replaceChildren();
+    };
+    const show = (index, clientX, clientY) => {
+      const point = points[index];
+      const px = x(point.ts);
+      for (const { chart, overlay, scale, bottom } of drawn) {
+        overlay.replaceChildren(
+          svgEl("line", { x1: px, x2: px, y1: CHART_TOP, y2: bottom, class: "chart-cross" }),
+          ...chart.series.filter((s) => point[s.key] !== null).map((s) => svgEl("circle", {
+            cx: px, cy: scale.y(point[s.key]), r: 4, class: "chart-dot", style: `fill: var(${s.color})`,
+          })),
+        );
+      }
+      const when = new Date(point.ts * 1000);
+      const rows = HISTORY_CHARTS.flatMap((chart) => chart.series.map((s) => formatPoint(point, s))).filter(Boolean);
+      showTip(clientX, clientY, `${shortDate(when)}, ${clockTime(when)}`, rows);
+    };
+    const pick = (px) => {
+      const ts = start + (px - CHART_LEFT) / innerWidth_ * (end - start) - bucket / 2;
+      let best = 0;
+      for (let i = 1; i < points.length; i++) if (Math.abs(points[i].ts - ts) < Math.abs(points[best].ts - ts)) best = i;
+      return Math.abs(points[best].ts - ts) <= bucket * 2 ? best : null; // Nothing to read in a gap.
+    };
+    for (const { chart, svg } of drawn) {
+      makeScrubbable(svg, chart.title, { count: points.length, pick, xOf: (i) => x(points[i].ts), show, hide });
+    }
+  }
+
+  function renderHistoryTable() {
+    const open = $("history-details").open;
+    if (!open || !history) return $("history-table").replaceChildren();
+    const cell = (value) => el("td", "num", value === null ? "—" : number(value, 0));
+    $("history-table").replaceChildren(...history.points.toReversed().map((point) => {
+      const row = el("tr");
+      const when = new Date(point.ts * 1000);
+      row.append(
+        el("td", "", `${shortDate(when)}, ${clockTime(when)}`),
+        cell(point.pv_w), cell(point.load_w), cell(point.battery_w), cell(point.grid_w), cell(point.battery_soc),
+      );
+      return row;
+    }));
+  }
+
+  /* A column with a square base on the zero line and 4px rounded corners at its tip. */
+  function columnPath(left, width, base, tip) {
+    const direction = tip < base ? 1 : -1;
+    const r = Math.min(4, width / 2, Math.abs(base - tip));
+    const right = left + width;
+    return `M${left} ${base}V${tip + direction * r}Q${left} ${tip} ${left + r} ${tip}H${right - r}Q${right} ${tip} ${right} ${tip + direction * r}V${base}Z`;
+  }
+
+  function renderDaily() {
+    const box = $("daily-charts");
+    if (!daily) return;
+    const days = daily.days;
+    const anyData = days.some((day) => Object.keys(day).length > 1);
+    $("daily-note").textContent = anyData
+      ? "From the inverter's lifetime counters. Today's figures can be up to 5 minutes behind. The first day logged starts from its first reading, " +
+        "and energy from days the app wasn't running counts toward the next day it ran."
+      : "";
+    renderDailyTable();
+    if (!anyData) {
+      box.replaceChildren(el("p", "no-value", "No daily totals yet. The first ones appear within 5 minutes of the app starting."));
+      return;
+    }
+
+    box.replaceChildren();
+    const width = box.clientWidth;
+    const band = (width - CHART_LEFT - CHART_RIGHT) / days.length;
+    const labelEvery = Math.ceil(MIN_TICK_SPACING_PX * 0.7 / band);
+    const center = (i) => CHART_LEFT + band * (i + 0.5);
+    const dayDate = (day) => new Date(`${day.day}T12:00`);
+
+    const drawn = DAILY_CHARTS.map((chart, chartIndex) => {
+      const lastChart = chartIndex === DAILY_CHARTS.length - 1;
+      const bottom = chart.height - (lastChart ? X_AXIS_HEIGHT : 10);
+      const high = Math.max(0.5, ...days.flatMap((day) => chart.columns.map((c) => day[c.above] ?? 0)));
+      const low = -Math.max(0, ...days.flatMap((day) => chart.columns.map((c) => day[c.below] ?? 0)));
+      const scale = yScale(low, high, CHART_TOP, bottom);
+
+      const node = chartShell(chart, chart.columns, "bars");
+      const svg = svgEl("svg", { width, height: chart.height });
+      const under = svgEl("g", {});
+      svg.append(under);
+      drawYAxis(svg, width, scale);
+      const columnWidth = Math.min(24, Math.max(3, (band * 0.7 - 2) / chart.columns.length));
+      days.forEach((day, i) => {
+        const groupWidth = columnWidth * chart.columns.length + 2 * (chart.columns.length - 1);
+        chart.columns.forEach((column, c) => {
+          const left = center(i) - groupWidth / 2 + c * (columnWidth + 2);
+          const base = scale.y(0);
+          for (const [value, sign] of [[day[column.above], 1], [day[column.below], -1]]) {
+            if (!value) continue;
+            svg.append(svgEl("path", { d: columnPath(left, columnWidth, base, scale.y(sign * value)), style: `fill: var(${column.color})` }));
+          }
+        });
+        if (lastChart && i % labelEvery === 0) {
+          svg.append(svgEl("text", { x: center(i), y: bottom + 16, class: "chart-tick chart-x" }, shortDate(dayDate(day))));
+        }
+      });
+      node.append(svg);
+      box.append(node);
+      return { chart, svg, under, bottom };
+    });
+
+    const hide = () => {
+      $("chart-tip").hidden = true;
+      for (const { under } of drawn) under.replaceChildren();
+    };
+    const show = (index, clientX, clientY) => {
+      const day = days[index];
+      for (const { under, bottom } of drawn) {
+        under.replaceChildren(svgEl("rect", { x: center(index) - band / 2, width: band, y: CHART_TOP, height: bottom - CHART_TOP, class: "chart-band" }));
+      }
+      const rows = DAILY_CHARTS.flatMap((chart) => chart.columns.flatMap((c) => [
+        day[c.above] !== undefined && { value: kwh(day[c.above]), label: c.aboveLabel, color: c.color },
+        c.below && day[c.below] !== undefined && { value: kwh(day[c.below]), label: c.belowLabel, color: c.color },
+      ])).filter(Boolean);
+      showTip(clientX, clientY, rows.length ? shortDate(dayDate(day)) : `${shortDate(dayDate(day))}: no readings`, rows);
+    };
+    for (const { chart, svg } of drawn) {
+      makeScrubbable(svg, chart.title, {
+        count: days.length,
+        pick: (px) => { const i = Math.floor((px - CHART_LEFT) / band); return i >= 0 && i < days.length ? i : null; },
+        xOf: center, show, hide,
+      });
+    }
+  }
+
+  function renderDailyTable() {
+    const keys = ["pv", "load", "battery_charge", "battery_discharge", "grid_import", "grid_export"];
+    const recorded = daily.days.filter((day) => Object.keys(day).length > 1).toReversed();
+    $("daily-table").replaceChildren(...recorded.map((day) => {
+      const row = el("tr");
+      row.append(el("td", "", new Date(`${day.day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })));
+      for (const key of keys) row.append(el("td", "num", kwh(day[key])));
+      return row;
+    }));
+  }
+
+  function rangeBounds() {
+    if (range.day) {
+      const [year, month, day] = range.day.split("-").map(Number);
+      return [new Date(year, month - 1, day) / 1000, new Date(year, month - 1, day + 1) / 1000];
+    }
+    const end = Math.floor(Date.now() / 1000);
+    return [end - range.hours * 3600, end];
+  }
+
+  async function getJson(url) {
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`${url}: ${response.status}`);
+    return response.json();
+  }
+
+  /* A slow answer for an old range must not replace a newer one, hence the request number. */
+  async function refreshHistory() {
+    const request = ++historyRequest;
+    const [start, end] = rangeBounds();
+    try {
+      const next = await getJson(`/api/history?start=${start}&end=${end}`);
+      if (request !== historyRequest) return;
+      history = next;
+      renderHistory();
+    } catch {
+      if (request === historyRequest) $("history-note").textContent = "Couldn't load the history. Showing the last one loaded.";
+    }
+    if (request === historyRequest) $("history-charts").classList.remove("loading");
+  }
+
+  async function refreshDaily() {
+    try {
+      daily = await getJson(`/api/daily?days=${DAILY_DAYS}`);
+      renderDaily();
+    } catch {
+      $("daily-note").textContent = "Couldn't load the daily totals. Showing the last ones loaded.";
+    }
+  }
+
+  function selectRange(next) {
+    range = next;
+    for (const button of document.querySelectorAll(".range button")) {
+      button.setAttribute("aria-pressed", String(Number(button.dataset.hours) === range.hours));
+    }
+    $("history-day").value = range.day ?? "";
+    $("history-charts").classList.add("loading");
+    refreshHistory();
+  }
+
+  for (const button of document.querySelectorAll(".range button")) {
+    button.addEventListener("click", () => selectRange({ hours: Number(button.dataset.hours) }));
+  }
+  $("history-day").addEventListener("change", (event) => {
+    selectRange(event.target.value ? { day: event.target.value } : { hours: 24 });
+  });
+  $("history-details").addEventListener("toggle", renderHistoryTable);
+  new ResizeObserver(() => {
+    const width = $("history-charts").clientWidth;
+    if (width === chartWidth) return;
+    chartWidth = width;
+    renderHistory();
+    renderDaily();
+  }).observe($("history-charts"));
+
   $("filter").addEventListener("input", () => { if (latest?.readings) renderFields(); });
   buildFlow();
   refresh();
   setInterval(refresh, REFRESH_MS);
   setInterval(renderConnection, 1000);
+  $("history-day").max = isoDay(new Date());
+  selectRange(range);
+  refreshDaily();
+  setInterval(() => {
+    // Redrawing would drop the tooltip and keyboard focus from under someone reading a chart.
+    if (!$("chart-tip").hidden || document.activeElement?.closest("#history-charts, #daily-charts")) return;
+    if (!range.day || range.day === isoDay(new Date())) refreshHistory();
+    refreshDaily();
+  }, CHART_REFRESH_MS);
 </script>
 </body>
 </html>

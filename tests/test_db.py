@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 
@@ -113,3 +113,78 @@ def test_counter_that_drops_counts_as_zero_rather_than_negative(conn):
         db.Sample(at(2026, 11, 7, 16), {"e_total": 1.0}),
     ])
     assert totals(conn, "pv")["2026-11-07"] == 0
+
+
+def power(ts, ppv):
+    return db.Sample(ts, {"ppv": ppv})
+
+
+def test_bucket_grows_with_the_range_and_stays_within_the_point_limit():
+    for span in (3600, 6 * 3600, 86400, 7 * 86400, 30 * 86400, 365 * 86400):
+        assert span / db.bucket_seconds(span) <= db.MAX_HISTORY_POINTS
+    assert db.bucket_seconds(3600) == 60
+    assert db.bucket_seconds(30 * 86400) == 3600
+
+
+def test_history_averages_each_bucket_and_keeps_the_sign(conn):
+    db.save_samples(conn, [
+        db.Sample(600, {"pbattery1": -100, "ppv": 10}),
+        db.Sample(615, {"pbattery1": -300, "ppv": 20}),
+        db.Sample(660, {"pbattery1": 50, "ppv": 30}),
+    ])
+    bucket, points = db.history(conn, 0, 3600)
+    assert bucket == 60
+    assert [(p["ts"], p["battery_w"], p["pv_w"]) for p in points] == [(600, -200, 15), (660, 50, 30)]
+
+
+def test_history_only_returns_the_requested_range(conn):
+    db.save_samples(conn, [power(100, 1), power(200, 2), power(300, 3)])
+    _, points = db.history(conn, 200, 300)
+    assert [p["pv_w"] for p in points] == [2]
+
+
+def test_history_leaves_a_gap_where_there_are_no_readings(conn):
+    db.save_samples(conn, [power(0, 1), power(600, 2)])
+    _, points = db.history(conn, 0, 3600)
+    assert [p["ts"] for p in points] == [0, 600]
+
+
+def test_history_of_an_empty_range_has_no_points(conn):
+    assert db.history(conn, 0, 3600) == (60, [])
+
+
+def test_history_includes_unsaved_readings(conn):
+    db.save_samples(conn, [power(600, 10)])
+    _, points = db.history(conn, 0, 3600, [power(615, 30), power(660, 50)])
+    assert [(p["ts"], p["pv_w"]) for p in points] == [(600, 20), (660, 50)]
+
+
+def test_history_ignores_unsaved_readings_outside_the_range(conn):
+    _, points = db.history(conn, 0, 3600, [power(3600, 50)])
+    assert points == []
+
+
+def test_history_keeps_a_missing_unsaved_reading_empty_rather_than_zero(conn):
+    _, points = db.history(conn, 0, 3600, [db.Sample(600, {"ppv": "n/a"})])
+    assert points[0]["pv_w"] is None
+
+
+def test_daily_series_fills_the_calendar_and_shows_days_with_no_readings(conn):
+    db.save_samples(conn, [
+        db.Sample(at(2026, 11, 4, 8), {"e_total": 10.0}),
+        db.Sample(at(2026, 11, 4, 16), {"e_total": 12.0}),
+        db.Sample(at(2026, 11, 6, 16), {"e_total": 20.0}),
+    ])
+    assert db.daily_series(conn, 3, today=date(2026, 11, 6)) == [
+        {"day": "2026-11-04", "pv": 2.0},
+        {"day": "2026-11-05"},
+        {"day": "2026-11-06", "pv": 8.0},
+    ]
+
+
+def test_daily_series_counts_from_a_day_before_its_window(conn):
+    db.save_samples(conn, [
+        db.Sample(at(2026, 11, 4, 16), {"e_total": 10.0}),
+        db.Sample(at(2026, 11, 6, 16), {"e_total": 13.0}),
+    ])
+    assert db.daily_series(conn, 1, today=date(2026, 11, 6)) == [{"day": "2026-11-06", "pv": 3.0}]

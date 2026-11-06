@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import sqlite3
 import zlib
+from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 SCHEMA = """
@@ -45,6 +46,19 @@ COUNTERS = {
     "inverter_ac_out": "e_total_exp",
 }
 
+# Column in `samples` -> the inverter reading it holds.
+READINGS = {
+    "pv_w": "ppv",
+    "load_w": "load_ptotal",
+    "battery_w": "pbattery1",
+    "battery_soc": "battery_soc",
+    "grid_w": "active_power_total",
+}
+
+# A chart can't usefully show more points than this, so longer ranges are averaged more.
+MAX_HISTORY_POINTS = 800
+BUCKET_SECONDS = (60, 120, 300, 900, 1800, 3600, 7200, 21600, 86400)
+
 
 @dataclass(frozen=True)
 class Sample:
@@ -77,6 +91,10 @@ def _number(value: object) -> float | None:
     return value if isinstance(value, (int, float)) else None
 
 
+def _columns(sample: Sample) -> tuple[object, ...]:
+    return (sample.ts, *(_number(sample.values.get(reading)) for reading in READINGS.values()))
+
+
 def save_samples(conn: sqlite3.Connection, samples: Iterable[Sample]) -> None:
     """Write a batch in one transaction, so it's either all saved or safe to retry."""
     samples = list(samples)
@@ -84,18 +102,7 @@ def save_samples(conn: sqlite3.Connection, samples: Iterable[Sample]) -> None:
         conn.executemany(
             "INSERT OR IGNORE INTO samples (ts, pv_w, load_w, battery_w, battery_soc, grid_w, raw) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    s.ts,
-                    _number(s.values.get("ppv")),
-                    _number(s.values.get("load_ptotal")),
-                    _number(s.values.get("pbattery1")),
-                    _number(s.values.get("battery_soc")),
-                    _number(s.values.get("active_power_total")),
-                    encode_raw(s.values),
-                )
-                for s in samples
-            ],
+            [(*_columns(s), encode_raw(s.values)) for s in samples],
         )
         conn.executemany(
             "INSERT INTO daily_counters (day, counter, first_value, last_value) "
@@ -128,3 +135,51 @@ def daily_totals(conn: sqlite3.Connection) -> list[tuple[str, str, float]]:
         ORDER BY day, counter
         """
     ).fetchall()
+
+
+def daily_series(conn: sqlite3.Connection, days: int, today: date | None = None) -> list[dict[str, object]]:
+    """The last `days` calendar days, oldest first, as {"day": ..., counter: kWh, ...}.
+
+    A day with no readings has only its "day", so a gap in logging stays visible.
+    """
+    totals: dict[str, dict[str, float]] = defaultdict(dict)
+    for day, counter, kwh in daily_totals(conn):  # All days: each total needs the day before it.
+        totals[day][counter] = kwh
+    last = today or date.today()
+    calendar = (last - timedelta(days=back) for back in reversed(range(days)))
+    return [{"day": day.isoformat(), **totals.get(day.isoformat(), {})} for day in calendar]
+
+
+def bucket_seconds(span_seconds: int) -> int:
+    """The shortest averaging period that keeps a range within MAX_HISTORY_POINTS."""
+    return next((b for b in BUCKET_SECONDS if span_seconds / b <= MAX_HISTORY_POINTS), BUCKET_SECONDS[-1])
+
+
+def history(
+    conn: sqlite3.Connection, start: int, end: int, pending: Iterable[Sample] = ()
+) -> tuple[int, list[dict[str, object]]]:
+    """(bucket seconds, averaged points) for start <= ts < end, oldest first.
+
+    `pending` is readings not saved yet, so the curve reaches the present. A bucket with
+    no readings returns no point, so a gap in logging stays a gap. Averaging signed power
+    means a charge and a discharge within one bucket partly cancel out.
+    """
+    bucket = bucket_seconds(end - start)
+    waiting = [_columns(s) for s in pending if start <= s.ts < end]
+    averages = ", ".join(f"ROUND(AVG({column}), 1)" for column in READINGS)
+    columns = ", ".join(READINGS)
+    from_json = ", ".join(f"json_extract(value, '$[{i}]')" for i in range(len(READINGS) + 1))
+    rows = conn.execute(
+        f"""
+        SELECT ts / :bucket * :bucket AS bucket_start, {averages}
+        FROM (
+            SELECT ts, {columns} FROM samples WHERE ts >= :start AND ts < :end
+            UNION ALL
+            SELECT {from_json} FROM json_each(:waiting)
+        )
+        GROUP BY bucket_start
+        ORDER BY bucket_start
+        """,
+        {"bucket": bucket, "start": start, "end": end, "waiting": json.dumps(waiting)},
+    ).fetchall()
+    return bucket, [dict(zip(("ts", *READINGS), row)) for row in rows]

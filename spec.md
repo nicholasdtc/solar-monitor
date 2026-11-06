@@ -28,7 +28,7 @@ Runs on a Raspberry Pi 5 (8GB, wired Ethernet). Developed on Windows.
 | Collector | Python 3.11+, `goodwe` library (Modbus TCP on port 502, local) |
 | Storage | SQLite (WAL mode) |
 | API | FastAPI + uvicorn |
-| UI | Vue 3 + Vite, built on the PC, static files served by FastAPI |
+| UI | A single plain HTML page with no build step or dependencies, served by FastAPI |
 | Host | Raspberry Pi OS (64-bit), plain systemd (no Docker) |
 | Remote | Tailscale |
 
@@ -45,11 +45,10 @@ solar-monitor/
     config.py            # loads .env
     collector.py         # poll loop: read_runtime_data -> buffer -> batched SQLite writes
     db.py                # schema, migrations, queries
-    api.py               # FastAPI: /api/latest now; /api/history, /api/daily in phase 3
-    dashboard.html       # current data-check page
+    api.py               # FastAPI: /api/latest, /api/history, /api/daily
+    dashboard.html       # the dashboard page
     main.py              # runs collector + API
   scripts/probe.py       # one-off read of the inverter
-  web/                   # Vue app (Vite), if phase 3 still needs it
   deploy/
     solar-monitor.service
     backup.sh            # on the Pi: sqlite3 .backup to /var/backups/solar-monitor
@@ -76,8 +75,9 @@ solar-monitor/
 
 **Phase 3: API + dashboard**
 - Endpoints: live values, history by range, daily totals.
-- Vue dashboard: live tiles, power curves, daily totals, battery SOC over time.
-- Build with `npm run build` on the PC. The Pi serves static files only, with no Node on the Pi.
+- Dashboard: live tiles, power curves, daily totals, battery SOC over time.
+- Kept as one plain page rather than Vue. It needs no Node on the PC or the Pi, and it can still move to Vue later if it outgrows this.
+- History is averaged into at most 800 points per range, and battery and grid stay signed as reported, matching the SEMS app.
 
 **Phase 4: deploy to the Pi**
 - Reflash the card with Raspberry Pi Imager: hostname, user, SSH key, SSH enabled. Remove the SD card before fitting the Pi in the case.

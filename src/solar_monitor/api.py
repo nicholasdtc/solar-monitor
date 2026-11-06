@@ -1,4 +1,4 @@
-"""The web app: serves the dashboard page and the latest readings.
+"""The web app: serves the dashboard page, the latest readings and the logged history.
 
 The serial number is never sent to the page.
 """
@@ -10,9 +10,10 @@ import json
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 
+from solar_monitor import db
 from solar_monitor.collector import Collector
 
 PAGE = Path(__file__).with_name("dashboard.html")
@@ -38,5 +39,18 @@ def create_app(collector: Collector) -> FastAPI:
     @app.get("/api/latest")
     async def api_latest() -> Response:
         return Response(json.dumps(collector.latest, default=str), media_type="application/json")
+
+    # async too: the database connection belongs to the event loop's thread, and this way a
+    # read can't land in the middle of a flush and count the moving readings twice or not at all.
+    @app.get("/api/history")
+    async def api_history(start: int, end: int) -> dict[str, object]:
+        if end <= start:
+            raise HTTPException(status_code=400, detail="end must be after start")
+        bucket, points = db.history(collector.conn, start, end, collector.buffer)
+        return {"start": start, "end": end, "bucket_seconds": bucket, "points": points}
+
+    @app.get("/api/daily")
+    async def api_daily(days: int = Query(default=14, ge=1, le=366)) -> dict[str, object]:
+        return {"days": db.daily_series(collector.conn, days)}
 
     return app

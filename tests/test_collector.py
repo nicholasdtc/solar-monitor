@@ -3,6 +3,7 @@ import itertools
 import json
 
 import pytest
+from fastapi import HTTPException
 
 from solar_monitor import collector, db
 from solar_monitor.api import create_app
@@ -176,3 +177,30 @@ def test_serial_number_reaches_neither_the_page_nor_the_database(monkeypatch, co
     assert SERIAL not in json.dumps(app_collector.latest, default=str)
     raw = conn.execute("SELECT raw FROM samples").fetchone()[0]
     assert SERIAL not in json.dumps(db.decode_raw(raw))
+
+
+def route(app_collector, path):
+    """The route's own function, called directly so it stays on the connection's thread."""
+    return next(r.endpoint for r in create_app(app_collector).routes if r.path == path)
+
+
+def test_history_route_includes_saved_and_unsaved_readings(conn):
+    app_collector = Collector("host", 502, conn)
+    db.save_samples(conn, [db.Sample(600, {"ppv": 10})])
+    app_collector.buffer.append(db.Sample(660, {"ppv": 20}))
+
+    result = asyncio.run(route(app_collector, "/api/history")(start=0, end=3600))
+
+    assert result["bucket_seconds"] == 60
+    assert [(p["ts"], p["pv_w"]) for p in result["points"]] == [(600, 10), (660, 20)]
+
+
+def test_history_route_refuses_a_backwards_range(conn):
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(route(Collector("host", 502, conn), "/api/history")(start=100, end=100))
+    assert refused.value.status_code == 400
+
+
+def test_daily_route_returns_one_row_per_day(conn):
+    result = asyncio.run(route(Collector("host", 502, conn), "/api/daily")(days=3))
+    assert len(result["days"]) == 3
