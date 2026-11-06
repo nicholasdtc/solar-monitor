@@ -43,6 +43,8 @@ solar-monitor/
   pyproject.toml
   src/solar_monitor/
     config.py            # loads .env
+    auth.py              # login page and session cookie around the whole app
+    login.html           # the login page
     collector.py         # poll loop: read_runtime_data -> buffer -> batched SQLite writes
     db.py                # schema, migrations, queries
     api.py               # FastAPI: /api/latest, /api/history, /api/daily
@@ -84,7 +86,7 @@ solar-monitor/
 - Reflash the card with Raspberry Pi Imager: hostname, user, SSH key, SSH enabled. Remove the SD card before fitting the Pi in the case.
 - Reserve fixed IPs for the Pi and the inverter in the router. Use a wired connection.
 - Copy the code, create a venv, run as a `systemd` service (`Restart=always`). Steps are in `deploy/pi-setup.md`.
-- The app listens on localhost unless `BIND_HOST` in `.env` says otherwise. Opening it to the home network is allowed; forwarding it at the router never is.
+- The app listens on localhost unless `BIND_HOST` in `.env` says otherwise. Opening it to the home network is allowed, and requires a login (`DASHBOARD_USER` and `DASHBOARD_PASSWORD`, through the app's own login page). Forwarding it at the router never is: plain HTTP doesn't encrypt the password or the session cookie.
 
 **Phase 5: remote access + backup**
 - Install Tailscale on the Pi, PC and phone. Access the dashboard at `http://<pi-name>:<port>`.

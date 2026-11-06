@@ -1,7 +1,8 @@
-"""Where the inverter is, from arguments, then .env, then a LAN broadcast."""
+"""Settings from .env, and where the inverter is: arguments, then .env, then a LAN broadcast."""
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import socket
 import sys
@@ -27,9 +28,34 @@ def db_path() -> Path:
 
 
 def bind_host() -> str:
-    """BIND_HOST from .env, else this machine only. The app has no login, so opening it is a choice."""
+    """BIND_HOST from .env, else this machine only."""
     load_dotenv(REPO_ROOT / ".env")
     return os.environ.get("BIND_HOST", "").strip() or "127.0.0.1"
+
+
+def is_local(host: str) -> bool:
+    """Whether only this machine can reach the address. Anything unrecognised counts as open."""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def login() -> tuple[str, str] | None:
+    """The dashboard's username and password from .env, or None if neither is set.
+
+    Setting only one is a mistake that would leave the app open, so it's an error.
+    """
+    load_dotenv(REPO_ROOT / ".env")
+    username = os.environ.get("DASHBOARD_USER", "").strip()
+    password = os.environ.get("DASHBOARD_PASSWORD", "").strip()
+    if not username and not password:
+        return None
+    if not username or not password:
+        raise ValueError("Set both DASHBOARD_USER and DASHBOARD_PASSWORD in .env, or neither.")
+    return username, password
 
 
 def discover_host() -> str | None:

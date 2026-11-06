@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["httpx", "pytest"]
 
 [project.scripts]
 solar-monitor = "solar_monitor.main:main"

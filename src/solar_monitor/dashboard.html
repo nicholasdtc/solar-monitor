@@ -161,6 +161,8 @@
   details { margin-top: 8px; }
   summary { cursor: pointer; color: var(--ink-2); }
   details .card { max-height: 360px; margin-top: 8px; overflow-y: auto; }
+  header #connection { margin-left: auto; }
+  #logout button { padding: 2px 8px; color: var(--ink-2); background: none; border: 1px solid var(--border); border-radius: 6px; font: inherit; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -168,6 +170,7 @@
   <header>
     <h1>Solar monitor</h1>
     <div id="connection"></div>
+    <form id="logout" method="post" action="/logout" hidden><button>Log out</button></form>
   </header>
   <p class="meta" id="device"></p>
   <p class="meta" id="storage"></p>
@@ -244,6 +247,21 @@
 </main>
 <div id="chart-tip" role="status" hidden></div>
 
+<script>
+  // Only used when a login is set: a 401 means the session has ended, and /api/session
+  // only exists behind the login, so there's nothing to log out of without one.
+  {
+    const plainFetch = window.fetch;
+    window.fetch = async (...args) => {
+      const response = await plainFetch(...args);
+      if (response.status === 401) location.assign("/login");
+      return response;
+    };
+    fetch("/api/session").then((response) => {
+      document.getElementById("logout").hidden = !response.ok;
+    }).catch(() => {});
+  }
+</script>
 <script>
   const REFRESH_MS = 5000;
   const STALE_AFTER_POLLS = 3;

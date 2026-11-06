@@ -56,10 +56,12 @@ sudo nano /opt/solar-monitor/.env
 ```
 
 - `INVERTER_IP`: the inverter's reserved address.
-- `BIND_HOST`: `0.0.0.0` to open the dashboard from other devices at home. It has no login, so anyone
-  on your network can view it, though it can't change anything and doesn't show the serial number.
-  Leave it blank to keep it private to the Pi, and reach it from the PC through SSH instead:
+- `BIND_HOST`: `0.0.0.0` to open the dashboard from other devices at home. Leave it blank to keep it
+  private to the Pi, and reach it from the PC through SSH instead:
   `ssh -L 8000:localhost:8000 <pi-user>@<pi-name>.local`, then open http://localhost:8000.
+- `DASHBOARD_USER` and `DASHBOARD_PASSWORD`: the dashboard's login, required if `BIND_HOST` is `0.0.0.0`.
+  The app won't start without them, and `journalctl` will say why. Use a password you don't use anywhere
+  else, because it isn't encrypted on the way across your network.
 - `DB_PATH`: leave blank. The service sets it to `/var/lib/solar-monitor/solar-monitor.db`.
 
 ## 6. Stop the app on the PC
