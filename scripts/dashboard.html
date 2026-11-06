@@ -17,6 +17,10 @@
     --good: #0ca30c;
     --warning: #fab219;
     --critical: #d03b3b;
+    --baseline: #c3c2b7;
+    --flow-grid: #2a78d6;
+    --flow-solar: #eb6834;
+    --flow-battery: #1baf7a;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -28,6 +32,10 @@
       --muted: #989690;
       --hairline: #2c2c2a;
       --border: rgba(255, 255, 255, 0.10);
+      --baseline: #383835;
+      --flow-grid: #3987e5;
+      --flow-solar: #d95926;
+      --flow-battery: #199e70;
     }
   }
   * { box-sizing: border-box; }
@@ -48,6 +56,35 @@
 
   #error { margin-top: 12px; padding: 8px 12px; border: 1px solid var(--critical); border-radius: 8px; }
   #error:empty { display: none; }
+
+  .flow { margin-top: 16px; padding: 12px; overflow: hidden; }
+  #flow-summary { font-size: 16px; font-weight: 600; }
+  .flow svg { display: block; width: 100%; max-width: 480px; margin: 12px auto; transition: opacity 0.2s; }
+  .flow svg text { text-anchor: middle; fill: var(--ink-2); font-size: 14px; }
+  .flow svg .flow-value { fill: var(--ink); font-size: 24px; font-weight: 600; }
+  .flow-box { fill: var(--surface); stroke: var(--border); }
+  .flow-hub { fill: var(--page); stroke: var(--baseline); }
+  .flow svg .flow-hub-label { font-size: 12px; }
+  .flow-icon { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .flow-track, .flow-dash { fill: none; }
+  .flow-track { stroke: var(--baseline); stroke-width: 2; }
+  .flow-dash, .flow-arrow { display: none; }
+  .flow-dash { stroke-dasharray: 9 15; stroke-linecap: round; animation: flow-move 1s linear infinite; }
+  .flow-arrow { fill: var(--flow-color); stroke: var(--surface); stroke-width: 2; paint-order: stroke; }
+  .flow-node.active .flow-box { stroke: var(--flow-color); stroke-width: 1.5; }
+  .flow-node.active .flow-icon { stroke: var(--flow-color); }
+  .flow-node.active .flow-track { stroke: var(--flow-color); stroke-opacity: 0.25; stroke-width: var(--flow-width); }
+  .flow-node.active .flow-dash { display: inline; stroke: var(--flow-color); stroke-width: var(--flow-width); }
+  .flow-node.active .flow-arrow { display: inline; }
+  .flow-node.outward .flow-dash { animation-direction: reverse; }
+  /* Old readings must not look live: stop the motion and keep the last direction, dimmed. */
+  .flow.frozen svg { opacity: 0.45; }
+  .flow.frozen .flow-node.active .flow-dash { display: none; }
+  @keyframes flow-move { to { stroke-dashoffset: -24; } }
+  @media (prefers-reduced-motion: reduce) {
+    .flow-dash { animation: none; }
+    .flow svg { transition: none; }
+  }
 
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
   .tile, .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
@@ -90,6 +127,12 @@
   <p class="meta" id="device"></p>
   <p id="error" role="alert"></p>
 
+  <section class="card flow frozen" id="flow">
+    <p id="flow-summary">Waiting for readings.</p>
+    <svg id="flow-diagram" viewBox="0 0 420 400" role="img" aria-labelledby="flow-summary"></svg>
+    <p class="meta" id="flow-note"></p>
+  </section>
+
   <section class="tiles" id="tiles" aria-label="Live values"></section>
 
   <h2>Checks</h2>
@@ -123,9 +166,15 @@
 <script>
   const REFRESH_MS = 5000;
   const STALE_AFTER_POLLS = 3;
+  // From the SEMS+ device list. The inverter itself reports a garbled model name.
+  const INVERTER_MODEL = "GW5K-EHA-G20";
 
-  // Below this the grid reading is mostly noise, so its direction can't be judged.
-  const GRID_SIGN_MIN_W = 50;
+  // Below this a power reading is mostly noise, so its direction can't be judged.
+  const FLOW_MIN_W = 50;
+  // The goodwe library's convention. Not yet confirmed here with a large grid flow.
+  const GRID_POSITIVE_MEANS_EXPORT = true;
+  // Flow lines thicken with power up to this.
+  const FLOW_FULL_SCALE_W = 5000;
   // Energy in should exceed energy out by no more than plausible conversion losses.
   const MAX_LOSS_FRACTION = 0.15;
   // Below this, counters rounded to 0.1 kWh are too coarse to show a loss percentage.
@@ -166,11 +215,124 @@
     return node;
   }
 
+  /*
+    Power flow: each node links to the inverter in the centre and shows that node's own
+    measured power. The inverter doesn't report how much goes from solar to the battery,
+    say, so the diagram doesn't draw or claim that split.
+
+    `sign` turns the reading into watts flowing toward the inverter. `path` runs from the
+    node to the inverter, and `angle` is the arrow's rotation when pointing that way.
+  */
+  const FLOWS = {
+    solar: {
+      label: "Solar", field: "ppv", sign: 1, color: "--flow-solar",
+      box: [151, 0], path: "M210 100 V186", arrow: [210, 143], angle: 90,
+      toward: "Generating", away: "Generating", idle: "No generation",
+      icon: "M5.5 9a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M9 1v2M9 15v2M1 9h2M15 9h2M3.3 3.3l1.4 1.4M13.3 13.3l1.4 1.4M3.3 14.7l1.4-1.4M13.3 4.7l1.4-1.4",
+    },
+    grid: {
+      label: "Grid", field: "active_power_total", sign: GRID_POSITIVE_MEANS_EXPORT ? -1 : 1, color: "--flow-grid",
+      box: [0, 150], path: "M118 200 H178", arrow: [148, 200], angle: 0,
+      toward: "Importing", away: "Exporting", idle: "Idle",
+      icon: "M9 1L4 17M9 1l5 16M3 6h12M4.8 11h8.4M5.5 12l7 5M12.5 12l-7 5",
+    },
+    battery: {
+      label: "Battery", field: "pbattery1", sign: 1, color: "--flow-battery",
+      box: [151, 300], path: "M210 300 V214", arrow: [210, 257], angle: -90,
+      toward: "Discharging", away: "Charging", idle: "Idle",
+      icon: "M2 5h13v8H2zM17 8v2M5 9h4M7 7v4",
+    },
+    load: {
+      label: "House", field: "load_ptotal", sign: -1, color: "--ink-2",
+      box: [302, 150], path: "M302 200 H242", arrow: [272, 200], angle: 180,
+      toward: "Using power", away: "Using power", idle: "Idle",
+      icon: "M2 9l7-7 7 7M4 7.5V16h10V7.5M7.5 16v-5h3v5",
+    },
+  };
+
+  function svgEl(tag, attrs, text) {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  /* Built once, then only updated, so the animation doesn't restart on every reading. */
+  function buildFlow() {
+    const svg = $("flow-diagram");
+    for (const flow of Object.values(FLOWS)) {
+      const [x, y] = flow.box;
+      const center = x + 59;
+      flow.label_ = svgEl("text", { x: center, y: y + 44 }, flow.label);
+      flow.value_ = svgEl("text", { x: center, y: y + 70, class: "flow-value" }, "—");
+      flow.state_ = svgEl("text", { x: center, y: y + 90 }, "No data");
+      flow.arrow_ = svgEl("path", { d: "M-7 -8L8 0L-7 8Z", class: "flow-arrow" });
+      flow.node = svgEl("g", { class: "flow-node", style: `--flow-color: var(${flow.color})` });
+      flow.node.append(
+        svgEl("path", { d: flow.path, class: "flow-track" }),
+        svgEl("path", { d: flow.path, class: "flow-dash" }),
+        flow.arrow_,
+        svgEl("rect", { x, y, width: 118, height: 100, rx: 12, class: "flow-box" }),
+        svgEl("path", { d: flow.icon, transform: `translate(${center - 9} ${y + 7})`, class: "flow-icon" }),
+        flow.label_, flow.value_, flow.state_,
+      );
+      svg.append(flow.node);
+    }
+    svg.append(
+      svgEl("rect", { x: 178, y: 186, width: 64, height: 28, rx: 8, class: "flow-hub" }),
+      svgEl("text", { x: 210, y: 204, class: "flow-hub-label" }, "Inverter"),
+    );
+    $("flow-note").textContent =
+      `Flows under ${FLOW_MIN_W} W count as idle. The numbers won't add up exactly because the inverter loses some power. ` +
+      `Grid direction assumes positive ${FLOWS.grid.field} means ${GRID_POSITIVE_MEANS_EXPORT ? "exporting" : "importing"}, ` +
+      "which hasn't been confirmed with a large grid flow yet.";
+  }
+
+  /* Watts flowing toward the inverter, or null if the reading is missing. */
+  function flowWatts(flow) {
+    const value = values[flow.field];
+    return isNum(value) ? value * flow.sign : null;
+  }
+
+  function renderFlow() {
+    for (const flow of Object.values(FLOWS)) {
+      const toward = flowWatts(flow);
+      const known = toward !== null;
+      const active = known && Math.abs(toward) >= FLOW_MIN_W;
+      const outward = known && toward < 0;
+      flow.node.classList.toggle("active", active);
+      flow.node.classList.toggle("outward", outward);
+      flow.value_.textContent = known ? watts(Math.abs(toward)) : "—";
+      flow.state_.textContent = !known ? "No data" : !active ? flow.idle : outward ? flow.away : flow.toward;
+      if (!known) continue;
+      const scale = Math.sqrt(Math.min(Math.abs(toward) / FLOW_FULL_SCALE_W, 1));
+      flow.node.style.setProperty("--flow-width", `${2.5 + 5.5 * scale}px`);
+      const [x, y] = flow.arrow;
+      flow.arrow_.setAttribute("transform", `translate(${x} ${y}) rotate(${flow.angle + (outward ? 180 : 0)})`);
+    }
+    const soc = values.battery_soc;
+    FLOWS.battery.label_.textContent = isNum(soc) ? `Battery ${soc}%` : "Battery";
+  }
+
+  /* One sentence that says what the diagram shows, for a glance and for screen readers. */
+  function flowSummary() {
+    const toward = Object.fromEntries(Object.entries(FLOWS).map(([name, flow]) => [name, flowWatts(flow)]));
+    if (Object.values(toward).includes(null)) return "Some readings are missing.";
+    const into = (name) => toward[name] >= FLOW_MIN_W;
+    const outOf = (name) => toward[name] <= -FLOW_MIN_W;
+    const sources = [into("solar") && "Solar", into("battery") && "the battery", into("grid") && "the grid"].filter(Boolean);
+    const uses = [outOf("load") && "powering the house", outOf("battery") && "charging the battery", outOf("grid") && "exporting to the grid"].filter(Boolean);
+    if (!sources.length || !uses.length) return "No significant power is flowing.";
+    const list = (items) => new Intl.ListFormat("en").format(items);
+    const subject = list(sources);
+    return `${subject[0].toUpperCase()}${subject.slice(1)} ${sources.length > 1 ? "are" : "is"} ${list(uses)}.`;
+  }
+
   /* Live tiles: each names its source field so it can be traced to the table below. */
   function renderTiles() {
     const tiles = [
       { label: "Solar", value: watts(values.ppv),
-        detail: `ppv. PV1 ${watts(values.ppv1)}, PV2 ${watts(values.ppv2)}` },
+        detail: `ppv. PV1 ${watts(values.ppv1)}, PV2 ${watts(values.ppv2)}. ppv_total, the figure SEMS+ shows: ${watts(values.ppv_total)}` },
       { label: "House load", value: watts(values.load_ptotal),
         detail: `load_ptotal. Calculated house_consumption: ${watts(values.house_consumption)}` },
       { label: "Battery power", value: watts(values.pbattery1),
@@ -266,17 +428,21 @@
     },
     () => {
       const name = "Grid direction";
-      const why = "What does a positive grid reading mean? Inverter output minus load gives the expected direction; a kettle or similar load helps if grid power is near zero.";
+      const why = `What does a positive grid reading mean? Inverter output minus load gives the expected direction. The flow diagram assumes positive means ${GRID_POSITIVE_MEANS_EXPORT ? "exporting" : "importing"}.`;
       const n = numbers("active_power_total", "total_inverter_power", "load_ptotal");
       if (!n) return { name, why, values: "—", status: "waiting", label: "No data" };
       const [grid, output, load] = n;
       const expectedExport = output - load;
       const shown = `active_power_total ${watts(grid)}, output − load ${watts(expectedExport)}, mode ${values.grid_in_out_label ?? "—"}`;
-      if (Math.abs(grid) < GRID_SIGN_MIN_W || Math.abs(expectedExport) < GRID_SIGN_MIN_W) {
+      if (Math.abs(grid) < FLOW_MIN_W || Math.abs(expectedExport) < FLOW_MIN_W) {
         return { name, why, values: shown, status: "waiting", label: "Too small to tell" };
       }
       const positiveIsExport = Math.sign(grid) === Math.sign(expectedExport);
-      return { name, why, values: shown, status: "good", label: positiveIsExport ? "Positive = exporting" : "Positive = importing" };
+      return {
+        name, why, values: shown,
+        status: positiveIsExport === GRID_POSITIVE_MEANS_EXPORT ? "good" : "warning",
+        label: positiveIsExport ? "Positive = exporting" : "Positive = importing",
+      };
     },
     () => {
       const n = numbers("meter_active_power_total", "meter_active_power1");
@@ -367,19 +533,26 @@
     else if (age === null) node.replaceChildren(status("waiting", "Waiting for first reading"));
     else if (age > staleAfter) node.replaceChildren(status("warning", `Stale: last read ${age}s ago`));
     else node.replaceChildren(status("good", `Live: read ${Math.max(age, 0)}s ago, polling every ${latest.poll_seconds}s`));
+
+    const live = latest !== null && !latest.error && age !== null && age <= staleAfter;
+    $("flow").classList.toggle("frozen", !live);
+    $("flow-summary").textContent = live
+      ? flowSummary()
+      : Object.keys(values).length ? "Not live. Showing the last reading received." : "Waiting for readings.";
   }
 
   function render() {
+    if (latest?.readings) values = Object.fromEntries(latest.readings.map((r) => [r.id, r.value]));
     renderConnection();
     if (latest?.device) {
       const d = latest.device;
-      $("device").textContent = `Family ${d.family}, firmware ${d.firmware}, ARM ${d.arm_firmware}`;
+      $("device").textContent = `${INVERTER_MODEL}, family ${d.family}, firmware ${d.firmware}, ARM ${d.arm_firmware}`;
     }
     $("error").textContent = latest?.error
       ? `Last read failed at ${latest.error_at}: ${latest.error}${latest.readings ? " Values below are from the last good read." : ""}`
       : "";
     if (!latest?.readings) return;
-    values = Object.fromEntries(latest.readings.map((r) => [r.id, r.value]));
+    renderFlow();
     renderTiles();
     renderChecks();
     renderEnergy();
@@ -399,6 +572,7 @@
   }
 
   $("filter").addEventListener("input", () => { if (latest?.readings) renderFields(); });
+  buildFlow();
   refresh();
   setInterval(refresh, REFRESH_MS);
   setInterval(renderConnection, 1000);
