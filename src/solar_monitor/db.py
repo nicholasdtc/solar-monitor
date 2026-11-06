@@ -30,6 +30,21 @@ CREATE TABLE IF NOT EXISTS daily_counters (
     last_value  REAL NOT NULL,        -- lifetime kWh at the day's latest reading
     PRIMARY KEY (day, counter)
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS appliances (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL,
+    typical_w     REAL NOT NULL,
+    peak_w        REAL,                 -- the most it draws once running, if more than typical
+    surge_w       REAL,                 -- the brief draw while starting, if known
+    use_in_outage INTEGER NOT NULL DEFAULT 0,
+    notes         TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,             -- a key of SETTINGS
+    value REAL NOT NULL
+) WITHOUT ROWID;
 """
 
 # Our name -> the inverter's lifetime kWh reading. Lifetime rather than "today" readings,
@@ -58,6 +73,11 @@ READINGS = {
 # A chart can't usefully show more points than this, so longer ranges are averaged more.
 MAX_HISTORY_POINTS = 800
 BUCKET_SECONDS = (60, 120, 300, 900, 1800, 3600, 7200, 21600, 86400)
+
+# Planning choices the inverter can't report. An unset one isn't stored, and reads as None.
+SETTINGS = ("capacity_kwh", "target_soc", "limit_amps", "surge_limit_w")
+
+_APPLIANCE_FIELDS = ("name", "typical_w", "peak_w", "surge_w", "use_in_outage", "notes")
 
 
 @dataclass(frozen=True)
@@ -183,3 +203,72 @@ def history(
         {"bucket": bucket, "start": start, "end": end, "waiting": json.dumps(waiting)},
     ).fetchall()
     return bucket, [dict(zip(("ts", *READINGS), row)) for row in rows]
+
+
+def battery_samples(
+    conn: sqlite3.Connection, start: int, pending: Iterable[Sample] = ()
+) -> list[tuple[int, float | None, float | None]]:
+    """(ts, battery W, SOC) from `start` on, oldest first, including readings not saved yet."""
+    saved = conn.execute(
+        "SELECT ts, battery_w, battery_soc FROM samples WHERE ts >= ? ORDER BY ts", (start,)
+    ).fetchall()
+    waiting = [
+        (s.ts, _number(s.values.get(READINGS["battery_w"])), _number(s.values.get(READINGS["battery_soc"])))
+        for s in pending
+        if s.ts >= start
+    ]
+    return saved + waiting
+
+
+def get_settings(conn: sqlite3.Connection) -> dict[str, float | None]:
+    stored = dict(conn.execute("SELECT key, value FROM settings"))
+    return {key: stored.get(key) for key in SETTINGS}
+
+
+def save_settings(conn: sqlite3.Connection, settings: dict[str, float | None]) -> None:
+    """Replace every setting. One left out or None goes back to being unset."""
+    with conn:
+        conn.execute("DELETE FROM settings")
+        conn.executemany(
+            "INSERT INTO settings (key, value) VALUES (?, ?)",
+            [(key, settings[key]) for key in SETTINGS if settings.get(key) is not None],
+        )
+
+
+def _appliance(row: tuple[object, ...]) -> dict[str, object]:
+    appliance = dict(zip(("id", *_APPLIANCE_FIELDS), row))
+    appliance["use_in_outage"] = bool(appliance["use_in_outage"])
+    return appliance
+
+
+def list_appliances(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    rows = conn.execute(f"SELECT id, {', '.join(_APPLIANCE_FIELDS)} FROM appliances ORDER BY id").fetchall()
+    return [_appliance(row) for row in rows]
+
+
+def add_appliance(conn: sqlite3.Connection, appliance: dict[str, object]) -> int:
+    with conn:
+        cursor = conn.execute(
+            f"INSERT INTO appliances ({', '.join(_APPLIANCE_FIELDS)}) "
+            f"VALUES ({', '.join('?' * len(_APPLIANCE_FIELDS))})",
+            [appliance[field] for field in _APPLIANCE_FIELDS],
+        )
+    return cursor.lastrowid
+
+
+def update_appliance(conn: sqlite3.Connection, appliance_id: int, appliance: dict[str, object]) -> bool:
+    """False if there's no such appliance."""
+    assignments = ", ".join(f"{field} = ?" for field in _APPLIANCE_FIELDS)
+    with conn:
+        cursor = conn.execute(
+            f"UPDATE appliances SET {assignments} WHERE id = ?",
+            [*(appliance[field] for field in _APPLIANCE_FIELDS), appliance_id],
+        )
+    return cursor.rowcount > 0
+
+
+def delete_appliance(conn: sqlite3.Connection, appliance_id: int) -> bool:
+    """False if there's no such appliance."""
+    with conn:
+        cursor = conn.execute("DELETE FROM appliances WHERE id = ?", (appliance_id,))
+    return cursor.rowcount > 0

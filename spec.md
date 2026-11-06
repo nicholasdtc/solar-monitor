@@ -47,7 +47,8 @@ solar-monitor/
     login.html           # the login page
     collector.py         # poll loop: read_runtime_data -> buffer -> batched SQLite writes
     db.py                # schema, migrations, queries
-    api.py               # FastAPI: /api/latest, /api/history, /api/daily
+    planning.py          # battery time remaining, capacity measured from the log, appliance load sums
+    api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings
     dashboard.html       # the dashboard page
     main.py              # runs collector + API
   scripts/probe.py       # one-off read of the inverter
@@ -81,6 +82,8 @@ solar-monitor/
 - Dashboard: live tiles, power curves, daily totals, battery SOC over time.
 - Kept as one plain page rather than Vue. It needs no Node on the PC or the Pi, and it can still move to Vue later if it outgrows this.
 - History is averaged into at most 800 points per range, and battery and grid stay signed as reported, matching the SEMS app.
+- Battery time remaining uses live inverter values wherever they can be trusted: charge level, health, the minimum and reserve charge settings. Capacity isn't on the network, so it's measured from the log, with an optional entered figure until there's enough to measure. Hardware specs that labels would give aren't stored.
+- Appliances are entered by each user and live in the database, never in git.
 
 **Phase 4: deploy to the Pi**
 - Reflash the card with Raspberry Pi Imager: hostname, user, SSH key, SSH enabled. Remove the SD card before fitting the Pi in the case.

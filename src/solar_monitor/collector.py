@@ -18,6 +18,7 @@ from solar_monitor import db
 
 POLL_SECONDS = 15
 FLUSH_SECONDS = 300
+LIMITS_SECONDS = 3600  # These change only when someone edits them, so hourly is plenty.
 
 
 def timestamp() -> str:
@@ -39,6 +40,21 @@ def device_info(inverter: goodwe.Inverter) -> dict[str, object]:
         "arm_firmware": inverter.arm_firmware,
         "modbus_version": inverter.modbus_version,
     }
+
+
+async def read_battery_limits(inverter: goodwe.Inverter) -> dict[str, object]:
+    """The charge levels the battery stops discharging at, on-grid and during an outage.
+
+    Despite the name, these registers hold the level it stops at, not how deep it may go:
+    the goodwe library takes depth of discharge as 100 minus the value. None if not readable.
+    """
+    limits: dict[str, object] = {}
+    for name, setting in (("min_soc", "battery_discharge_depth"), ("reserve_soc", "battery_discharge_depth_offline")):
+        try:
+            limits[name] = await inverter.read_setting(setting)
+        except Exception:  # Not every inverter has these, and they aren't worth failing a poll over.
+            limits[name] = None
+    return limits
 
 
 class Collector:
@@ -73,11 +89,16 @@ class Collector:
         """Keep `latest` current. After a failure the last good readings stay, with `error` set."""
         inverter = None
         flushed_at = time.monotonic()
+        limits_read_at = None
         while True:
             try:
                 if inverter is None:
                     inverter = await goodwe.connect(self.host, port=self.port, timeout=2, retries=3)
                     self.latest["device"] = device_info(inverter)
+                    limits_read_at = None  # A failed read of them often means a lost connection.
+                if limits_read_at is None or time.monotonic() - limits_read_at >= LIMITS_SECONDS:
+                    self.latest["battery_limits"] = await read_battery_limits(inverter)
+                    limits_read_at = time.monotonic()
                 values = await inverter.read_runtime_data()
                 sensors = {sensor.id_: sensor for sensor in inverter.sensors()}
                 self.latest["readings"] = [

@@ -56,8 +56,12 @@
   .meta { color: var(--muted); font-size: 12px; }
   code { font: 12px ui-monospace, Consolas, monospace; }
 
-  #error { margin-top: 12px; padding: 8px 12px; border: 1px solid var(--critical); border-radius: 8px; }
-  #error:empty { display: none; }
+  #error, .alert { margin-top: 12px; padding: 8px 12px; border: 1px solid var(--critical); border-radius: 8px; }
+  #error:empty, .alert:empty { display: none; }
+
+  .tabs { display: flex; gap: 4px; margin-top: 16px; border-bottom: 1px solid var(--hairline); }
+  .tabs a { margin-bottom: -1px; padding: 8px 12px; color: var(--ink-2); text-decoration: none; border-bottom: 2px solid transparent; }
+  .tabs a[aria-current="page"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink); }
 
   .flow { margin-top: 16px; padding: 12px; overflow: hidden; }
   #flow-summary { font-size: 16px; font-weight: 600; }
@@ -66,7 +70,7 @@
   .flow svg .flow-value { fill: var(--ink); font-size: 24px; font-weight: 600; }
   .flow-box { fill: var(--surface); stroke: var(--border); }
   .flow-hub { fill: var(--page); stroke: var(--baseline); }
-  .flow svg .flow-hub-label { font-size: 12px; }
+  .flow svg .flow-hub-label, .flow svg .flow-eta { font-size: 12px; }
   .flow-icon { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .flow-track, .flow-dash { fill: none; }
   .flow-track { stroke: var(--baseline); stroke-width: 2; }
@@ -82,6 +86,7 @@
   /* Old readings must not look live: stop the motion and keep the last direction, dimmed. */
   .flow.frozen svg { opacity: 0.45; }
   .flow.frozen .flow-node.active .flow-dash { display: none; }
+  .flow.frozen .flow-eta { visibility: hidden; }
   @keyframes flow-move { to { stroke-dashoffset: -24; } }
   @media (prefers-reduced-motion: reduce) {
     .flow-dash { animation: none; }
@@ -161,6 +166,24 @@
   details { margin-top: 8px; }
   summary { cursor: pointer; color: var(--ink-2); }
   details .card { max-height: 360px; margin-top: 8px; overflow-y: auto; }
+
+  .edit input:not([type="checkbox"]), .edit textarea, .edit button {
+    padding: 4px 8px; font: inherit; color: inherit;
+    background: var(--page); border: 1px solid var(--border); border-radius: 6px;
+  }
+  .edit button { cursor: pointer; background: var(--surface); }
+  .edit input[type="number"] { width: 84px; text-align: right; }
+  .edit input[type="checkbox"] { width: 16px; height: 16px; margin: 6px 0 0; }
+  .edit input.name { width: 100%; min-width: 170px; }
+  .edit textarea { display: block; width: 100%; min-width: 240px; max-height: 7em; resize: vertical; field-sizing: content; }
+  .add { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 12px; padding: 12px 16px; }
+  .add label, .settings label { display: flex; flex-direction: column; gap: 4px; color: var(--ink-2); }
+  .add label.grow { flex: 1 1 200px; }
+  .add label.grow input { width: 100%; }
+  .add label.tick { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 6px; }
+  .add label.tick input { margin: 0; }
+  .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; padding: 12px 16px; }
+  .settings input[type="number"] { width: 120px; }
   header #connection { margin-left: auto; }
   #logout button { padding: 2px 8px; color: var(--ink-2); background: none; border: 1px solid var(--border); border-radius: 6px; font: inherit; cursor: pointer; }
 </style>
@@ -176,9 +199,15 @@
   <p class="meta" id="storage"></p>
   <p id="error" role="alert"></p>
 
+  <nav class="tabs" aria-label="Sections">
+    <a href="#live" aria-current="page">Live</a>
+    <a href="#appliances">Appliances</a>
+  </nav>
+
+  <div id="tab-live">
   <section class="card flow frozen" id="flow">
     <p id="flow-summary">Waiting for readings.</p>
-    <svg id="flow-diagram" viewBox="0 0 420 400" role="img" aria-labelledby="flow-summary"></svg>
+    <svg id="flow-diagram" viewBox="0 0 420 422" role="img" aria-labelledby="flow-summary"></svg>
     <p class="meta" id="flow-note"></p>
   </section>
 
@@ -244,6 +273,59 @@
       <tbody id="fields"></tbody>
     </table>
   </div>
+  </div>
+
+  <div id="tab-appliances" hidden>
+    <h2>Your appliances</h2>
+    <p class="note">Fill in your own. They're kept in this app's database, and changes save as you make them. Tick what you'd keep running in a power cut.</p>
+    <p class="alert" id="appliances-error" role="alert"></p>
+    <div class="card edit">
+      <table>
+        <thead><tr><th>Power cut</th><th>Name</th><th class="num">Typical W</th><th class="num">Peak W</th><th class="num">Surge W</th><th class="num">Amps</th><th class="num">Of limit</th><th>Can add</th><th>Notes</th><th aria-label="Delete"></th></tr></thead>
+        <tbody id="appliance-rows"></tbody>
+      </table>
+      <p class="no-value" id="appliances-empty" style="padding: 8px 12px" hidden>No appliances yet. Add your first one below.</p>
+    </div>
+    <p class="meta" style="margin-top: 8px">Typical is what it usually draws. Peak is the most it draws once running: leave it blank if that's the same. Surge is the brief kick when a motor starts. Amps and Of limit use the peak. Can add says whether it fits on top of the ticked appliances at their peak.</p>
+
+    <form class="card edit add" id="add-appliance">
+      <label class="grow">Name <input name="name" required maxlength="100"></label>
+      <label>Typical W <input name="typical_w" type="number" min="0" step="any" required></label>
+      <label>Peak W <input name="peak_w" type="number" min="0" step="any"></label>
+      <label>Surge W <input name="surge_w" type="number" min="0" step="any"></label>
+      <label class="grow">Notes <input name="notes" maxlength="2000"></label>
+      <label class="tick"><input name="use_in_outage" type="checkbox"> Power cut</label>
+      <button type="submit">Add appliance</button>
+    </form>
+
+    <h2>What it adds up to</h2>
+    <p class="note">The current each combination draws, what that leaves of your limit, and how long the battery could carry it with no sun or grid.</p>
+    <div class="card">
+      <table>
+        <thead><tr><th>Load</th><th class="num">Watts</th><th class="num">Amps</th><th class="num">Of limit</th><th class="num">Room left</th><th class="num">Runs for, from now</th><th class="num">Runs for, from full</th></tr></thead>
+        <tbody id="cases"></tbody>
+      </table>
+    </div>
+
+    <h2>Motors starting</h2>
+    <p class="note">The worst moment: everything at its peak, and every motor starting at once.</p>
+    <div class="card">
+      <table>
+        <thead><tr><th>Load</th><th class="num">Running</th><th class="num">Extra to start</th><th class="num">Total</th><th class="num">Of surge limit</th></tr></thead>
+        <tbody id="surge"></tbody>
+      </table>
+    </div>
+
+    <h2>Your choices</h2>
+    <p class="note">All optional. Anything the inverter reports, or the log can measure, doesn't need entering.</p>
+    <form class="card edit settings" id="settings">
+      <label>Current limit (A) <input name="limit_amps" type="number" min="0" step="any"><span class="meta">What you want to stay under in a power cut, such as a breaker's rating. Of limit, Room left and Can add need this.</span></label>
+      <label>Surge limit (W) <input name="surge_limit_w" type="number" min="0" step="any"><span class="meta">The most your system can supply for a few seconds.</span></label>
+      <label>Charge target (%) <input name="target_soc" type="number" min="1" max="100" step="any" placeholder="100"><span class="meta">Where the time to charge counts up to. Blank means 100%.</span></label>
+      <label>Starting battery capacity (kWh) <input name="capacity_kwh" type="number" min="0" step="any"><span class="meta" id="capacity-hint"></span></label>
+    </form>
+    <p class="meta" id="appliance-sources" style="margin-top: 8px"></p>
+  </div>
 </main>
 <div id="chart-tip" role="status" hidden></div>
 
@@ -307,6 +389,17 @@
   const watts = (x) => (isNum(x) ? `${number(x, 0)} W` : "—");
   const kwh = (x) => (isNum(x) ? `${number(x, 1)} kWh` : "—");
 
+  /* An estimate, so it rounds to 5 minutes once past the hour rather than ticking over. */
+  function timeLeft(hours) {
+    if (!isNum(hours)) return "—";
+    let minutes = Math.max(Math.round(hours * 60), 1);
+    if (minutes >= 60) minutes = Math.round(minutes / 5) * 5;
+    if (minutes < 60) return `${minutes} min`;
+    if (minutes < 1440) return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+    const wholeHours = Math.round(minutes / 60);
+    return `${Math.floor(wholeHours / 24)} d ${wholeHours % 24} h`;
+  }
+
   function status(kind, label) {
     const icons = { good: "✓", warning: "!", critical: "×", waiting: "–" };
     const node = el("span", `status ${kind}`);
@@ -337,7 +430,7 @@
     },
     battery: {
       label: "Battery", field: "pbattery1", sign: 1, color: "--flow-battery",
-      box: [151, 300], path: "M210 300 V214", arrow: [210, 257], angle: -90,
+      box: [151, 300], height: 122, path: "M210 300 V214", arrow: [210, 257], angle: -90,
       toward: "Discharging", away: "Charging", idle: "Idle",
       icon: "M2 5h13v8H2zM17 8v2M5 9h4M7 7v4",
     },
@@ -371,12 +464,15 @@
         svgEl("path", { d: flow.path, class: "flow-track" }),
         svgEl("path", { d: flow.path, class: "flow-dash" }),
         flow.arrow_,
-        svgEl("rect", { x, y, width: 118, height: 100, rx: 12, class: "flow-box" }),
+        svgEl("rect", { x, y, width: 118, height: flow.height ?? 100, rx: 12, class: "flow-box" }),
         svgEl("path", { d: flow.icon, transform: `translate(${center - 9} ${y + 7})`, class: "flow-icon" }),
         flow.label_, flow.value_, flow.state_,
       );
       svg.append(flow.node);
     }
+    const [batteryX, batteryY] = FLOWS.battery.box;
+    FLOWS.battery.eta_ = svgEl("text", { x: batteryX + 59, y: batteryY + 110, class: "flow-eta" }, "");
+    FLOWS.battery.node.append(FLOWS.battery.eta_);
     svg.append(
       svgEl("rect", { x: 178, y: 186, width: 64, height: 28, rx: 8, class: "flow-hub" }),
       svgEl("text", { x: 210, y: 204, class: "flow-hub-label" }, "Inverter"),
@@ -411,6 +507,16 @@
     }
     const soc = values.battery_soc;
     FLOWS.battery.label_.textContent = isNum(soc) ? `Battery ${soc}%` : "Battery";
+    FLOWS.battery.eta_.textContent = batteryEta();
+  }
+
+  /* The short form of the time remaining, or nothing while the battery is idle. */
+  function batteryEta() {
+    const estimate = latest?.battery_estimate;
+    if (!estimate || estimate.state === "idle") return "";
+    const limit = estimate.limit_soc;
+    if (estimate.hours === 0) return estimate.state === "charging" ? `Reached ${limit}%` : `At ${limit}% minimum`;
+    return estimate.hours === null ? `Heading to ${limit}%` : `${timeLeft(estimate.hours)} to ${limit}%`;
   }
 
   /* One sentence that says what the diagram shows, for a glance and for screen readers. */
@@ -427,6 +533,36 @@
     return `${subject[0].toUpperCase()}${subject.slice(1)} ${sources.length > 1 ? "are" : "is"} ${list(uses)}.`;
   }
 
+  /* Today it's just the time, then the day, then the date, as the estimate gets further off. */
+  function arrival(hours) {
+    const when = new Date(new Date(latest.read_at).getTime() + hours * 3600000);
+    if (!isNum(when.getTime())) return "";
+    const today = new Date();
+    if (isoDay(when) === isoDay(today)) return ` around ${clockTime(when)}`;
+    if (hours < 144) return ` around ${when.toLocaleDateString(undefined, { weekday: "short" })} ${clockTime(when)}`;
+    return ` around ${shortDate(when)}`;
+  }
+
+  function batteryTimeTile() {
+    const label = "Battery time remaining";
+    const estimate = latest.battery_estimate;
+    if (!estimate) return { label, value: "—", detail: "Needs current battery readings." };
+    if (estimate.state === "idle") return { label, value: "—", detail: "The battery is idle, so it isn't heading anywhere." };
+    const { hours, limit_soc: limit, power_w: power, capacity } = estimate;
+    if (hours === 0) return { label, value: "0 min", detail: `Already at the ${limit}% limit.` };
+    if (hours === null) {
+      return { label, value: "—", detail:
+        `Heading to ${limit}% at about ${watts(Math.abs(power))}, but the battery's capacity isn't known yet. ` +
+        "The app measures it once it has logged enough, or you can enter a starting figure under Appliances." };
+    }
+    const source = capacity.source === "measured"
+      ? `Capacity ${kwh(capacity.kwh)}, measured from the log.`
+      : `Capacity ${kwh(capacity.kwh)}, from your starting figure until the log can measure it.`;
+    const slows = estimate.state === "charging" ? " Charging slows near full, so this can run long." : "";
+    return { label, value: timeLeft(hours), detail:
+      `Reaches ${limit}%${arrival(hours)} at the recent average of ${watts(Math.abs(power))}. ${source}${slows}` };
+  }
+
   /* Live tiles: each names its source field so it can be traced to the table below. */
   function renderTiles() {
     const tiles = [
@@ -438,6 +574,7 @@
         detail: `pbattery1, signed as reported. Mode: ${values.battery_mode_label ?? "—"}` },
       { label: "Battery charge", value: isNum(values.battery_soc) ? `${values.battery_soc}%` : "—",
         detail: `battery_soc. ${isNum(values.vbattery1) ? `${values.vbattery1} V` : ""}` },
+      batteryTimeTile(),
       { label: "Grid power", value: watts(values.active_power_total),
         detail: `active_power_total, signed as reported. Mode: ${values.grid_in_out_label ?? "—"}` },
     ];
@@ -645,8 +782,9 @@
 
     const live = latest !== null && !latest.error && age !== null && age <= staleAfter;
     $("flow").classList.toggle("frozen", !live);
+    const eta = batteryEta();
     $("flow-summary").textContent = live
-      ? flowSummary()
+      ? `${flowSummary()}${eta ? ` Battery: ${eta}.` : ""}`
       : Object.keys(values).length ? "Not live. Showing the last reading received." : "Waiting for readings.";
   }
 
@@ -869,7 +1007,7 @@
   function renderHistory() {
     const box = $("history-charts");
     $("chart-tip").hidden = true;
-    if (!history) return;
+    if (!history || $("tab-live").hidden) return; // Charts need a width, and a hidden box has none.
     const { points, start, end, bucket_seconds: bucket } = history;
     $("history-note").textContent = points.length
       ? `Each point averages ${duration(bucket)}, so short spikes look smaller, and a charge and a discharge in the same period partly cancel out. ` +
@@ -970,7 +1108,7 @@
 
   function renderDaily() {
     const box = $("daily-charts");
-    if (!daily) return;
+    if (!daily || $("tab-live").hidden) return;
     const days = daily.days;
     const anyData = days.some((day) => Object.keys(day).length > 1);
     $("daily-note").textContent = anyData
@@ -1115,13 +1253,273 @@
   $("history-details").addEventListener("toggle", renderHistoryTable);
   new ResizeObserver(() => {
     const width = $("history-charts").clientWidth;
-    if (width === chartWidth) return;
+    if (!width || width === chartWidth) return;
     chartWidth = width;
     renderHistory();
     renderDaily();
   }).observe($("history-charts"));
 
+  /*
+    Appliances. The list and the choices live in the app's database, and the server answers
+    every change with the new totals, so the sums are only ever done in one place. Rows are
+    updated in place rather than rebuilt, so saving one field can't take the cursor out of
+    the next. Only the newest request's answer counts, so an old one can't undo a change.
+  */
+  const APPLIANCES_REFRESH_MS = 30000;
+  const CASES = [
+    { key: "now", label: "Right now", why: "What the house is drawing at the moment" },
+    { key: "selected_typical", label: "Ticked, typical", why: "The ticked appliances at their typical draw" },
+    { key: "selected_worst", label: "Ticked, at peak", why: "The ticked appliances all at their peak" },
+    { key: "all_typical", label: "Everything, typical", why: "Every appliance at its typical draw" },
+    { key: "all_worst", label: "Everything, at peak", why: "Every appliance at its peak" },
+  ];
+  const COULD_NOT_SAVE = "Couldn't save that. Names can't be blank, watts can't be negative and the charge target is at most 100%. Showing what's saved.";
+
+  let overview = null;
+  let overviewRequest = 0;
+  const applianceRows = new Map();
+
+  const amps = (x) => (isNum(x) ? `${number(x, 1)} A` : "—");
+  const percent = (x) => (isNum(x) ? `${number(x * 100, 0)}%` : "—");
+  const optionalNumber = (input) => (input.value === "" ? null : Number(input.value));
+  const overLimit = (text, over) => (over ? status("warning", text) : text);
+
+  function setValue(input, value) {
+    if (input !== document.activeElement) input.value = value ?? "";
+  }
+
+  async function sendOverview(method, url, body) {
+    const request = ++overviewRequest;
+    const error = $("appliances-error");
+    try {
+      const response = await fetch(url, {
+        method,
+        cache: "no-store",
+        ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+      });
+      if (!response.ok) {
+        error.textContent = response.status === 422 ? COULD_NOT_SAVE : `Couldn't do that: the server answered ${response.status}.`;
+        if (request === overviewRequest) renderOverview();
+        return false;
+      }
+      const next = await response.json();
+      if (request === overviewRequest) {
+        overview = next;
+        error.textContent = "";
+        renderOverview();
+      }
+      return true;
+    } catch {
+      error.textContent = "Can't reach the dashboard server. Showing what was last loaded.";
+      if (request === overviewRequest) renderOverview();
+      return false;
+    }
+  }
+
+  function buildApplianceRow(id) {
+    const input = (type) => {
+      const node = el("input");
+      node.type = type;
+      if (type === "number") {
+        node.min = "0";
+        node.step = "any";
+      }
+      return node;
+    };
+    const fields = {
+      use_in_outage: input("checkbox"),
+      name: input("text"),
+      typical_w: input("number"),
+      peak_w: input("number"),
+      surge_w: input("number"),
+      notes: el("textarea"),
+    };
+    fields.name.className = "name";
+    fields.name.maxLength = 100;
+    fields.notes.rows = 1;
+    fields.notes.maxLength = 2000;
+    const cells = { amps: el("td", "num"), share: el("td", "num"), canAdd: el("td") };
+    const remove = el("button", "", "Delete");
+    remove.type = "button";
+    const wrap = (node, className) => {
+      const cell = el("td", className);
+      cell.append(node);
+      return cell;
+    };
+    const row = el("tr");
+    row.append(
+      wrap(fields.use_in_outage), wrap(fields.name), wrap(fields.typical_w, "num"), wrap(fields.peak_w, "num"), wrap(fields.surge_w, "num"),
+      cells.amps, cells.share, cells.canAdd, wrap(fields.notes), wrap(remove),
+    );
+    row.addEventListener("change", () => sendOverview("PUT", `/api/appliances/${id}`, {
+      name: fields.name.value,
+      typical_w: optionalNumber(fields.typical_w),
+      peak_w: optionalNumber(fields.peak_w),
+      surge_w: optionalNumber(fields.surge_w),
+      use_in_outage: fields.use_in_outage.checked,
+      notes: fields.notes.value,
+    }));
+    remove.addEventListener("click", () => {
+      const name = overview.appliances.find((a) => a.id === id)?.name;
+      if (confirm(`Delete ${name}?`)) sendOverview("DELETE", `/api/appliances/${id}`);
+    });
+    return { row, fields, cells, remove };
+  }
+
+  function renderApplianceRows() {
+    const known = new Set(overview.appliances.map((a) => a.id));
+    for (const [id, parts] of applianceRows) {
+      if (known.has(id)) continue;
+      parts.row.remove();
+      applianceRows.delete(id);
+    }
+    for (const appliance of overview.appliances) {
+      let parts = applianceRows.get(appliance.id);
+      if (!parts) {
+        parts = buildApplianceRow(appliance.id);
+        applianceRows.set(appliance.id, parts);
+        $("appliance-rows").append(parts.row);
+      }
+      const { fields, cells, remove } = parts;
+      for (const name of ["name", "typical_w", "peak_w", "surge_w", "notes"]) setValue(fields[name], appliance[name]);
+      if (fields.use_in_outage !== document.activeElement) fields.use_in_outage.checked = appliance.use_in_outage;
+      fields.use_in_outage.setAttribute("aria-label", `Keep ${appliance.name} running in a power cut`);
+      fields.name.setAttribute("aria-label", `Name of ${appliance.name}`);
+      fields.typical_w.setAttribute("aria-label", `Typical watts of ${appliance.name}`);
+      fields.peak_w.setAttribute("aria-label", `Peak watts of ${appliance.name}`);
+      fields.surge_w.setAttribute("aria-label", `Surge watts of ${appliance.name}`);
+      fields.notes.setAttribute("aria-label", `Notes on ${appliance.name}`);
+      remove.setAttribute("aria-label", `Delete ${appliance.name}`);
+      cells.amps.textContent = amps(appliance.amps);
+      cells.share.replaceChildren(overLimit(percent(appliance.share), appliance.share > 1));
+      cells.canAdd.replaceChildren(
+        appliance.can_add === "in_use" ? "Ticked"
+          : appliance.can_add === "yes" ? status("good", "Fits")
+          : appliance.can_add === "no" ? status("warning", "Over limit")
+          : "—",
+      );
+    }
+    $("appliances-empty").hidden = overview.appliances.length > 0;
+  }
+
+  function loadCell(label, why) {
+    const cell = el("td", "", label);
+    if (why) cell.append(el("span", "why", why));
+    return cell;
+  }
+
+  function renderCases() {
+    const rows = CASES.filter(({ key }) => overview.cases[key]).map(({ key, label, why }) => {
+      const load = overview.cases[key];
+      const row = el("tr");
+      const share = el("td", "num");
+      share.append(overLimit(percent(load.share), load.share > 1));
+      const room = el("td", "num");
+      room.append(overLimit(amps(load.headroom_amps), load.headroom_amps < 0));
+      const runsFor = (hours) => timeLeft(load.watts > 0 ? hours : null); // Nothing to run yet.
+      row.append(
+        loadCell(label, why), el("td", "num", watts(load.watts)), el("td", "num", amps(load.amps)), share, room,
+        el("td", "num", runsFor(load.hours_from_now)), el("td", "num", runsFor(load.hours_from_full)),
+      );
+      return row;
+    });
+    $("cases").replaceChildren(...rows);
+  }
+
+  function renderSurge() {
+    const rows = [["selected", "Ticked"], ["all", "Everything"]].map(([key, label]) => {
+      const load = overview.surge[key];
+      const row = el("tr");
+      const share = el("td", "num");
+      share.append(overLimit(percent(load.share), load.share > 1));
+      row.append(loadCell(label), el("td", "num", watts(load.steady_w)), el("td", "num", watts(load.extra_w)), el("td", "num", watts(load.peak_w)), share);
+      return row;
+    });
+    $("surge").replaceChildren(...rows);
+  }
+
+  function renderChoices() {
+    const { settings, capacity } = overview;
+    const form = $("settings");
+    for (const [name, value] of Object.entries(settings)) setValue(form.elements[name], value);
+    $("capacity-hint").textContent = capacity.source === "measured"
+      ? `Not used now: the log measures ${kwh(capacity.kwh)} over ${capacity.points} percentage points of charging and discharging.`
+      : "Used only until the log has enough charging and discharging to measure it, which can take a few days. Allows for the battery health the inverter reports.";
+  }
+
+  function renderSources() {
+    const { volts, fallback_volts: fallback, reserve_soc: reserve, reserve_reported: reported, capacity, conversion_efficiency: efficiency, standby_w: standby } = overview;
+    const parts = [
+      isNum(volts)
+        ? `Amps use the ${number(volts, 0)} V the inverter reports now.`
+        : `Amps assume ${fallback} V until the inverter reports a voltage.`,
+      reported
+        ? `Run times go down to the ${reserve}% the inverter keeps in reserve during a power cut.`
+        : `Run times go down to ${reserve}%, an assumed reserve, because the inverter hasn't reported its own.`,
+      capacity.kwh === null
+        ? "They need the battery's capacity, which isn't known yet."
+        : `They use a capacity of ${kwh(capacity.kwh)}, and allow for ${number(efficiency * 100, 0)}% conversion efficiency and ${standby} W of standby, which are typical figures rather than measurements.`,
+    ];
+    $("appliance-sources").textContent = parts.join(" ");
+  }
+
+  function renderOverview() {
+    if (!overview) return;
+    renderApplianceRows();
+    renderCases();
+    renderSurge();
+    renderChoices();
+    renderSources();
+  }
+
+  const refreshOverview = () => sendOverview("GET", "/api/appliances");
+
+  $("add-appliance").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const added = await sendOverview("POST", "/api/appliances", {
+      name: form.elements.name.value,
+      typical_w: optionalNumber(form.elements.typical_w),
+      peak_w: optionalNumber(form.elements.peak_w),
+      surge_w: optionalNumber(form.elements.surge_w),
+      use_in_outage: form.elements.use_in_outage.checked,
+      notes: form.elements.notes.value,
+    });
+    if (!added) return;
+    form.reset();
+    form.elements.name.focus();
+  });
+
+  $("settings").addEventListener("submit", (event) => event.preventDefault());
+  $("settings").addEventListener("change", (event) => {
+    const { elements } = event.currentTarget;
+    sendOverview("PUT", "/api/settings", Object.fromEntries(
+      ["capacity_kwh", "target_soc", "limit_amps", "surge_limit_w"].map((name) => [name, optionalNumber(elements[name])]),
+    ));
+  });
+
+  /* The tab is in the address, so a reload or the back button stays where it was. */
+  function showTab() {
+    const onAppliances = location.hash === "#appliances";
+    const returning = !onAppliances && $("tab-live").hidden;
+    $("tab-live").hidden = onAppliances;
+    $("tab-appliances").hidden = !onAppliances;
+    for (const link of document.querySelectorAll(".tabs a")) {
+      if (link.hash === (onAppliances ? "#appliances" : "#live")) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    }
+    $("chart-tip").hidden = true;
+    if (onAppliances) refreshOverview();
+    if (returning) {
+      refreshHistory();
+      refreshDaily();
+    }
+  }
+  window.addEventListener("hashchange", showTab);
+  setInterval(() => { if (!$("tab-appliances").hidden) refreshOverview(); }, APPLIANCES_REFRESH_MS);
+
   $("filter").addEventListener("input", () => { if (latest?.readings) renderFields(); });
+  showTab();
   buildFlow();
   refresh();
   setInterval(refresh, REFRESH_MS);
@@ -1131,7 +1529,7 @@
   refreshDaily();
   setInterval(() => {
     // Redrawing would drop the tooltip and keyboard focus from under someone reading a chart.
-    if (!$("chart-tip").hidden || document.activeElement?.closest("#history-charts, #daily-charts")) return;
+    if ($("tab-live").hidden || !$("chart-tip").hidden || document.activeElement?.closest("#history-charts, #daily-charts")) return;
     if (!range.day || range.day === isoDay(new Date())) refreshHistory();
     refreshDaily();
   }, CHART_REFRESH_MS);

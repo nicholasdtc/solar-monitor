@@ -188,3 +188,63 @@ def test_daily_series_counts_from_a_day_before_its_window(conn):
         db.Sample(at(2026, 11, 6, 16), {"e_total": 13.0}),
     ])
     assert db.daily_series(conn, 1, today=date(2026, 11, 6)) == [{"day": "2026-11-06", "pv": 3.0}]
+
+
+def test_battery_samples_join_saved_and_unsaved_readings_in_order(conn):
+    db.save_samples(conn, [db.Sample(100, {"pbattery1": 1, "battery_soc": 50}), db.Sample(200, {"pbattery1": 2})])
+    pending = [db.Sample(50, {"pbattery1": 9}), db.Sample(300, {"pbattery1": "n/a", "battery_soc": 49})]
+    assert db.battery_samples(conn, 150, pending) == [(200, 2, None), (300, None, 49)]
+
+
+def test_settings_start_unset(conn):
+    assert db.get_settings(conn) == dict.fromkeys(db.SETTINGS)
+
+
+def test_saving_settings_replaces_them_and_none_clears_one(conn):
+    db.save_settings(conn, {"limit_amps": 16, "target_soc": 90})
+    db.save_settings(conn, {"limit_amps": None, "target_soc": 95})
+    assert db.get_settings(conn) == {**dict.fromkeys(db.SETTINGS), "target_soc": 95}
+
+
+def appliance(**fields):
+    return {"name": "Lamp", "typical_w": 10, "peak_w": None, "surge_w": None, "use_in_outage": False, "notes": "", **fields}
+
+
+def test_appliance_round_trip_keeps_blanks_and_the_tick(conn):
+    new_id = db.add_appliance(conn, appliance(peak_w=20, use_in_outage=True, notes="Hall"))
+    assert db.list_appliances(conn) == [{"id": new_id, **appliance(peak_w=20, use_in_outage=True, notes="Hall")}]
+
+
+def test_appliances_list_in_the_order_they_were_added(conn):
+    for name in ("Zebra", "Apple"):
+        db.add_appliance(conn, appliance(name=name))
+    assert [a["name"] for a in db.list_appliances(conn)] == ["Zebra", "Apple"]
+
+
+def test_updating_an_appliance_changes_only_that_one(conn):
+    first = db.add_appliance(conn, appliance(name="One"))
+    second = db.add_appliance(conn, appliance(name="Two"))
+    assert db.update_appliance(conn, first, appliance(name="Changed", typical_w=99))
+    assert [(a["id"], a["name"], a["typical_w"]) for a in db.list_appliances(conn)] == [(first, "Changed", 99), (second, "Two", 10)]
+
+
+def test_deleting_an_appliance_removes_it(conn):
+    new_id = db.add_appliance(conn, appliance())
+    assert db.delete_appliance(conn, new_id)
+    assert db.list_appliances(conn) == []
+
+
+def test_changing_an_appliance_that_is_gone_reports_it(conn):
+    assert not db.update_appliance(conn, 404, appliance())
+    assert not db.delete_appliance(conn, 404)
+
+
+def test_new_tables_are_added_to_an_existing_database(tmp_path):
+    path = tmp_path / "old.db"
+    old = db.connect(path)
+    old.executescript("DROP TABLE appliances; DROP TABLE settings;")
+    old.close()
+    reopened = db.connect(path)
+    assert db.list_appliances(reopened) == []
+    assert db.get_settings(reopened) == dict.fromkeys(db.SETTINGS)
+    reopened.close()
