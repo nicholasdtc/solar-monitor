@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import zlib
 from collections import defaultdict
 from collections.abc import Iterable
@@ -45,6 +46,18 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,             -- a key of SETTINGS
     value REAL NOT NULL
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS inverter_writes (
+    id          INTEGER PRIMARY KEY,
+    ts          INTEGER NOT NULL,       -- Unix seconds, from just before it was sent
+    slot        INTEGER NOT NULL,       -- which TOU period, as numbered in SEMS+
+    old_percent INTEGER NOT NULL,
+    new_percent INTEGER NOT NULL,
+    old_bytes   TEXT NOT NULL,          -- the period in hex, as read just before: what undo goes back to
+    new_bytes   TEXT NOT NULL,          -- what was sent, in hex
+    outcome     TEXT NOT NULL,          -- sent (nothing recorded since), confirmed, not_applied, mismatch or unknown
+    held_bytes  TEXT                    -- what the read-back found, in hex
+);
 """
 
 # Our name -> the inverter's lifetime kWh reading. Lifetime rather than "today" readings,
@@ -291,3 +304,32 @@ def delete_appliance(conn: sqlite3.Connection, appliance_id: int) -> bool:
     with conn:
         cursor = conn.execute("DELETE FROM appliances WHERE id = ?", (appliance_id,))
     return cursor.rowcount > 0
+
+
+def add_inverter_write(
+    conn: sqlite3.Connection, slot: int, old_bytes: str, new_bytes: str, old_percent: int, new_percent: int
+) -> int:
+    """Called before a write is sent, so it's on record whatever happens next."""
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO inverter_writes (ts, slot, old_percent, new_percent, old_bytes, new_bytes, outcome) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'sent')",
+            (int(time.time()), slot, old_percent, new_percent, old_bytes, new_bytes),
+        )
+    return cursor.lastrowid
+
+
+def finish_inverter_write(conn: sqlite3.Connection, write_id: int, outcome: str, held_bytes: str | None) -> None:
+    with conn:
+        conn.execute(
+            "UPDATE inverter_writes SET outcome = ?, held_bytes = ? WHERE id = ?", (outcome, held_bytes, write_id)
+        )
+
+
+def list_inverter_writes(conn: sqlite3.Connection, limit: int = 20) -> list[dict[str, object]]:
+    """The latest first."""
+    rows = conn.execute(
+        "SELECT id, ts, slot, old_percent, new_percent, outcome FROM inverter_writes ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(zip(("id", "ts", "slot", "old_percent", "new_percent", "outcome"), row)) for row in rows]

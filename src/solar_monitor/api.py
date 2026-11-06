@@ -1,8 +1,8 @@
 """The web app: serves the dashboard page, the latest readings, the logged history, appliances and exports.
 
-The serial number is never sent to the page. The only writes are to this app's own database:
-nothing here writes to the inverter. JSON bodies can't be sent cross-site without a preflight,
-which no other site passes, so a web page elsewhere can't change the appliances.
+The serial number is never sent to the page. The one route that changes the inverter is the TOU
+power one, which hands over to control.py. PUT and JSON bodies can't be sent cross-site without a
+preflight, which no other site passes, so a web page elsewhere can't change anything here.
 """
 
 from __future__ import annotations
@@ -16,18 +16,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 from starlette.background import BackgroundTask
 
-from solar_monitor import db, export, planning
+from solar_monitor import config, control, db, export, planning
 from solar_monitor.collector import Collector
+from solar_monitor.schedule import TIME_PERIODS
 
 PAGE = Path(__file__).with_name("dashboard.html")
 # Served from here, not a font service, so the page looks the same on a LAN with no internet.
 FONTS = Path(__file__).with_name("fonts")
+LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
 
 # Measuring reads every sample in the window, so it isn't repeated on every page refresh.
 MEASURE_SECONDS = 3600
@@ -60,8 +62,24 @@ class SettingsIn(BaseModel):
     tariff_export: Rate | None = None
 
 
+class PeriodPowerIn(BaseModel):
+    percent: Annotated[int, Field(strict=True, ge=control.LOWEST_PERCENT, le=control.HIGHEST_PERCENT)]
+    expected: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{24}$")]  # The period's bytes, as the page saw them.
+
+
 def _positive(*candidates: object) -> float | None:
     return next((c for c in candidates if isinstance(c, (int, float)) and c > 0), None)
+
+
+def _may_change_inverter(request: Request) -> bool:
+    """With a login, the login has already let this request through. Without one, only this machine may.
+
+    Checking the name it was reached by stops a web page that points its own domain name at this
+    machine, which would count as the same site and so pass the browser's cross-site protection.
+    """
+    if config.login() is not None:
+        return True
+    return config.is_local(config.bind_host()) and request.url.hostname in LOOPBACK_NAMES
 
 
 def create_app(collector: Collector) -> FastAPI:
@@ -254,6 +272,24 @@ def create_app(collector: Collector) -> FastAPI:
     async def api_settings(settings: SettingsIn) -> dict[str, object]:
         db.save_settings(collector.conn, settings.model_dump(exclude_unset=True))
         return overview()
+
+    @app.get("/api/tou/writes")
+    async def api_tou_writes() -> dict[str, object]:
+        return {"writes": db.list_inverter_writes(collector.conn)}
+
+    @app.put("/api/tou/{slot}/power")
+    async def api_set_period_power(slot: int, change: PeriodPowerIn, request: Request) -> dict[str, object]:
+        if not _may_change_inverter(request):
+            raise HTTPException(status_code=403, detail="Changing the inverter needs the app's login, so nothing was sent.")
+        if not 1 <= slot <= TIME_PERIODS:
+            raise HTTPException(status_code=404, detail="no such programme")
+        try:
+            result = await collector.set_period_power(slot, change.percent, change.expected)
+        except control.Refused as refused:
+            raise HTTPException(status_code=409, detail=str(refused)) from None
+        except control.Unconfirmed as problem:
+            raise HTTPException(status_code=502, detail=str(problem)) from None
+        return result
 
     @app.get("/api/export")
     async def api_export() -> dict[str, object]:

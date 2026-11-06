@@ -285,6 +285,13 @@
   .export-formats input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--ink); }
   .export-formats .meta { grid-column: 2; }
   .export button:disabled { color: var(--muted); cursor: default; background: var(--surface); }
+
+  /* TOU */
+  .tou-change { display: grid; gap: 12px; justify-items: start; padding: 12px; border: 1px solid var(--rule-strong); }
+  .tou-change label { display: flex; flex-direction: column; gap: 4px; color: var(--ink-2); }
+  .tou-change .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tou-change button:disabled { color: var(--muted); cursor: default; background: var(--surface); }
+  #tou-result:empty { display: none; }
 </style>
 </head>
 <body>
@@ -310,6 +317,7 @@
       <a href="#counters">Counters &amp; checks</a>
       <a href="#appliances">Appliances &amp; tariffs</a>
       <a href="#schedule">Battery schedule</a>
+      <a href="#tou">TOU</a>
       <a href="#fields">All fields</a>
       <a href="#app-data">App Data</a>
     </div>
@@ -498,7 +506,7 @@
   <section class="view schedule" id="view-schedule" aria-label="Battery schedule" hidden>
     <div class="pane">
       <h2>Time periods</h2>
-      <p class="note">What's stored on the inverter now, in the same order as SEMS+. This page only reads it, so make any changes in SEMS+.</p>
+      <p class="note">What's stored on the inverter now, in the same order as SEMS+. This page only reads it. Change a programme's power on the TOU tab, and anything else in SEMS+.</p>
       <div class="scroll" tabindex="0" role="region" aria-label="Time periods table">
         <table>
           <thead><tr><th>#</th><th>Time</th><th>Action</th><th class="num">Cut-off SOC</th><th>Power</th><th>Repeats</th><th>State</th></tr></thead>
@@ -512,6 +520,42 @@
       <table>
         <tbody id="schedule-modes"></tbody>
       </table>
+    </div>
+  </section>
+
+  <section class="view schedule" id="view-tou" aria-label="TOU" hidden>
+    <div class="pane">
+      <h2>TOU programmes</h2>
+      <p class="note">What's stored on the inverter now, in the same order as SEMS+. Only a programme's power can be changed here. Everything else about it stays as it is, and is for SEMS+.</p>
+      <div class="scroll edit" tabindex="0" role="region" aria-label="TOU programmes table">
+        <table>
+          <thead><tr><th>#</th><th>Time</th><th>Action</th><th class="num">Cut-off SOC</th><th>Power</th><th>Repeats</th><th>State</th><th></th></tr></thead>
+          <tbody id="tou-periods"></tbody>
+        </table>
+      </div>
+      <p class="meta" id="tou-read-at"></p>
+      <p class="note" id="tou-restart" hidden>Restart the dashboard to be able to change programmes from here. It's still running the version from before this tab was added.</p>
+      <form class="edit tou-change" id="tou-change" hidden>
+        <h3 id="tou-change-title"></h3>
+        <p class="note" id="tou-change-now"></p>
+        <label><span id="tou-percent-label"></span><input id="tou-percent" type="number" min="1" max="100" step="1" required></label>
+        <p class="note">This goes to the inverter as soon as you send it. The app reads the programme again first, changes only the power, and then reads it back to confirm.</p>
+        <div class="actions">
+          <button id="tou-send" disabled>Send to inverter</button>
+          <button id="tou-cancel" type="button">Cancel</button>
+        </div>
+      </form>
+      <p id="tou-result" role="status"></p>
+    </div>
+    <div class="pane">
+      <h2>Changes made from this app</h2>
+      <p class="note">Every change sent to the inverter, latest first. Changes made in SEMS+ aren't listed.</p>
+      <div class="scroll edit" tabindex="0" role="region" aria-label="Changes made from this app">
+        <table>
+          <thead><tr><th>When</th><th class="num">#</th><th>Power</th><th>Result</th><th></th></tr></thead>
+          <tbody id="tou-writes"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -1160,9 +1204,183 @@
       : "";
   }
 
+  /*
+    The TOU tab. The change panel sits outside the table, so a new reading can't redraw it while
+    someone is typing. It holds the bytes the programme had when it was opened, and the server
+    refuses the change if the inverter no longer holds those.
+  */
+  const POWER_NAMES = { charge: "Grid import power", discharge: "Battery discharge power" };
+  const WRITE_RESULTS = {
+    sent: ["warning", "Sent, with no result recorded"],
+    confirmed: ["good", "Confirmed by reading it back"],
+    not_applied: ["critical", "Not applied: it kept the old value"],
+    mismatch: ["critical", "Holds something else: check SEMS+"],
+    unknown: ["warning", "Couldn't read it back: check SEMS+"],
+  };
+  let touChange = null;
+  let touSending = false;
+  let touWrites = [];
+  let touShown = null;
+
+  const touPeriod = (slot) => latest?.schedule?.periods.find((period) => period.slot === slot);
+  const touTime = (period) => `${period.start} to ${period.end}${period.next_day ? " (next day)" : ""}`;
+
+  function touButton(text, action) {
+    const button = el("button", "", text);
+    button.type = "button";
+    button.addEventListener("click", action);
+    return button;
+  }
+
+  function touRow(period) {
+    const row = periodRow(period);
+    const cell = el("td");
+    if (period.raw && period.power_pct > 0) {
+      cell.append(touButton("Change power", () => openTouChange(period, period.power_pct)));
+    }
+    row.append(cell);
+    return row;
+  }
+
+  function renderTou() {
+    closeOutdatedTouChange();
+    const schedule = latest?.schedule;
+    const shown = JSON.stringify(schedule ?? null);
+    if (shown === touShown) return; // So a new reading doesn't take focus off a button.
+    touShown = shown;
+    const periods = schedule?.periods.filter((period) => period.state !== "empty") ?? [];
+    let rows = periods.map(touRow);
+    if (!rows.length) {
+      const placeholder = el("tr");
+      const cell = el("td", "no-value", schedule ? "No programmes are stored." : "Waiting for the first read.");
+      cell.colSpan = 8;
+      placeholder.append(cell);
+      rows = [placeholder];
+    }
+    $("tou-periods").replaceChildren(...rows);
+    // Added with this tab, so a dashboard still running the version before it doesn't send them.
+    $("tou-restart").hidden = !periods.some((period) => period.power_pct !== undefined && period.raw === undefined);
+    $("tou-read-at").textContent = schedule
+      ? `Read from the inverter at ${new Date(schedule.read_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}, and again every 5 minutes or after a change.`
+      : "";
+    renderTouWrites();
+  }
+
+  function renderTouWrites() {
+    const undone = new Set();
+    const rows = touWrites.map((write) => {
+      const row = el("tr");
+      const [kind, label] = WRITE_RESULTS[write.outcome] ?? ["warning", write.outcome];
+      const when = new Date(write.ts * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      const result = el("td");
+      result.append(status(kind, label));
+      const undo = el("td");
+      // Only the latest change to a programme can be put back, and only while it still holds that change.
+      const period = touPeriod(write.slot);
+      if (!undone.has(write.slot) && write.outcome === "confirmed" && period?.raw && period.power_pct === write.new_percent) {
+        undo.append(touButton(`Put back to ${write.old_percent}%`, () => openTouChange(period, write.old_percent)));
+      }
+      undone.add(write.slot);
+      row.append(el("td", "", when), el("td", "num", String(write.slot)), el("td", "", `${write.old_percent}% to ${write.new_percent}%`), result, undo);
+      return row;
+    });
+    if (!rows.length) {
+      const placeholder = el("tr");
+      const cell = el("td", "no-value", "None yet.");
+      cell.colSpan = 5;
+      placeholder.append(cell);
+      rows.push(placeholder);
+    }
+    $("tou-writes").replaceChildren(...rows);
+  }
+
+  async function refreshTouWrites() {
+    try {
+      touWrites = (await getJson("/api/tou/writes")).writes;
+    } catch {
+      touWrites = []; // A dashboard still running the version before this tab has no list to show.
+    }
+    renderTouWrites();
+  }
+
+  function updateTouSend() {
+    const input = $("tou-percent");
+    const value = Number(input.value);
+    $("tou-send").disabled = touSending || !touChange || !input.checkValidity() || value === touChange.current;
+  }
+
+  function openTouChange(period, percent) {
+    touChange = { slot: period.slot, raw: period.raw, current: period.power_pct };
+    $("tou-change-title").textContent = `Programme ${period.slot}: ${touTime(period)}, ${period.action}`;
+    $("tou-change-now").textContent = `${POWER_NAMES[period.action]} is ${period.power_pct}% now.`;
+    $("tou-percent-label").textContent = `New ${POWER_NAMES[period.action].toLowerCase()}, %`;
+    $("tou-percent").value = percent;
+    $("tou-result").textContent = "";
+    $("tou-change").hidden = false;
+    updateTouSend();
+    $("tou-percent").focus();
+  }
+
+  function closeTouChange() {
+    touChange = null;
+    $("tou-change").hidden = true;
+  }
+
+  // A change is worked out from what the panel showed. Once that's gone it has to be started again from the new value.
+  function closeOutdatedTouChange() {
+    if (!touChange || touSending || touPeriod(touChange.slot)?.raw === touChange.raw) return;
+    const { slot } = touChange;
+    closeTouChange();
+    if (!$("tou-result").textContent) {
+      $("tou-result").textContent = `Programme ${slot} no longer matches what this showed, so it was closed and nothing was sent. The table shows it as it is now.`;
+    }
+  }
+
+  async function sendTouChange(event) {
+    event.preventDefault();
+    if (!touChange || touSending || $("tou-send").disabled) return;
+    const { slot, raw } = touChange;
+    const percent = Number($("tou-percent").value);
+    touSending = true;
+    updateTouSend();
+    $("tou-cancel").disabled = true;
+    $("tou-result").textContent = "Sending it, then reading it back…";
+    let message;
+    try {
+      const response = await fetch(`/api/tou/${slot}/power`, {
+        method: "PUT",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ percent, expected: raw }),
+      });
+      const answer = await response.json().catch(() => null);
+      if (response.ok) {
+        message = answer.outcome === "unchanged"
+          ? `Programme ${slot} already holds ${percent}%, so nothing was sent.`
+          : `Programme ${slot} changed from ${answer.old_percent}% to ${percent}%, confirmed by reading it back.`;
+        closeTouChange();
+      } else {
+        message = typeof answer?.detail === "string" ? answer.detail : `Couldn't do that: the server answered ${response.status}.`;
+      }
+    } catch {
+      message = "Can't reach the dashboard server, so it isn't known whether the change arrived. Check the programme here or in SEMS+ before relying on it.";
+    }
+    touSending = false;
+    $("tou-cancel").disabled = false;
+    $("tou-result").textContent = message;
+    await refresh();
+    await refreshTouWrites();
+    updateTouSend();
+  }
+
+  $("tou-percent").addEventListener("input", updateTouSend);
+  $("tou-change").addEventListener("submit", sendTouChange);
+  $("tou-cancel").addEventListener("click", closeTouChange);
+
   function render() {
     if (latest?.readings) values = Object.fromEntries(latest.readings.map((r) => [r.id, r.value]));
     renderSchedule();
+    renderTou();
     renderConnection();
     if (latest?.device) {
       const d = latest.device;
@@ -2015,6 +2233,7 @@
     "#counters": "view-counters",
     "#appliances": "view-appliances",
     "#schedule": "view-schedule",
+    "#tou": "view-tou",
     "#fields": "view-fields",
     "#app-data": "view-app-data",
   };
@@ -2039,6 +2258,7 @@
     $("chart-tip").hidden = true;
     if (tab === "#appliances") refreshOverview();
     if (tab === "#app-data") refreshExport();
+    if (tab === "#tou") refreshTouWrites();
     if (returning) {
       refreshHistory();
       refreshDaily();

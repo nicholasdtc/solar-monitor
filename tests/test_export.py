@@ -70,7 +70,9 @@ def write(collector, name):
 
 def test_csv_zip_holds_each_table(filled, temp_folder):
     with zipfile.ZipFile(write(filled, "csv")) as archive:
-        assert sorted(archive.namelist()) == ["README.txt", "appliances.csv", "daily_counters.csv", "samples.csv", "settings.csv"]
+        assert sorted(archive.namelist()) == [
+            "README.txt", "appliances.csv", "daily_counters.csv", "inverter_writes.csv", "samples.csv", "settings.csv",
+        ]
         samples = read_csv(archive, "samples.csv")
         counters = read_csv(archive, "daily_counters.csv")
         appliances = read_csv(archive, "appliances.csv")
@@ -93,6 +95,15 @@ def test_csv_zip_holds_each_table(filled, temp_folder):
 def test_csv_zip_of_an_empty_database_has_just_the_headers(collector, temp_folder):
     with zipfile.ZipFile(write(collector, "csv")) as archive:
         assert archive.read("settings.csv").decode("utf-8-sig").strip() == "key,value"
+
+
+def test_csv_zip_holds_the_changes_sent_to_the_inverter(collector, temp_folder):
+    write_id = db.add_inverter_write(collector.conn, 1, "aa", "bb", 40, 30)
+    db.finish_inverter_write(collector.conn, write_id, "confirmed", "bb")
+    with zipfile.ZipFile(write(collector, "csv")) as archive:
+        row = read_csv(archive, "inverter_writes.csv")[0]
+    assert (row["slot"], row["old_percent"], row["new_percent"]) == ("1", "40", "30")
+    assert (row["outcome"], row["old_bytes"], row["new_bytes"], row["held_bytes"]) == ("confirmed", "aa", "bb", "bb")
 
 
 def test_sqlite_export_is_a_complete_working_copy(filled, temp_folder):

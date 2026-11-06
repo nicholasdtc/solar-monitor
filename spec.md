@@ -51,8 +51,9 @@ solar-monitor/
     db.py                # schema, migrations, queries
     planning.py          # battery time remaining, capacity measured from the log, appliance load sums, load planners, tariff sums
     schedule.py          # reads the working mode, mode switches and TOU time periods (never writes)
+    control.py           # the only code that writes to the inverter: one TOU period's power, checked before and after
     export.py            # downloadable copies of the app's data: one entry per format
-    api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings, /api/export
+    api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings, /api/tou, /api/export
     dashboard.html       # the dashboard page
     fonts/               # the page's fonts, served locally so it works without internet
     main.py              # runs collector + API
@@ -109,6 +110,7 @@ solar-monitor/
 - Log every write. Show the current value before changing it. Make it easy to revert.
 - Protecting the equipment comes first. Double check every write before it runs: read the current value again, compare the exact value to be written with what was read, and keep the old value for undo. Read it back afterwards and compare. Start with the smallest harmless change, and leave out any setting that can't be written safely.
 - Done so far: the Battery schedule tab shows the settings read-only. TOU has its own on/off switch, separate from the working mode. Don't use the library's `set_operation_mode` for the Eco modes: it overwrites the first time period and disables the others. Each period's on/off byte also marks its type, so write the matching value for that type rather than a plain 0 or 1.
+- The TOU tab changes one thing: a programme's power, through `control.py`. A change has to name the bytes the page was showing, and is refused if the inverter holds anything else. Only the power bytes differ in what's sent, keeping the direction and the type's units. It's logged in `inverter_writes` before sending, read back byte for byte afterwards, and never retried by itself. Without a login, only the machine the app runs on can send one.
 
 ## Open questions
 

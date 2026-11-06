@@ -29,6 +29,8 @@ CSV_QUERIES = {
     "daily_counters": "SELECT day, counter, first_value, last_value FROM daily_counters ORDER BY day, counter",
     "appliances": "SELECT id, name, typical_w, peak_w, surge_w, use_in_outage, notes FROM appliances ORDER BY id",
     "settings": "SELECT key, value FROM settings ORDER BY key",
+    "inverter_writes": "SELECT id, ts, datetime(ts, 'unixepoch', 'localtime') AS local_time, slot, old_percent, new_percent, "
+    "outcome, old_bytes, new_bytes, held_bytes FROM inverter_writes ORDER BY id",
 }
 
 CSV_README = """Solar monitor export, CSV layout 1
@@ -42,6 +44,8 @@ daily_counters.csv  Each day's first and latest reading of each lifetime counter
                     A day's energy runs from the previous recorded day's latest reading.
 appliances.csv      Your appliances, in watts. use_in_outage is 1 if ticked for a power cut.
 settings.csv        Your planning choices. Unset ones aren't listed.
+inverter_writes.csv Every change this app sent to the inverter. Confirmed means it read the change
+                    back. The bytes are the whole TOU programme in hex, before and after.
 
 The other readings from each poll are only in the full database export.
 """
@@ -89,7 +93,7 @@ class Format:
 FORMATS = {
     "csv": Format(
         "Spreadsheets (CSV files in a ZIP)",
-        "For Excel or Google Sheets. Each poll's main readings, daily counters, appliances and settings.",
+        "For Excel or Google Sheets. Each poll's main readings, daily counters, appliances, settings and inverter changes.",
         "zip",
         "application/zip",
         _write_csv_zip,

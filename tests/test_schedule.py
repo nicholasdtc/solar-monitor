@@ -31,6 +31,7 @@ def test_an_enabled_overnight_charge():
         "cutoff_soc": 85,
         "days": "Every day",
         "months": "All year",
+        "raw": "161e0600f97ffea200550fff",
     }
 
 

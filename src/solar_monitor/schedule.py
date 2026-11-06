@@ -1,13 +1,19 @@
-"""The battery schedule as the inverter holds it. This only reads: nothing here writes to the inverter."""
+"""The battery schedule as the inverter holds it. This only reads: writes are all in control.py."""
 
 from __future__ import annotations
 
+import struct
+
 import goodwe
-from goodwe.sensor import EcoModeV1, ScheduleType
+from goodwe.sensor import EcoModeV1, EcoModeV2, ScheduleType
 
 TIME_PERIODS = 4  # What the library exposes. SEMS+ shows them in this same order.
 ALL_DAYS = (127, -1)
 TOU_TYPES = (ScheduleType.ECO_MODE, ScheduleType.ECO_MODE_745)
+
+# A period's 12 bytes: start hour and minute, end hour and minute, on/off, days, power, cut-off SOC, months.
+# All signed, as the library reads them, so packing what it read gives back the same bytes.
+PERIOD_LAYOUT = struct.Struct(">bbbbbbhhh")
 
 # Value 0 is what SEMS+ calls Self-consumption. The library calls it General.
 WORK_MODES = {0: "Self-consumption", 1: "Off-grid", 2: "Backup", 3: "Eco", 4: "Peak shaving", 5: "Self-use"}
@@ -20,6 +26,14 @@ def _clock(hours: int, minutes: int) -> str:
 def _is_empty(group) -> bool:
     # A slot that was never used is all zeros, a cleared one starts at hour 48 or -1, and 85 means not set.
     return group.day_bits == 0 or group.start_h in (48, -1) or group.on_off == ScheduleType.NOT_SET
+
+
+def period_bytes(group: EcoModeV2) -> bytes:
+    """The 12 bytes the inverter holds for this period."""
+    return PERIOD_LAYOUT.pack(
+        group.start_h, group.start_m, group.end_h, group.end_m,
+        group.on_off, group.day_bits, group.power, group.soc, group.month_bits,
+    )
 
 
 def describe_period(slot: int, group) -> dict[str, object]:
@@ -42,10 +56,12 @@ def describe_period(slot: int, group) -> dict[str, object]:
         "cutoff_soc": None if isinstance(group, EcoModeV1) else group.soc,  # The older format has no cut-off.
         "days": "Every day" if group.day_bits in ALL_DAYS else group.days.replace(",", ", "),
         "months": getattr(group, "months", None) or "All year",
+        # What a change has to be based on. The older format can't be changed from here, so has none.
+        "raw": period_bytes(group).hex() if isinstance(group, EcoModeV2) else None,
     }
 
 
-async def _read(inverter: goodwe.Inverter, setting: str):
+async def read_setting(inverter: goodwe.Inverter, setting: str):
     try:
         return await inverter.read_setting(setting)
     except Exception:  # One unreadable setting shows as unknown, and shouldn't cost the rest of the page.
@@ -53,20 +69,20 @@ async def _read(inverter: goodwe.Inverter, setting: str):
 
 
 async def _switch(inverter: goodwe.Inverter, setting: str) -> bool | None:
-    value = await _read(inverter, setting)
+    value = await read_setting(inverter, setting)
     return None if value is None else bool(value)
 
 
 async def read_schedule(inverter: goodwe.Inverter) -> dict[str, object]:
     """The working mode, the mode switches and the time periods. Anything unreadable comes back as None."""
-    work_mode = await _read(inverter, "work_mode")
+    work_mode = await read_setting(inverter, "work_mode")
     return {
         "work_mode": None if work_mode is None else WORK_MODES.get(work_mode, f"Unknown ({work_mode})"),
         "tou_on": await _switch(inverter, "eco_mode_enable"),  # Separate from the working mode, as SEMS+ shows it.
         "backup_on": await _switch(inverter, "backup_mode_enable"),
         "smart_charge_on": await _switch(inverter, "smart_charging_enable"),
         "periods": [
-            describe_period(slot, await _read(inverter, f"eco_mode_{slot}"))
+            describe_period(slot, await read_setting(inverter, f"eco_mode_{slot}"))
             for slot in range(1, TIME_PERIODS + 1)
         ],
     }
