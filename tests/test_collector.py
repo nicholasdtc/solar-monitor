@@ -271,3 +271,50 @@ def test_history_route_refuses_a_backwards_range(conn):
 def test_daily_route_returns_one_row_per_day(conn):
     result = asyncio.run(route(Collector("host", 502, conn), "/api/daily")(days=3))
     assert len(result["days"]) == 3
+
+
+class HasSettings(FakeInverter):
+    def __init__(self, failures=()):
+        super().__init__(failures)
+        self.mode_reads = 0
+
+    async def read_setting(self, name):
+        if name == "work_mode":
+            self.mode_reads += 1
+            return 0
+        raise ValueError(name)
+
+
+def poll_until(monkeypatch, conn, inverter, reads):
+    use_inverter(monkeypatch, inverter)
+    app_collector = Collector("host", 502, conn)
+
+    async def scenario():
+        async with create_app(app_collector).router.lifespan_context(None):
+            await wait_for(lambda: inverter.reads >= reads)
+
+    asyncio.run(scenario())
+    return app_collector
+
+
+def test_the_schedule_is_read_once_per_interval_not_every_poll(monkeypatch, conn):
+    monkeypatch.setattr(collector, "SETTINGS_SECONDS", 3600)
+    inverter = HasSettings()
+    app_collector = poll_until(monkeypatch, conn, inverter, 5)
+    assert inverter.mode_reads == 1
+    assert app_collector.latest["schedule"]["work_mode"] == "Self-consumption"
+    assert app_collector.latest["schedule"]["read_at"]
+
+
+def test_the_schedule_is_read_again_after_the_interval(monkeypatch, conn):
+    monkeypatch.setattr(collector, "SETTINGS_SECONDS", 0)
+    inverter = HasSettings()
+    poll_until(monkeypatch, conn, inverter, 5)
+    assert inverter.mode_reads >= 5
+
+
+def test_the_schedule_is_read_again_after_a_lost_connection(monkeypatch, conn):
+    monkeypatch.setattr(collector, "SETTINGS_SECONDS", 3600)
+    inverter = HasSettings(failures={2})
+    poll_until(monkeypatch, conn, inverter, 4)
+    assert inverter.mode_reads == 2

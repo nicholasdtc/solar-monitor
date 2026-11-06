@@ -15,10 +15,11 @@ from datetime import datetime
 import goodwe
 
 from solar_monitor import db
+from solar_monitor.schedule import read_schedule
 
 POLL_SECONDS = 15
 FLUSH_SECONDS = 300
-LIMITS_SECONDS = 3600  # These change only when someone edits them, so hourly is plenty.
+SETTINGS_SECONDS = 300  # These change only when someone edits them, in SEMS+ for example.
 
 
 def timestamp() -> str:
@@ -89,16 +90,17 @@ class Collector:
         """Keep `latest` current. After a failure the last good readings stay, with `error` set."""
         inverter = None
         flushed_at = time.monotonic()
-        limits_read_at = None
+        settings_read_at = None
         while True:
             try:
                 if inverter is None:
                     inverter = await goodwe.connect(self.host, port=self.port, timeout=2, retries=3)
                     self.latest["device"] = device_info(inverter)
-                    limits_read_at = None  # A failed read of them often means a lost connection.
-                if limits_read_at is None or time.monotonic() - limits_read_at >= LIMITS_SECONDS:
+                    settings_read_at = None  # A failed read of them often means a lost connection.
+                if settings_read_at is None or time.monotonic() - settings_read_at >= SETTINGS_SECONDS:
                     self.latest["battery_limits"] = await read_battery_limits(inverter)
-                    limits_read_at = time.monotonic()
+                    self.latest["schedule"] = {**await read_schedule(inverter), "read_at": timestamp()}
+                    settings_read_at = time.monotonic()
                 values = await inverter.read_runtime_data()
                 sensors = {sensor.id_: sensor for sensor in inverter.sensors()}
                 self.latest["readings"] = [

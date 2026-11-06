@@ -48,6 +48,7 @@ solar-monitor/
     collector.py         # poll loop: read_runtime_data -> buffer -> batched SQLite writes
     db.py                # schema, migrations, queries
     planning.py          # battery time remaining, capacity measured from the log, appliance load sums
+    schedule.py          # reads the working mode, mode switches and TOU time periods (never writes)
     api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings
     dashboard.html       # the dashboard page
     main.py              # runs collector + API
@@ -99,6 +100,8 @@ solar-monitor/
 **Phase 6: control (optional)**
 - Battery schedule and settings writes behind login, reachable over the VPN only.
 - Log every write. Show the current value before changing it. Make it easy to revert.
+- Protecting the equipment comes first. Double check every write before it runs: read the current value again, compare the exact value to be written with what was read, and keep the old value for undo. Read it back afterwards and compare. Start with the smallest harmless change, and leave out any setting that can't be written safely.
+- Done so far: the Battery schedule tab shows the settings read-only. TOU has its own on/off switch, separate from the working mode. Don't use the library's `set_operation_mode` for the Eco modes: it overwrites the first time period and disables the others. Each period's on/off byte also marks its type, so write the matching value for that type rather than a plain 0 or 1.
 
 ## Open questions
 
