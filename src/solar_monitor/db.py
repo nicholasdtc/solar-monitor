@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS samples (
     load_w      REAL,                 -- load_ptotal
     battery_w   REAL,                 -- pbattery1, as reported: negative means charging
     battery_soc REAL,                 -- battery_soc, percent
-    grid_w      REAL,                 -- active_power_total, as reported: positive is believed
-                                      -- to mean exporting, not yet confirmed by a large flow
+    grid_w      REAL,                 -- active_power_total, as reported: positive means exporting,
+                                      -- confirmed by a large import, see sems-delay-findings.md
     raw         BLOB NOT NULL         -- every reading: zlib-compressed JSON, see decode_raw()
 );
 

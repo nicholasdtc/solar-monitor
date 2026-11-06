@@ -528,7 +528,8 @@
 
   // Below this a power reading is mostly noise, so its direction can't be judged.
   const FLOW_MIN_W = 50;
-  // The goodwe library's convention. Not yet confirmed here with a large grid flow.
+  // The goodwe library's convention, confirmed here: with no solar and the battery stopped,
+  // a 4.3 kW house load read about -4.3 kW. See sems-delay-findings.md.
   const GRID_POSITIVE_MEANS_EXPORT = true;
   // Flow lines thicken with power up to this.
   const FLOW_FULL_SCALE_W = 5000;
@@ -1140,8 +1141,7 @@
     { title: "Battery and grid (W)", height: 190, signed: true, series: [
       { key: "battery_w", label: "Battery", unit: "W", color: "--flow-battery", above: "discharging", below: "charging" },
       { key: "grid_w", label: "Grid", unit: "W", color: "--flow-grid", above: GRID_ABOVE_ZERO, below: GRID_BELOW_ZERO },
-    ], note: `Above zero: battery discharging, grid ${GRID_ABOVE_ZERO}. Below zero: battery charging, grid ${GRID_BELOW_ZERO}. ` +
-      "Grid direction hasn't been confirmed with a large grid flow yet." },
+    ], note: `Above zero: battery discharging, grid ${GRID_ABOVE_ZERO}. Below zero: battery charging, grid ${GRID_BELOW_ZERO}.` },
     { title: "Battery charge (%)", height: 130, domain: [0, 100], series: [
       { key: "battery_soc", label: "Battery charge", unit: "%", color: "--flow-battery" },
     ] },
