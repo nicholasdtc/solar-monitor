@@ -41,6 +41,7 @@ solar-monitor/
   .env.example
   .gitignore
   pyproject.toml
+  start-dashboard.bat    # runs the app in a window; closing the window or Ctrl+C saves and stops it
   src/solar_monitor/
     config.py            # loads .env
     auth.py              # login page and session cookie around the whole app

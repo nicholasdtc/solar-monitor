@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
+from collections.abc import Callable
 
 import uvicorn
 
@@ -19,6 +21,34 @@ from solar_monitor.collector import FLUSH_SECONDS, POLL_SECONDS, Collector
 from solar_monitor.config import bind_host, db_path, is_local, login, resolve_target
 
 BIND_PORT = 8000
+CLOSE_EVENTS = {2, 5, 6}  # Windows: console window closed, user logging off, computer shutting down.
+CLOSE_WAIT_SECONDS = 10  # Longer than Windows allows (about 5s), so Windows sets the real limit.
+
+_registered_handler: object = None
+
+
+def close_handler(server: uvicorn.Server, finished: threading.Event) -> Callable[[int], bool]:
+    """Windows ends the process as soon as a handler returns, so wait here until the app has saved."""
+
+    def handle(event: int) -> bool:
+        if event not in CLOSE_EVENTS:
+            return False  # Ctrl+C and Ctrl+Break carry on to uvicorn's own handling.
+        server.should_exit = True
+        finished.wait(CLOSE_WAIT_SECONDS)
+        return True
+
+    return handle
+
+
+def stop_when_window_closes(server: uvicorn.Server, finished: threading.Event) -> None:
+    global _registered_handler
+    if sys.platform != "win32":
+        return  # Elsewhere the app is stopped with signals, which uvicorn handles.
+    import ctypes
+
+    # Kept in a global because Windows would crash calling it after it was garbage collected.
+    _registered_handler = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint)(close_handler(server, finished))
+    ctypes.windll.kernel32.SetConsoleCtrlHandler(_registered_handler, True)
 
 
 def main() -> int:
@@ -53,17 +83,17 @@ def main() -> int:
     app = create_app(Collector(*target, conn))
     if credentials:
         app.add_middleware(LoginRequired, username=credentials[0], password=credentials[1])
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=BIND_PORT, log_level="warning", access_log=False))
+    finished = threading.Event()
+    stop_when_window_closes(server, finished)
     try:
-        uvicorn.run(
-            app,
-            host=host,
-            port=BIND_PORT,
-            log_level="warning",
-            access_log=False,
-        )
+        server.run()
+    except KeyboardInterrupt:
+        pass  # uvicorn has already shut down and saved, and raises this again on its way out.
     finally:
         conn.close()
-    return 0
+        finished.set()
+    return 0 if server.started else 1
 
 
 if __name__ == "__main__":
