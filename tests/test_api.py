@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 
 import httpx
@@ -218,6 +219,22 @@ def test_the_page_has_an_input_for_every_setting(call):
     page = call("GET", "/").text
     for name in db.SETTINGS:
         assert f'name="{name}"' in page
+
+
+def test_the_page_gets_every_font_from_this_app(call):
+    page = call("GET", "/").text
+    fonts = re.findall(r'url\("(/fonts/[^"]+)"\)', page)
+    assert fonts
+    for path in fonts:
+        response = call("GET", path)
+        assert response.status_code == 200
+        assert response.content.startswith(b"wOF2")
+
+
+def test_the_page_loads_nothing_from_the_internet(call):
+    """It has to keep working on the home network when the internet is down."""
+    page = call("GET", "/").text
+    assert not re.findall(r'(?:src|href)="(?:https?:)?//|url\(["\']?(?:https?:)?//|@import', page)
 
 
 def test_a_cross_site_form_post_cannot_add_an_appliance(call):

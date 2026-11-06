@@ -51,6 +51,7 @@ solar-monitor/
     schedule.py          # reads the working mode, mode switches and TOU time periods (never writes)
     api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings
     dashboard.html       # the dashboard page
+    fonts/               # the page's fonts, served locally so it works without internet
     main.py              # runs collector + API
   scripts/probe.py       # one-off read of the inverter
   deploy/

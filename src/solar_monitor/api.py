@@ -17,12 +17,15 @@ from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 
 from solar_monitor import db, planning
 from solar_monitor.collector import Collector
 
 PAGE = Path(__file__).with_name("dashboard.html")
+# Served from here, not a font service, so the page looks the same on a LAN with no internet.
+FONTS = Path(__file__).with_name("fonts")
 
 # Measuring reads every sample in the window, so it isn't repeated on every page refresh.
 MEASURE_SECONDS = 3600
@@ -224,5 +227,7 @@ def create_app(collector: Collector) -> FastAPI:
     async def api_settings(settings: SettingsIn) -> dict[str, object]:
         db.save_settings(collector.conn, settings.model_dump(exclude_unset=True))
         return overview()
+
+    app.mount("/fonts", StaticFiles(directory=FONTS), name="fonts")
 
     return app

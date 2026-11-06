@@ -24,7 +24,7 @@ solar-monitor = "solar_monitor.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-solar_monitor = ["*.html"]
+solar_monitor = ["*.html", "fonts/*.woff2", "fonts/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

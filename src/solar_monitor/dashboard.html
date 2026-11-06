@@ -5,383 +5,503 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Solar monitor</title>
 <style>
+  @font-face { font-family: "Barlow"; font-weight: 400; font-display: swap; src: url("/fonts/barlow-latin-400-normal.woff2") format("woff2"); }
+  @font-face { font-family: "Barlow"; font-weight: 500; font-display: swap; src: url("/fonts/barlow-latin-500-normal.woff2") format("woff2"); }
+  @font-face { font-family: "Barlow"; font-weight: 600; font-display: swap; src: url("/fonts/barlow-latin-600-normal.woff2") format("woff2"); }
+  @font-face { font-family: "Barlow Condensed"; font-weight: 500; font-display: swap; src: url("/fonts/barlow-condensed-latin-500-normal.woff2") format("woff2"); }
+  @font-face { font-family: "Barlow Condensed"; font-weight: 600; font-display: swap; src: url("/fonts/barlow-condensed-latin-600-normal.woff2") format("woff2"); }
+  @font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-display: swap; src: url("/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); }
+
   :root {
     color-scheme: light;
-    --page: #f9f9f7;
-    --surface: #fcfcfb;
-    --ink: #0b0b0b;
-    --ink-2: #52514e;
-    --muted: #6f6e69;
-    --hairline: #e1e0d9;
-    --border: rgba(11, 11, 11, 0.10);
-    --good: #0ca30c;
+    --page: #dfe2df;
+    --surface: #f5f6f4;
+    --ink: #12181a;
+    --ink-2: #434b4e;
+    --muted: #596265;
+    --rule: #cdd1cd;
+    --rule-strong: #9aa19f;
+    --good: #0b7f0b;
     --warning: #fab219;
-    --critical: #d03b3b;
-    --baseline: #c3c2b7;
+    --critical: #c93434;
     --flow-grid: #2a78d6;
     --flow-solar: #eb6834;
     --flow-battery: #1baf7a;
-    --flow-load: #6250d6;
+    --flow-load: #b5338a;
+    --display: "Barlow Condensed", "Arial Narrow", "Segoe UI", sans-serif;
+    --body: "Barlow", "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+    --gutter: clamp(16px, 2vw, 28px);
+    --tabs-h: 48px;
+    --board-max: 1840px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       color-scheme: dark;
-      --page: #0d0d0d;
-      --surface: #1a1a19;
-      --ink: #f0efec;
-      --ink-2: #c3c2b7;
-      --muted: #989690;
-      --hairline: #2c2c2a;
-      --border: rgba(255, 255, 255, 0.10);
-      --baseline: #383835;
+      --page: #0e1316;
+      --surface: #171d21;
+      --ink: #e8ecea;
+      --ink-2: #b6bfbf;
+      --muted: #939da0;
+      --rule: #2a3237;
+      --rule-strong: #4c565c;
+      --good: #2f9e2f;
+      --critical: #e05a5a;
       --flow-grid: #3987e5;
       --flow-solar: #d95926;
       --flow-battery: #199e70;
-      --flow-load: #9085e9;
+      --flow-load: #da64ac;
     }
   }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--page);
-    color: var(--ink);
-    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
-  }
-  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
-  header { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; justify-content: space-between; }
-  h1 { margin: 0; font-size: 20px; font-weight: 600; }
-  h2 { margin: 32px 0 4px; font-size: 15px; font-weight: 600; }
-  p { margin: 0; }
-  .note { color: var(--ink-2); margin-bottom: 12px; }
-  .meta { color: var(--muted); font-size: 12px; }
-  code { font: 12px ui-monospace, Consolas, monospace; }
 
-  #error, .alert { margin-top: 12px; padding: 8px 12px; border: 1px solid var(--critical); border-radius: 8px; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column;
+    background: var(--page); color: var(--ink);
+    font: 15px/1.45 var(--body); font-variant-numeric: lining-nums;
+  }
+  h1, h2, h3, p { margin: 0; }
+  h1, h2 { font-family: var(--display); font-weight: 600; text-wrap: balance; }
+  h1 { font-size: 26px; line-height: 1.1; }
+  h2 { font-size: 24px; line-height: 1.15; }
+  h3 { font-size: 14px; font-weight: 600; }
+  code { font: 12px var(--mono); }
+  button, input, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--flow-grid); outline-offset: -2px; }
+
+  .seg { display: inline-flex; }
+  .seg button {
+    padding: 6px 12px; min-height: 36px; cursor: pointer; background: var(--surface);
+    border: 1px solid var(--rule-strong); margin-left: -1px;
+  }
+  .seg button:first-child { margin-left: 0; }
+  .seg button:hover { background: var(--page); }
+  .seg button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); font-weight: 600; position: relative; }
+
+  /* Header: identity and the slow-changing facts. It scrolls away; the tab row doesn't. */
+  .top { background: var(--surface); }
+  .top-in {
+    max-width: var(--board-max); margin: 0 auto; padding: 12px var(--gutter);
+    display: flex; flex-wrap: wrap; gap: 4px 24px; align-items: baseline;
+  }
+  .top-meta { flex: 1 1 320px; display: flex; flex-wrap: wrap; gap: 0 20px; color: var(--muted); font-size: 13px; }
+  .top button {
+    padding: 4px 10px; min-height: 32px; cursor: pointer; background: none; color: var(--ink-2);
+    border: 1px solid var(--rule-strong); font-size: 13px;
+  }
+  #storage .status { white-space: normal; }
+  .alert, #error { padding: 10px var(--gutter); background: #b02a2a; color: #fff; font-weight: 500; }
   #error:empty, .alert:empty { display: none; }
 
-  .tabs { display: flex; gap: 4px; margin-top: 16px; border-bottom: 1px solid var(--hairline); }
-  .tabs a { margin-bottom: -1px; padding: 8px 12px; color: var(--ink-2); text-decoration: none; border-bottom: 2px solid transparent; }
-  .tabs a[aria-current="page"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink); }
-
-  .flow { margin-top: 16px; padding: 12px; overflow: hidden; }
-  #flow-summary { font-size: 16px; font-weight: 600; }
-  .flow svg { display: block; width: 100%; max-width: 480px; margin: 12px auto; transition: opacity 0.2s; }
-  .flow svg text { text-anchor: middle; fill: var(--ink-2); font-size: 14px; }
-  .flow svg .flow-value { fill: var(--ink); font-size: 24px; font-weight: 600; }
-  .flow-box { fill: var(--surface); stroke: var(--border); }
-  .flow-hub { fill: var(--page); stroke: var(--baseline); }
-  .flow svg .flow-hub-label, .flow svg .flow-eta { font-size: 12px; }
-  .flow-icon { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .flow-track, .flow-dash { fill: none; }
-  .flow-track { stroke: var(--baseline); stroke-width: 2; }
-  .flow-dash, .flow-arrow { display: none; }
-  .flow-dash { stroke-dasharray: 9 15; stroke-linecap: round; animation: flow-move 1s linear infinite; }
-  .flow-arrow { fill: var(--flow-color); stroke: var(--surface); stroke-width: 2; paint-order: stroke; }
-  .flow-node.active .flow-box { stroke: var(--flow-color); stroke-width: 1.5; }
-  .flow-node.active .flow-icon { stroke: var(--flow-color); }
-  .flow-node.active .flow-track { stroke: var(--flow-color); stroke-opacity: 0.25; stroke-width: var(--flow-width); }
-  .flow-node.active .flow-dash { display: inline; stroke: var(--flow-color); stroke-width: var(--flow-width); }
-  .flow-node.active .flow-arrow { display: inline; }
-  .flow-node.outward .flow-dash { animation-direction: reverse; }
-  /* Old readings must not look live: stop the motion and keep the last direction, dimmed. */
-  .flow.frozen svg { opacity: 0.45; }
-  .flow.frozen .flow-node.active .flow-dash { display: none; }
-  .flow.frozen .flow-eta { visibility: hidden; }
-  @keyframes flow-move { to { stroke-dashoffset: -24; } }
-  @media (prefers-reduced-motion: reduce) {
-    .flow-dash { animation: none; }
-    .flow svg { transition: none; }
+  /* Sticky tab row. Tabs scroll sideways inside it; the connection state stays put. */
+  .tabs { position: sticky; top: 0; z-index: 5; flex: none; background: var(--surface); border-block: 1px solid var(--rule-strong); }
+  .tabs-in { max-width: var(--board-max); margin: 0 auto; display: flex; height: var(--tabs-h); }
+  .tab-row { flex: 1; min-width: 0; display: flex; overflow-x: auto; scrollbar-width: none; }
+  .tab-row::-webkit-scrollbar { display: none; }
+  .tab-row a {
+    flex: none; display: flex; align-items: center; padding: 0 16px; white-space: nowrap;
+    color: var(--ink-2); font-weight: 500; text-decoration: none; border-right: 1px solid var(--rule);
   }
-
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
-  .tile, .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
-  .tile { padding: 12px 16px; }
-  .tile .label { color: var(--ink-2); }
-  .tile .value { margin: 2px 0 4px; font-size: 30px; font-weight: 600; line-height: 1.2; }
-  .tile .detail { color: var(--ink-2); font-size: 12px; }
-
-  .card { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { padding: 8px 12px; text-align: left; vertical-align: top; border-top: 1px solid var(--hairline); }
-  thead th { border-top: 0; color: var(--muted); font-size: 12px; font-weight: 500; }
-  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  td.values { color: var(--ink-2); font-variant-numeric: tabular-nums; }
-  .why { display: block; color: var(--muted); font-size: 12px; }
-  .no-value { color: var(--muted); }
+  .tab-row a:first-child { padding-left: var(--gutter); }
+  .tab-row a:hover { background: var(--page); color: var(--ink); }
+  .tab-row a[aria-current="page"] { background: var(--ink); color: var(--surface); font-weight: 600; }
+  .conn { flex: none; display: flex; align-items: center; padding: 0 var(--gutter) 0 12px; border-left: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); }
+  .conn .long { display: none; }
+  @media (min-width: 1280px) { .conn .long { display: inline; } .conn .short { display: none; } }
 
   .status { display: inline-flex; gap: 6px; align-items: baseline; white-space: nowrap; }
   .icon {
-    align-self: center; display: inline-block; width: 16px; height: 16px; border-radius: 50%;
-    font-size: 11px; font-weight: 700; line-height: 16px; text-align: center;
+    align-self: center; flex: none; display: inline-block; width: 16px; height: 16px;
+    font-size: 11px; font-weight: 600; line-height: 16px; text-align: center; font-family: var(--body);
   }
   .good .icon { background: var(--good); color: #fff; }
-  .warning .icon { background: var(--warning); color: #0b0b0b; }
+  .warning .icon { background: var(--warning); color: #12181a; }
   .critical .icon { background: var(--critical); color: #fff; }
-  .waiting .icon { background: var(--hairline); color: var(--ink-2); }
+  .waiting .icon { background: var(--rule); color: var(--ink-2); }
 
-  #filter {
-    width: min(320px, 100%); margin-bottom: 8px; padding: 6px 10px; font: inherit; color: inherit;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  /* The board */
+  main { flex: 1; display: flex; flex-direction: column; }
+  .view { flex: 1; width: 100%; max-width: var(--board-max); margin: 0 auto; display: grid; gap: 1px; background: var(--rule); align-content: stretch; border-inline: 0 solid var(--rule); }
+  @media (min-width: 1841px) { .view { border-inline-width: 1px; } }
+  .pane { min-width: 0; background: var(--surface); padding: 16px var(--gutter) 24px; display: flex; flex-direction: column; gap: 12px; }
+  .span-all { grid-column: 1 / -1; }
+  .note { color: var(--ink-2); max-width: 68ch; }
+  .meta { color: var(--muted); font-size: 13px; max-width: 86ch; }
+  .why { display: block; color: var(--muted); font-size: 13px; }
+  .no-value { color: var(--muted); }
+
+  /* Dashboard */
+  .flow-pane { gap: 8px; padding-bottom: 14px; }
+  .stage { position: relative; height: 430px; }
+  .stage svg { position: absolute; inset: 0; width: 100%; height: 100%; transition: opacity .2s; }
+  @media (min-width: 640px) { .stage { height: 500px; } }
+  .stage text { fill: var(--ink-2); font-size: 14px; font-family: var(--body); }
+  .stage .flow-value { fill: var(--ink); font-family: var(--display); font-weight: 600; }
+  .stage .flow-eta { font-size: 14px; font-family: var(--display); font-weight: 500; }
+  .flow-box { fill: var(--surface); stroke: var(--rule-strong); }
+  .flow-hub { fill: var(--ink); }
+  .stage .flow-hub-label { fill: var(--surface); font-size: 13px; font-weight: 600; text-anchor: middle; }
+  .flow-icon { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .flow-track, .flow-dash { fill: none; }
+  .flow-track { stroke: var(--rule-strong); stroke-width: 2; }
+  .flow-dash, .flow-arrow { display: none; }
+  .flow-dash { stroke-dasharray: 9 15; stroke-linecap: round; animation: flow-move 1s linear infinite; }
+  .flow-arrow { fill: var(--flow-color); stroke: var(--surface); stroke-width: 2; paint-order: stroke; }
+  .flow-node.active .flow-box { stroke: var(--flow-color); stroke-width: 2; }
+  .flow-node.active .flow-icon { stroke: var(--flow-color); }
+  .flow-node.active .flow-track { stroke: var(--flow-color); stroke-opacity: .25; stroke-width: var(--flow-width); }
+  .flow-node.active .flow-dash { display: inline; stroke: var(--flow-color); stroke-width: var(--flow-width); }
+  .flow-node.active .flow-arrow { display: inline; }
+  .flow-node.outward .flow-dash { animation-direction: reverse; }
+  .frozen svg { opacity: .45; }
+  .frozen .flow-node.active .flow-dash { display: none; }
+  .frozen .flow-eta { visibility: hidden; }
+  @keyframes flow-move { to { stroke-dashoffset: -24; } }
+  @media (prefers-reduced-motion: reduce) { .flow-dash { animation: none; } .stage svg { transition: none; } }
+
+  .readings { display: grid; gap: 1px; background: var(--rule); min-width: 0; }
+  .reading { background: var(--surface); padding: 10px var(--gutter) 12px; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; }
+  .read-main { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0 12px; }
+  .read-label { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-weight: 500; }
+  .read-label i { flex: none; width: 10px; height: 10px; }
+  .read-value { font: 600 38px/1.1 var(--display); white-space: nowrap; }
+  .read-detail { color: var(--muted); font-size: 13px; line-height: 1.35; }
+  .soc { position: relative; height: 6px; margin: 2px 0 4px; background: var(--rule); }
+  .soc b { position: absolute; inset: 0 auto 0 0; background: var(--flow-battery); }
+  .soc u { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); }
+
+  .dash { grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 640px) and (max-width: 959.98px) { .readings { grid-template-columns: 1fr 1fr; } .reading { justify-content: flex-start; } }
+  @media (min-width: 960px) {
+    .dash { grid-template-columns: minmax(0, 1fr) clamp(380px, 34vw, 520px); }
+    .flow-pane { min-height: 0; }
+    .stage { flex: 1 1 auto; height: auto; min-height: 420px; }
+    .readings { grid-auto-rows: 1fr; }
+  }
+  @media (min-width: 1700px) {
+    .dash { grid-template-columns: minmax(0, 1fr) 800px; }
+    .readings { grid-template-columns: 1fr 1fr; }
   }
 
-  h3 { margin: 0; font-size: 13px; font-weight: 600; }
-  .range { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-  .range button, .range input {
-    padding: 4px 10px; font: inherit; color: inherit;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  /* Statistics */
+  .stats, .counters, .schedule, .appliances { grid-template-columns: minmax(0, 1fr); grid-auto-rows: min-content; }
+  @media (min-width: 1200px) {
+    .stats { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+    .appliances { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   }
-  .range button { cursor: pointer; }
-  .range button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--page); }
-  .range label { display: inline-flex; gap: 6px; align-items: center; margin-left: 8px; color: var(--ink-2); }
-  .charts { padding: 12px 16px; }
-  .charts > .meta { margin-top: 12px; }
-  #history-charts { transition: opacity 0.15s; }
-  #history-charts.loading { opacity: 0.5; }
-  .chart + .chart { margin-top: 16px; }
+  @media (min-width: 1100px) {
+    .counters { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); grid-auto-rows: auto; }
+    .schedule { grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); grid-auto-rows: auto; }
+  }
+  .range { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+  .range label { display: inline-flex; gap: 8px; align-items: center; color: var(--ink-2); }
+  .range input { min-height: 36px; padding: 4px 8px; background: var(--surface); border: 1px solid var(--rule-strong); }
+  .charts { display: flex; flex-direction: column; gap: 16px; }
+  #history-charts { transition: opacity .15s; }
+  #history-charts.loading { opacity: .5; }
   .chart-head { display: flex; flex-wrap: wrap; gap: 2px 16px; align-items: baseline; justify-content: space-between; }
-  .legend { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); font-size: 12px; }
-  .legend i { display: inline-block; width: 14px; height: 2px; margin-right: 5px; vertical-align: middle; border-radius: 1px; }
-  .legend.bars i { width: 10px; height: 10px; border-radius: 2px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); font-size: 13px; }
+  .legend i { display: inline-block; width: 14px; height: 2px; margin-right: 5px; vertical-align: middle; }
+  .legend.bars i { width: 10px; height: 10px; }
   .chart svg { display: block; margin-top: 4px; touch-action: pan-y; }
-  .chart svg:focus-visible { outline: 2px solid var(--flow-grid); outline-offset: 2px; border-radius: 4px; }
-  .chart-grid { stroke: var(--hairline); }
-  .chart-zero { stroke: var(--baseline); }
+  .chart svg:focus-visible { outline: 2px solid var(--flow-grid); outline-offset: 2px; }
+  .chart-grid { stroke: var(--rule); }
+  .chart-zero { stroke: var(--rule-strong); }
   .chart-cross { stroke: var(--muted); }
   .chart-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
   .chart-dot { stroke: var(--surface); stroke-width: 2; }
-  .chart-band { fill: var(--hairline); opacity: 0.6; }
-  .chart-tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .chart-band { fill: var(--rule); opacity: .6; }
+  .chart-tick { fill: var(--muted); font-size: 12px; font-family: var(--body); font-variant-numeric: tabular-nums; }
   .chart-y { text-anchor: end; }
   .chart-x { text-anchor: middle; }
   #chart-tip {
-    position: fixed; z-index: 1; padding: 8px 10px; pointer-events: none; font-size: 12px;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    position: fixed; z-index: 6; padding: 8px 10px; pointer-events: none; font-size: 13px;
+    background: var(--surface); border: 1px solid var(--rule-strong); box-shadow: 0 2px 8px rgba(0, 0, 0, .18);
   }
   .tip-title { margin-bottom: 4px; color: var(--ink-2); }
   .tip-row { display: grid; grid-template-columns: 1fr 14px auto; gap: 6px; align-items: center; }
   .tip-row strong { text-align: right; font-variant-numeric: tabular-nums; }
-  .tip-row i { height: 2px; border-radius: 1px; }
+  .tip-row i { height: 2px; }
   .tip-row span { color: var(--ink-2); }
-  details { margin-top: 8px; }
-  summary { cursor: pointer; color: var(--ink-2); }
-  details .card { max-height: 360px; margin-top: 8px; overflow-y: auto; }
+  summary { cursor: pointer; color: var(--ink-2); min-height: 28px; }
+  details .scroll { max-height: 360px; margin-top: 8px; overflow-y: auto; }
 
-  .edit input:not([type="checkbox"]), .edit textarea, .edit button {
-    padding: 4px 8px; font: inherit; color: inherit;
-    background: var(--page); border: 1px solid var(--border); border-radius: 6px;
+  /* Tables */
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px 12px; text-align: left; vertical-align: top; border-top: 1px solid var(--rule); }
+  th:first-child, td:first-child { padding-left: 0; }
+  th:last-child, td:last-child { padding-right: 0; }
+  thead th { border-top: 0; color: var(--muted); font-size: 13px; font-weight: 500; white-space: nowrap; background: var(--surface); }
+  tbody th { font-weight: 500; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.values { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .pin { position: sticky; left: 0; background: var(--surface); }
+  .tally { display: flex; flex-wrap: wrap; gap: 4px 20px; }
+
+  /* Checks and All fields reflow into stacked rows on a phone instead of scrolling sideways. */
+  @media (max-width: 719.98px) {
+    .stacked thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .stacked tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 10px 0; border-top: 1px solid var(--rule); }
+    .stacked tbody tr:first-child { border-top: 0; }
+    .stacked td { display: block; padding: 0; border: 0; }
+    .checks td:first-child { grid-column: 1 / -1; }
+    .fields td:nth-child(2) { grid-column: 1 / -1; grid-row: 2; color: var(--muted); font-size: 13px; }
   }
-  .edit button { cursor: pointer; background: var(--surface); }
+
+  /* All fields */
+  .field-tables { display: grid; gap: 0 var(--gutter); align-items: start; }
+  @media (min-width: 1400px) { .field-tables { grid-template-columns: 1fr 1fr; } }
+  .fields thead th { position: sticky; top: var(--tabs-h); z-index: 1; box-shadow: 0 1px 0 var(--rule); }
+  #filter { width: min(360px, 100%); min-height: 40px; padding: 6px 10px; background: var(--surface); border: 1px solid var(--rule-strong); }
+
+  /* Editable pages */
+  .edit input:not([type="checkbox"]), .edit textarea {
+    min-height: 34px; padding: 4px 8px; background: var(--page); border: 1px solid var(--rule);
+  }
+  .edit button { min-height: 34px; padding: 4px 12px; cursor: pointer; background: var(--surface); border: 1px solid var(--rule-strong); }
+  .edit button:hover { background: var(--page); }
   .edit input[type="number"] { width: 84px; text-align: right; }
-  .edit input[type="checkbox"] { width: 16px; height: 16px; margin: 6px 0 0; }
+  .edit input[type="checkbox"] { width: 18px; height: 18px; margin: 7px 0 0; accent-color: var(--ink); }
   .edit input.name { width: 100%; min-width: 170px; }
   .edit textarea { display: block; width: 100%; min-width: 240px; max-height: 7em; resize: vertical; field-sizing: content; }
-  .add { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 12px; padding: 12px 16px; }
+  .add { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; padding-top: 12px; border-top: 1px solid var(--rule-strong); }
   .add label, .settings label { display: flex; flex-direction: column; gap: 4px; color: var(--ink-2); }
   .add label.grow { flex: 1 1 200px; }
   .add label.grow input { width: 100%; }
-  .add label.tick { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 6px; }
+  .add label.tick { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 7px; }
   .add label.tick input { margin: 0; }
-  .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; padding: 12px 16px; }
+  .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
   .settings input[type="number"], .settings input[type="time"] { width: 120px; }
-  header #connection { margin-left: auto; }
-  #logout button { padding: 2px 8px; color: var(--ink-2); background: none; border: 1px solid var(--border); border-radius: 6px; font: inherit; cursor: pointer; }
 </style>
 </head>
 <body>
-<main>
-  <header>
+
+<header class="top">
+  <div class="top-in">
     <h1>Solar monitor</h1>
-    <div id="connection"></div>
+    <div class="top-meta">
+      <p id="device"></p>
+      <p id="storage"></p>
+    </div>
     <form id="logout" method="post" action="/logout" hidden><button>Log out</button></form>
-  </header>
-  <p class="meta" id="device"></p>
-  <p class="meta" id="storage"></p>
-  <p id="error" role="alert"></p>
-
-  <nav class="tabs" aria-label="Sections">
-    <a href="#live" aria-current="page">Live</a>
-    <a href="#appliances">Appliances &amp; tariffs</a>
-    <a href="#schedule">Battery schedule</a>
-  </nav>
-
-  <div id="tab-live">
-  <section class="card flow frozen" id="flow">
-    <p id="flow-summary">Waiting for readings.</p>
-    <svg id="flow-diagram" viewBox="0 0 420 422" role="img" aria-labelledby="flow-summary"></svg>
-    <p class="meta" id="flow-note"></p>
-  </section>
-
-  <section class="tiles" id="tiles" aria-label="Live values"></section>
-
-  <h2>History</h2>
-  <div class="range" role="group" aria-label="History range">
-    <button type="button" data-hours="6">6 hours</button>
-    <button type="button" data-hours="24">24 hours</button>
-    <button type="button" data-hours="168">7 days</button>
-    <button type="button" data-hours="720">30 days</button>
-    <label>Day <input type="date" id="history-day"></label>
   </div>
-  <section class="card charts">
-    <div id="history-charts"></div>
-    <p class="meta" id="history-note"></p>
+</header>
+<p id="error" role="alert"></p>
+
+<div id="tabs-top"></div>
+<nav class="tabs" aria-label="Sections">
+  <div class="tabs-in">
+    <div class="tab-row" id="tab-row">
+      <a href="#dashboard" aria-current="page">Dashboard</a>
+      <a href="#statistics">Statistics</a>
+      <a href="#counters">Counters &amp; checks</a>
+      <a href="#appliances">Appliances &amp; tariffs</a>
+      <a href="#schedule">Battery schedule</a>
+      <a href="#fields">All fields</a>
+    </div>
+    <div class="conn" id="conn"></div>
+  </div>
+</nav>
+
+<main>
+  <section class="view dash" id="view-dashboard" aria-label="Dashboard">
+    <div class="pane flow-pane frozen" id="flow">
+      <div class="stage" id="stage">
+        <svg id="flow-diagram" role="img" aria-label="Waiting for readings."></svg>
+      </div>
+    </div>
+    <div class="readings" id="readings" aria-label="Live values"></div>
   </section>
-  <details id="history-details">
-    <summary>Show as a table</summary>
-    <div class="card">
+
+  <section class="view stats" id="view-statistics" aria-label="Statistics" hidden>
+    <div class="pane">
+      <h2>History</h2>
+      <div class="range">
+        <div class="seg" id="range" role="group" aria-label="History range">
+          <button type="button" data-hours="6">6 hours</button><button type="button" data-hours="24">24 hours</button><button type="button" data-hours="168">7 days</button><button type="button" data-hours="720">30 days</button>
+        </div>
+        <label>Day <input type="date" id="history-day"></label>
+      </div>
+      <div class="charts" id="history-charts"></div>
+      <p class="meta" id="history-note"></p>
+      <details id="history-details">
+        <summary>Show as a table</summary>
+        <div class="scroll" tabindex="0" role="region" aria-label="History table">
+          <table>
+            <thead><tr><th>Time</th><th class="num">Solar (W)</th><th class="num">House (W)</th><th class="num">Battery (W)</th><th class="num">Grid (W)</th><th class="num">Battery charge (%)</th></tr></thead>
+            <tbody id="history-table"></tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+    <div class="pane">
+      <h2>Daily energy</h2>
+      <div class="charts" id="daily-charts"></div>
+      <p class="meta" id="daily-note"></p>
+    </div>
+    <div class="pane span-all">
+      <h3>Daily energy as a table</h3>
+      <div class="scroll" tabindex="0" role="region" aria-label="Daily energy table">
+        <table>
+          <thead><tr><th class="pin">Day</th><th class="num">Solar</th><th class="num">House</th><th class="num">Battery charged</th><th class="num">Battery discharged</th><th class="num">Grid import</th><th class="num">Grid export</th></tr></thead>
+          <tbody id="daily-table"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="view counters" id="view-counters" aria-label="Counters and checks" hidden>
+    <div class="pane">
+      <h2>Energy counters</h2>
+      <p class="note">Compare these with the GoodWe app and your electricity meter.</p>
       <table>
-        <thead><tr><th>Time</th><th class="num">Solar (W)</th><th class="num">House (W)</th><th class="num">Battery (W)</th><th class="num">Grid (W)</th><th class="num">Battery charge (%)</th></tr></thead>
-        <tbody id="history-table"></tbody>
+        <thead><tr><th>Counter</th><th class="num">Today</th><th class="num">Lifetime</th></tr></thead>
+        <tbody id="energy"></tbody>
       </table>
     </div>
-  </details>
-
-  <h2>Daily energy</h2>
-  <section class="card charts">
-    <div id="daily-charts"></div>
-    <p class="meta" id="daily-note"></p>
-  </section>
-  <div class="card" style="margin-top: 12px">
-    <table>
-      <thead><tr><th>Day</th><th class="num">Solar</th><th class="num">House</th><th class="num">Battery charged</th><th class="num">Battery discharged</th><th class="num">Grid import</th><th class="num">Grid export</th></tr></thead>
-      <tbody id="daily-table"></tbody>
-    </table>
-  </div>
-
-  <h2>Checks</h2>
-  <p class="note">Do the readings agree with each other? A warning means a field needs a closer look, not that the equipment has a fault.</p>
-  <div class="card">
-    <table>
-      <thead><tr><th>Check</th><th>Values</th><th>Result</th></tr></thead>
-      <tbody id="checks"></tbody>
-    </table>
-  </div>
-
-  <h2>Energy counters</h2>
-  <p class="note">Compare these with the GoodWe app and your electricity meter.</p>
-  <div class="card">
-    <table>
-      <thead><tr><th>Counter</th><th class="num">Today</th><th class="num">Lifetime</th></tr></thead>
-      <tbody id="energy"></tbody>
-    </table>
-  </div>
-
-  <h2>All fields</h2>
-  <input id="filter" type="search" placeholder="Filter fields" aria-label="Filter fields">
-  <div class="card">
-    <table>
-      <thead><tr><th>Field</th><th>Description</th><th class="num">Value</th></tr></thead>
-      <tbody id="fields"></tbody>
-    </table>
-  </div>
-  </div>
-
-  <div id="tab-schedule" hidden>
-    <h2>Time periods</h2>
-    <p class="note">What's stored on the inverter now, in the same order as SEMS+. This page only reads it, so make any changes in SEMS+.</p>
-    <div class="card">
-      <table>
-        <thead><tr><th>#</th><th>Time</th><th>Action</th><th class="num">Cut-off SOC</th><th>Power</th><th>Repeats</th><th>State</th></tr></thead>
-        <tbody id="schedule-periods"></tbody>
+    <div class="pane">
+      <h2>Checks</h2>
+      <p class="note">Do the readings agree with each other? A warning means a field needs a closer look, not that the equipment has a fault.</p>
+      <div class="tally" id="tally"></div>
+      <table class="stacked checks">
+        <thead><tr><th>Check</th><th>Values</th><th>Result</th></tr></thead>
+        <tbody id="checks"></tbody>
       </table>
     </div>
-    <h2>Modes and limits</h2>
-    <div class="card">
+  </section>
+
+  <section class="view appliances" id="view-appliances" aria-label="Appliances and tariffs" hidden>
+    <div class="pane span-all">
+      <h2>Your appliances</h2>
+      <p class="note">Fill in your own. They're kept in this app's database, and changes save as you make them. Tick what you'd keep running in a power cut.</p>
+      <p class="alert" id="appliances-error" role="alert"></p>
+      <div class="scroll edit" tabindex="0" role="region" aria-label="Appliances table">
+        <table>
+          <thead><tr><th>Power cut</th><th class="pin">Name</th><th class="num">Typical W</th><th class="num">Peak W</th><th class="num">Surge W</th><th class="num">Amps</th><th class="num">Of limit</th><th>Can add</th><th>Notes</th><th aria-label="Delete"></th></tr></thead>
+          <tbody id="appliance-rows"></tbody>
+        </table>
+      </div>
+      <p class="no-value" id="appliances-empty" hidden>No appliances yet. Add your first one below.</p>
+      <p class="meta">Typical is what it usually draws. Peak is the most it draws once running: leave it blank if that's the same. Surge is the brief kick when a motor starts. Amps and Of limit use the peak. Can add says whether it fits on top of the ticked appliances at their peak.</p>
+      <form class="edit add" id="add-appliance">
+        <label class="grow">Name <input name="name" required maxlength="100"></label>
+        <label>Typical W <input name="typical_w" type="number" min="0" step="any" required></label>
+        <label>Peak W <input name="peak_w" type="number" min="0" step="any"></label>
+        <label>Surge W <input name="surge_w" type="number" min="0" step="any"></label>
+        <label class="grow">Notes <input name="notes" maxlength="2000"></label>
+        <label class="tick"><input name="use_in_outage" type="checkbox"> Power cut</label>
+        <button type="submit">Add appliance</button>
+      </form>
+    </div>
+
+    <div class="pane span-all">
+      <h2>What it adds up to</h2>
+      <p class="note">The current each combination draws, what that leaves of your limit, and how long the battery could carry it with no sun or grid.</p>
+      <div class="scroll" tabindex="0" role="region" aria-label="Load combinations table">
+        <table>
+          <thead><tr><th class="pin">Load</th><th class="num">Watts</th><th class="num">Amps</th><th class="num">Of limit</th><th class="num">Room left</th><th class="num">Runs for, from now</th><th class="num">Runs for, from full</th></tr></thead>
+          <tbody id="cases"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pane">
+      <h2>Plan for a power cut</h2>
+      <p class="note">The biggest steady load the battery could carry for a power cut this long, with no sun or grid, down to its reserve. Compared with the ticked appliances at their typical draw.</p>
+      <form class="edit settings" id="outage-settings">
+        <label>Length of power cut (hours) <input name="outage_hours" type="number" min="0.1" max="8760" step="any"></label>
+      </form>
+      <div class="scroll" id="outage-plan-card" tabindex="0" role="region" aria-label="Power cut plan">
+        <table>
+          <thead><tr><th>Starting from</th><th class="num">Most it can carry</th><th class="num">Ticked, typical</th><th>Does it fit?</th></tr></thead>
+          <tbody id="outage-plan"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pane">
+      <h2>How much can I run?</h2>
+      <p class="note">The average load that would bring the battery down to its minimum by a given time. It counts only what's in the battery now, so solar and the grid would stretch it further.</p>
+      <form class="edit settings" id="run-settings">
+        <label>Run until <input name="run_until_minutes" type="time"></label>
+      </form>
+      <div id="run-plan-card">
+        <table><tbody id="run-plan"></tbody></table>
+      </div>
+    </div>
+
+    <div class="pane">
+      <h2>Motors starting</h2>
+      <p class="note">The worst moment: everything at its peak, and every motor starting at once.</p>
+      <div class="scroll" tabindex="0" role="region" aria-label="Motors starting table">
+        <table>
+          <thead><tr><th>Load</th><th class="num">Running</th><th class="num">Extra to start</th><th class="num">Total</th><th class="num">Of surge limit</th></tr></thead>
+          <tbody id="surge"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pane">
+      <h2>Your choices</h2>
+      <p class="note">All optional. Anything the inverter reports, or the log can measure, doesn't need entering.</p>
+      <form class="edit settings" id="settings">
+        <label>Current limit (A) <input name="limit_amps" type="number" min="0" step="any"><span class="meta">What you want to stay under in a power cut, such as a breaker's rating. Of limit, Room left and Can add need this.</span></label>
+        <label>Surge limit (W) <input name="surge_limit_w" type="number" min="0" step="any"><span class="meta">The most your system can supply for a few seconds.</span></label>
+        <label>Charge target (%) <input name="target_soc" type="number" min="1" max="100" step="any" placeholder="100"><span class="meta">Where the time to charge counts up to. Blank means 100%.</span></label>
+        <label>Starting battery capacity (kWh) <input name="capacity_kwh" type="number" min="0" step="any"><span class="meta" id="capacity-hint"></span></label>
+      </form>
+      <p class="meta" id="appliance-sources"></p>
+    </div>
+
+    <div class="pane span-all">
+      <h2>Tariffs</h2>
+      <p class="note">Your rates per kWh, in any money unit you like. The results below come out in the same unit.</p>
+      <form class="edit settings" id="tariff-settings">
+        <label>Day rate <input name="tariff_day" type="number" min="0" step="any"></label>
+        <label>Peak rate <input name="tariff_peak" type="number" min="0" step="any"></label>
+        <label>Night rate <input name="tariff_night" type="number" min="0" step="any"></label>
+        <label>Export rate <input name="tariff_export" type="number" min="0" step="any"></label>
+      </form>
+      <div class="scroll" tabindex="0" role="region" aria-label="Tariff results">
+        <table>
+          <thead><tr><th>Per kWh</th><th class="num">Amount</th><th>Verdict</th></tr></thead>
+          <tbody id="tariff-values"></tbody>
+        </table>
+      </div>
+      <p class="meta" id="tariff-sources"></p>
+    </div>
+  </section>
+
+  <section class="view schedule" id="view-schedule" aria-label="Battery schedule" hidden>
+    <div class="pane">
+      <h2>Time periods</h2>
+      <p class="note">What's stored on the inverter now, in the same order as SEMS+. This page only reads it, so make any changes in SEMS+.</p>
+      <div class="scroll" tabindex="0" role="region" aria-label="Time periods table">
+        <table>
+          <thead><tr><th>#</th><th>Time</th><th>Action</th><th class="num">Cut-off SOC</th><th>Power</th><th>Repeats</th><th>State</th></tr></thead>
+          <tbody id="schedule-periods"></tbody>
+        </table>
+      </div>
+      <p class="meta"><span id="schedule-read-at"></span> SEMS+ AI Mode isn't listed because the app hasn't found a setting for it on the inverter.</p>
+    </div>
+    <div class="pane">
+      <h2>Modes and limits</h2>
       <table>
         <tbody id="schedule-modes"></tbody>
       </table>
     </div>
-    <p class="meta" style="margin-top: 8px"><span id="schedule-read-at"></span> SEMS+ AI Mode isn't listed because the app hasn't found a setting for it on the inverter.</p>
-  </div>
+  </section>
 
-  <div id="tab-appliances" hidden>
-    <h2>Your appliances</h2>
-    <p class="note">Fill in your own. They're kept in this app's database, and changes save as you make them. Tick what you'd keep running in a power cut.</p>
-    <p class="alert" id="appliances-error" role="alert"></p>
-    <div class="card edit">
-      <table>
-        <thead><tr><th>Power cut</th><th>Name</th><th class="num">Typical W</th><th class="num">Peak W</th><th class="num">Surge W</th><th class="num">Amps</th><th class="num">Of limit</th><th>Can add</th><th>Notes</th><th aria-label="Delete"></th></tr></thead>
-        <tbody id="appliance-rows"></tbody>
-      </table>
-      <p class="no-value" id="appliances-empty" style="padding: 8px 12px" hidden>No appliances yet. Add your first one below.</p>
+  <section class="view" id="view-fields" aria-label="All fields" hidden>
+    <div class="pane">
+      <h2>All fields</h2>
+      <input id="filter" type="search" placeholder="Filter fields" aria-label="Filter fields">
+      <div class="field-tables" id="field-tables"></div>
     </div>
-    <p class="meta" style="margin-top: 8px">Typical is what it usually draws. Peak is the most it draws once running: leave it blank if that's the same. Surge is the brief kick when a motor starts. Amps and Of limit use the peak. Can add says whether it fits on top of the ticked appliances at their peak.</p>
-
-    <form class="card edit add" id="add-appliance">
-      <label class="grow">Name <input name="name" required maxlength="100"></label>
-      <label>Typical W <input name="typical_w" type="number" min="0" step="any" required></label>
-      <label>Peak W <input name="peak_w" type="number" min="0" step="any"></label>
-      <label>Surge W <input name="surge_w" type="number" min="0" step="any"></label>
-      <label class="grow">Notes <input name="notes" maxlength="2000"></label>
-      <label class="tick"><input name="use_in_outage" type="checkbox"> Power cut</label>
-      <button type="submit">Add appliance</button>
-    </form>
-
-    <h2>What it adds up to</h2>
-    <p class="note">The current each combination draws, what that leaves of your limit, and how long the battery could carry it with no sun or grid.</p>
-    <div class="card">
-      <table>
-        <thead><tr><th>Load</th><th class="num">Watts</th><th class="num">Amps</th><th class="num">Of limit</th><th class="num">Room left</th><th class="num">Runs for, from now</th><th class="num">Runs for, from full</th></tr></thead>
-        <tbody id="cases"></tbody>
-      </table>
-    </div>
-
-    <h2>Plan for a power cut</h2>
-    <p class="note">The biggest steady load the battery could carry for a power cut this long, with no sun or grid, down to its reserve. Compared with the ticked appliances at their typical draw.</p>
-    <form class="card edit settings" id="outage-settings">
-      <label>Length of power cut (hours) <input name="outage_hours" type="number" min="0.1" max="8760" step="any"></label>
-    </form>
-    <div class="card" id="outage-plan-card" style="margin-top: 12px">
-      <table>
-        <thead><tr><th>Starting from</th><th class="num">Most it can carry</th><th class="num">Ticked, typical</th><th>Does it fit?</th></tr></thead>
-        <tbody id="outage-plan"></tbody>
-      </table>
-    </div>
-
-    <h2>How much can I run?</h2>
-    <p class="note">The average load that would bring the battery down to its minimum by a given time. It counts only what's in the battery now, so solar and the grid would stretch it further.</p>
-    <form class="card edit settings" id="run-settings">
-      <label>Run until <input name="run_until_minutes" type="time"></label>
-    </form>
-    <div class="card" id="run-plan-card" style="margin-top: 12px">
-      <table><tbody id="run-plan"></tbody></table>
-    </div>
-
-    <h2>Motors starting</h2>
-    <p class="note">The worst moment: everything at its peak, and every motor starting at once.</p>
-    <div class="card">
-      <table>
-        <thead><tr><th>Load</th><th class="num">Running</th><th class="num">Extra to start</th><th class="num">Total</th><th class="num">Of surge limit</th></tr></thead>
-        <tbody id="surge"></tbody>
-      </table>
-    </div>
-
-    <h2>Your choices</h2>
-    <p class="note">All optional. Anything the inverter reports, or the log can measure, doesn't need entering.</p>
-    <form class="card edit settings" id="settings">
-      <label>Current limit (A) <input name="limit_amps" type="number" min="0" step="any"><span class="meta">What you want to stay under in a power cut, such as a breaker's rating. Of limit, Room left and Can add need this.</span></label>
-      <label>Surge limit (W) <input name="surge_limit_w" type="number" min="0" step="any"><span class="meta">The most your system can supply for a few seconds.</span></label>
-      <label>Charge target (%) <input name="target_soc" type="number" min="1" max="100" step="any" placeholder="100"><span class="meta">Where the time to charge counts up to. Blank means 100%.</span></label>
-      <label>Starting battery capacity (kWh) <input name="capacity_kwh" type="number" min="0" step="any"><span class="meta" id="capacity-hint"></span></label>
-    </form>
-    <p class="meta" id="appliance-sources" style="margin-top: 8px"></p>
-
-    <h2>Tariffs</h2>
-    <p class="note">Your rates per kWh, in any money unit you like. The results below come out in the same unit.</p>
-    <form class="card edit settings" id="tariff-settings">
-      <label>Day rate <input name="tariff_day" type="number" min="0" step="any"></label>
-      <label>Peak rate <input name="tariff_peak" type="number" min="0" step="any"></label>
-      <label>Night rate <input name="tariff_night" type="number" min="0" step="any"></label>
-      <label>Export rate <input name="tariff_export" type="number" min="0" step="any"></label>
-    </form>
-    <div class="card" style="margin-top: 12px">
-      <table>
-        <thead><tr><th>Per kWh</th><th class="num">Amount</th><th>Verdict</th></tr></thead>
-        <tbody id="tariff-values"></tbody>
-      </table>
-    </div>
-    <p class="meta" id="tariff-sources" style="margin-top: 8px"></p>
-  </div>
+  </section>
 </main>
 <div id="chart-tip" role="status" hidden></div>
 
@@ -456,10 +576,13 @@
     return `${Math.floor(wholeHours / 24)} d ${wholeHours % 24} h`;
   }
 
-  function status(kind, label) {
+  /* `short` is what shows where the tab row has no room for the whole label. */
+  function status(kind, label, short) {
     const icons = { good: "✓", warning: "!", critical: "×", waiting: "–" };
     const node = el("span", `status ${kind}`);
-    node.append(el("span", "icon", icons[kind]), el("span", "", label));
+    node.append(el("span", "icon", icons[kind]));
+    if (short) node.append(el("span", "long", label), el("span", "short", short));
+    else node.append(el("span", "", label));
     return node;
   }
 
@@ -468,31 +591,26 @@
     measured power. The inverter doesn't report how much goes from solar to the battery,
     say, so the diagram doesn't draw or claim that split.
 
-    `sign` turns the reading into watts flowing toward the inverter. `path` runs from the
-    node to the inverter, and `angle` is the arrow's rotation when pointing that way.
+    `sign` turns the reading into watts flowing toward the inverter.
   */
   const FLOWS = {
     solar: {
       label: "Solar", field: "ppv", sign: 1, color: "--flow-solar",
-      box: [151, 0], path: "M210 100 V186", arrow: [210, 143], angle: 90,
       toward: "Generating", away: "Generating", idle: "No generation",
       icon: "M5.5 9a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M9 1v2M9 15v2M1 9h2M15 9h2M3.3 3.3l1.4 1.4M13.3 13.3l1.4 1.4M3.3 14.7l1.4-1.4M13.3 4.7l1.4-1.4",
     },
     grid: {
       label: "Grid", field: "active_power_total", sign: GRID_POSITIVE_MEANS_EXPORT ? -1 : 1, color: "--flow-grid",
-      box: [0, 150], path: "M118 200 H178", arrow: [148, 200], angle: 0,
       toward: "Importing", away: "Exporting", idle: "Idle",
       icon: "M9 1L4 17M9 1l5 16M3 6h12M4.8 11h8.4M5.5 12l7 5M12.5 12l-7 5",
     },
     battery: {
       label: "Battery", field: "pbattery1", sign: 1, color: "--flow-battery",
-      box: [151, 300], height: 122, path: "M210 300 V214", arrow: [210, 257], angle: -90,
       toward: "Discharging", away: "Charging", idle: "Idle",
       icon: "M2 5h13v8H2zM17 8v2M5 9h4M7 7v4",
     },
     load: {
       label: "House", field: "load_ptotal", sign: -1, color: "--flow-load",
-      box: [302, 150], path: "M302 200 H242", arrow: [272, 200], angle: 180,
       toward: "Using power", away: "Using power", idle: "Idle",
       icon: "M2 9l7-7 7 7M4 7.5V16h10V7.5M7.5 16v-5h3v5",
     },
@@ -505,38 +623,71 @@
     return node;
   }
 
-  /* Built once, then only updated, so the animation doesn't restart on every reading. */
+  /*
+    Built for the space it has, then only updated, so the animation doesn't restart on every
+    reading. `path` runs from a node to the inverter, and `angle` is the arrow's rotation
+    when pointing that way.
+  */
+  let flowSize = "";
+
   function buildFlow() {
+    const stage = $("stage");
+    const W = stage.clientWidth;
+    const H = stage.clientHeight;
+    if (!W || !H || flowSize === `${W}x${H}`) return; // A hidden tab has no size to draw for.
+    flowSize = `${W}x${H}`;
+
     const svg = $("flow-diagram");
-    for (const flow of Object.values(FLOWS)) {
-      const [x, y] = flow.box;
-      const center = x + 59;
-      flow.label_ = svgEl("text", { x: center, y: y + 44 }, flow.label);
-      flow.value_ = svgEl("text", { x: center, y: y + 70, class: "flow-value" }, "—");
-      flow.state_ = svgEl("text", { x: center, y: y + 90 }, "No data");
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.replaceChildren();
+    const compact = W < 520;
+    const boxW = clamp(W * 0.25, 112, 200);
+    const boxH = compact ? 92 : 112;
+    const battW = Math.max(boxW, 156); // Wider, so "11 h 55 min to 100%" stays inside the box.
+    const battH = boxH + 20;
+    const pad = compact ? 10 : 14;
+    const valueSize = compact ? 26 : clamp(W / 20, 30, 42);
+    const hubW = compact ? 60 : 76;
+    const hubH = 28;
+    const cx = W / 2;
+    const cy = (boxH + (H - battH)) / 2;
+    const place = {
+      solar: { x: cx - boxW / 2, y: 0, w: boxW, h: boxH, path: `M${cx} ${boxH}V${cy - hubH / 2}`, arrow: [cx, (boxH + cy - hubH / 2) / 2], angle: 90 },
+      grid: { x: 0, y: cy - boxH / 2, w: boxW, h: boxH, path: `M${boxW} ${cy}H${cx - hubW / 2}`, arrow: [(boxW + cx - hubW / 2) / 2, cy], angle: 0 },
+      battery: { x: cx - battW / 2, y: H - battH, w: battW, h: battH, path: `M${cx} ${H - battH}V${cy + hubH / 2}`, arrow: [cx, (H - battH + cy + hubH / 2) / 2], angle: -90 },
+      load: { x: W - boxW, y: cy - boxH / 2, w: boxW, h: boxH, path: `M${W - boxW} ${cy}H${cx + hubW / 2}`, arrow: [(W - boxW + cx + hubW / 2) / 2, cy], angle: 180 },
+    };
+
+    for (const [name, flow] of Object.entries(FLOWS)) {
+      const p = place[name];
+      const textX = p.x + pad;
+      flow.arrow = p.arrow;
+      flow.angle = p.angle;
+      flow.label_ = svgEl("text", { x: textX, y: p.y + (compact ? 22 : 28) }, flow.label);
+      flow.value_ = svgEl("text", { x: textX, y: p.y + (compact ? 52 : 28 + valueSize + 2), class: "flow-value", style: `font-size: ${valueSize}px` }, "—");
+      flow.state_ = svgEl("text", { x: textX, y: p.y + (compact ? 74 : 28 + valueSize + 24) }, "No data");
       flow.arrow_ = svgEl("path", { d: "M-7 -8L8 0L-7 8Z", class: "flow-arrow" });
       flow.node = svgEl("g", { class: "flow-node", style: `--flow-color: var(${flow.color})` });
       flow.node.append(
-        svgEl("path", { d: flow.path, class: "flow-track" }),
-        svgEl("path", { d: flow.path, class: "flow-dash" }),
+        svgEl("path", { d: p.path, class: "flow-track" }),
+        svgEl("path", { d: p.path, class: "flow-dash" }),
         flow.arrow_,
-        svgEl("rect", { x, y, width: 118, height: flow.height ?? 100, rx: 12, class: "flow-box" }),
-        svgEl("path", { d: flow.icon, transform: `translate(${center - 9} ${y + 7})`, class: "flow-icon" }),
+        svgEl("rect", { x: p.x + 0.5, y: p.y + 0.5, width: p.w - 1, height: p.h - 1, class: "flow-box" }),
         flow.label_, flow.value_, flow.state_,
       );
+      if (!compact) {
+        flow.node.append(svgEl("path", { d: flow.icon, transform: `translate(${p.x + p.w - pad - 18} ${p.y + 12})`, class: "flow-icon" }));
+      }
       svg.append(flow.node);
     }
-    const [batteryX, batteryY] = FLOWS.battery.box;
-    FLOWS.battery.eta_ = svgEl("text", { x: batteryX + 59, y: batteryY + 110, class: "flow-eta" }, "");
+    const battery = place.battery;
+    FLOWS.battery.eta_ = svgEl("text", { x: battery.x + pad, y: battery.y + (compact ? 94 : 28 + valueSize + 44), class: "flow-eta" }, "");
     FLOWS.battery.node.append(FLOWS.battery.eta_);
     svg.append(
-      svgEl("rect", { x: 178, y: 186, width: 64, height: 28, rx: 8, class: "flow-hub" }),
-      svgEl("text", { x: 210, y: 204, class: "flow-hub-label" }, "Inverter"),
+      svgEl("rect", { x: cx - hubW / 2, y: cy - hubH / 2, width: hubW, height: hubH, class: "flow-hub" }),
+      svgEl("text", { x: cx, y: cy + 5, class: "flow-hub-label" }, "Inverter"),
     );
-    $("flow-note").textContent =
-      `Flows under ${FLOW_MIN_W} W count as idle. The numbers won't add up exactly because the inverter loses some power. ` +
-      `Grid direction assumes positive ${FLOWS.grid.field} means ${GRID_POSITIVE_MEANS_EXPORT ? "exporting" : "importing"}, ` +
-      "which hasn't been confirmed with a large grid flow yet.";
+    renderFlow();
   }
 
   /* Watts flowing toward the inverter, or null if the reading is missing. */
@@ -546,6 +697,7 @@
   }
 
   function renderFlow() {
+    if (!FLOWS.solar.node) return; // Not drawn yet, because the page opened on another tab.
     for (const flow of Object.values(FLOWS)) {
       const toward = flowWatts(flow);
       const known = toward !== null;
@@ -575,7 +727,7 @@
     return estimate.hours === null ? `Heading to ${limit}%` : `${timeLeft(estimate.hours)} to ${limit}%`;
   }
 
-  /* One sentence that says what the diagram shows, for a glance and for screen readers. */
+  /* One sentence that says what the diagram shows, for screen readers. */
   function flowSummary() {
     const toward = Object.fromEntries(Object.entries(FLOWS).map(([name, flow]) => [name, flowWatts(flow)]));
     if (Object.values(toward).includes(null)) return "Some readings are missing.";
@@ -599,44 +751,53 @@
     return ` around ${shortDate(when)}`;
   }
 
-  function batteryTimeTile() {
-    const label = "Battery time remaining";
+  function batteryTimeReading() {
+    const reading = { label: "Battery time remaining", color: "--flow-battery", value: "—" };
     const estimate = latest.battery_estimate;
-    if (!estimate) return { label, value: "—", detail: "Needs current battery readings." };
-    if (estimate.state === "idle") return { label, value: "—", detail: "The battery is idle, so it isn't heading anywhere." };
-    const { hours, limit_soc: limit, power_w: power, capacity } = estimate;
-    if (hours === 0) return { label, value: "0 min", detail: `Already at the ${limit}% limit.` };
-    if (hours === null) {
-      return { label, value: "—", detail:
-        `Heading to ${limit}% at about ${watts(Math.abs(power))}, but the battery's capacity isn't known yet. ` +
-        "The app measures it once it has logged enough, or you can enter a starting figure under Appliances." };
-    }
-    const source = capacity.source === "measured"
-      ? `Capacity ${kwh(capacity.kwh)}, measured from the log.`
-      : `Capacity ${kwh(capacity.kwh)}, from your starting figure until the log can measure it.`;
-    const slows = estimate.state === "charging" ? " Charging slows near full, so this can run long." : "";
-    return { label, value: timeLeft(hours), detail:
-      `Reaches ${limit}%${arrival(hours)} at the recent average of ${watts(Math.abs(power))}. ${source}${slows}` };
+    if (!estimate || estimate.state === "idle" || estimate.hours === null) return reading;
+    const { hours, limit_soc: limit } = estimate;
+    if (hours === 0) return { ...reading, value: "0 min" };
+    return { ...reading, value: timeLeft(hours), detail: `Reaches ${limit}%${arrival(hours)}` };
   }
 
-  /* Live tiles: each names its source field so it can be traced to the table below. */
-  function renderTiles() {
-    const tiles = [
-      { label: "Solar", value: watts(values.ppv),
-        detail: `ppv. PV1 ${watts(values.ppv1)}, PV2 ${watts(values.ppv2)}. ppv_total, the figure SEMS+ shows: ${watts(values.ppv_total)}` },
-      { label: "House load", value: watts(values.load_ptotal),
-        detail: `load_ptotal. Calculated house_consumption: ${watts(values.house_consumption)}` },
-      { label: "Battery power", value: watts(values.pbattery1),
-        detail: `pbattery1, signed as reported. Mode: ${values.battery_mode_label ?? "—"}` },
-      { label: "Battery charge", value: isNum(values.battery_soc) ? `${values.battery_soc}%` : "—",
-        detail: `battery_soc. ${isNum(values.vbattery1) ? `${values.vbattery1} V` : ""}` },
-      batteryTimeTile(),
-      { label: "Grid power", value: watts(values.active_power_total),
-        detail: `active_power_total, signed as reported. Mode: ${values.grid_in_out_label ?? "—"}` },
+  /* The charge as a meter, with a tick at the level the inverter stops discharging. */
+  function socMeter(soc) {
+    const stopsAt = latest.battery_limits?.min_soc;
+    const meter = el("div", "soc");
+    meter.setAttribute("role", "img");
+    meter.setAttribute("aria-label", `Battery ${soc}% charged${isNum(stopsAt) ? `, stops discharging at ${stopsAt}%` : ""}`);
+    const fill = el("b");
+    fill.style.width = `${clamp(soc, 0, 100)}%`;
+    meter.append(fill);
+    if (isNum(stopsAt)) {
+      const tick = el("u");
+      tick.style.left = `${clamp(stopsAt, 0, 100)}%`;
+      meter.append(tick);
+    }
+    return meter;
+  }
+
+  function renderReadings() {
+    const soc = values.battery_soc;
+    const readings = [
+      { label: "Solar", color: "--flow-solar", value: watts(values.ppv) },
+      { label: "House load", color: "--flow-load", value: watts(values.load_ptotal) },
+      { label: "Battery power", color: "--flow-battery", value: watts(values.pbattery1) },
+      { label: "Battery charge", color: "--flow-battery", value: isNum(soc) ? `${soc}%` : "—", meter: isNum(soc) && socMeter(soc) },
+      batteryTimeReading(),
+      { label: "Grid power", color: "--flow-grid", value: watts(values.active_power_total) },
     ];
-    $("tiles").replaceChildren(...tiles.map((tile) => {
-      const node = el("div", "tile");
-      node.append(el("div", "label", tile.label), el("div", "value", tile.value), el("div", "detail", tile.detail));
+    $("readings").replaceChildren(...readings.map((reading) => {
+      const node = el("div", "reading");
+      const label = el("span", "read-label");
+      const key = el("i");
+      key.style.background = `var(${reading.color})`;
+      label.append(key, reading.label);
+      const main = el("div", "read-main");
+      main.append(label, el("span", "read-value", reading.value));
+      node.append(main);
+      if (reading.meter) node.append(reading.meter);
+      if (reading.detail) node.append(el("p", "read-detail", reading.detail));
       return node;
     }));
   }
@@ -768,7 +929,8 @@
   ];
 
   function renderChecks() {
-    const rows = CHECKS.map((check) => check()).filter(Boolean).map((result) => {
+    const results = CHECKS.map((check) => check()).filter(Boolean);
+    const rows = results.map((result) => {
       const row = el("tr");
       const name = el("td", "", result.name);
       name.append(el("span", "why", result.why));
@@ -778,6 +940,14 @@
       return row;
     });
     $("checks").replaceChildren(...rows);
+
+    const count = (kind) => results.filter((result) => result.status === kind).length;
+    const [good, warning, waiting] = [count("good"), count("warning"), count("waiting")];
+    $("tally").replaceChildren(...[
+      good && status("good", `${good} agree${good === 1 ? "s" : ""}`),
+      warning && status("warning", `${warning} differ${warning === 1 ? "s" : ""}`),
+      waiting && status("waiting", `${waiting} can't tell yet`),
+    ].filter(Boolean));
   }
 
   const ENERGY_ROWS = [
@@ -800,6 +970,21 @@
     }));
   }
 
+  /* Wide screens read the long list in two columns instead of a very long, half-empty one. */
+  const TWO_FIELD_COLUMNS = matchMedia("(min-width: 1400px)");
+
+  function fieldTable(rows) {
+    const table = el("table", "stacked fields");
+    const head = el("thead");
+    const headRow = el("tr");
+    headRow.append(el("th", "", "Field"), el("th", "", "Description"), el("th", "num", "Value"));
+    head.append(headRow);
+    const body = el("tbody");
+    body.append(...rows);
+    table.append(head, body);
+    return table;
+  }
+
   function renderFields() {
     const query = $("filter").value.trim().toLowerCase();
     const rows = latest.readings
@@ -813,7 +998,11 @@
         row.append(id, el("td", "", r.name), value);
         return row;
       });
-    $("fields").replaceChildren(...rows);
+    const half = TWO_FIELD_COLUMNS.matches && rows.length > 6 ? Math.ceil(rows.length / 2) : rows.length;
+    $("field-tables").replaceChildren(
+      fieldTable(rows.slice(0, half)),
+      ...(half < rows.length ? [fieldTable(rows.slice(half))] : []),
+    );
   }
 
   function renderStorage() {
@@ -829,19 +1018,19 @@
   function renderConnection() {
     const age = latest?.read_at ? Math.round((Date.now() - new Date(latest.read_at)) / 1000) : null;
     const staleAfter = (latest?.poll_seconds ?? 15) * STALE_AFTER_POLLS;
-    const node = $("connection");
-    if (latest === null) node.replaceChildren(status("critical", "Can't reach the dashboard server"));
-    else if (latest.error) node.replaceChildren(status("critical", "Inverter not responding"));
-    else if (age === null) node.replaceChildren(status("waiting", "Waiting for first reading"));
-    else if (age > staleAfter) node.replaceChildren(status("warning", `Stale: last read ${age}s ago`));
-    else node.replaceChildren(status("good", `Live: read ${Math.max(age, 0)}s ago, polling every ${latest.poll_seconds}s`));
+    const node = $("conn");
+    if (latest === null) node.replaceChildren(status("critical", "Can't reach the dashboard server", "No server"));
+    else if (latest.error) node.replaceChildren(status("critical", "Inverter not responding", "No reply"));
+    else if (age === null) node.replaceChildren(status("waiting", "Waiting for first reading", "Waiting"));
+    else if (age > staleAfter) node.replaceChildren(status("warning", `Stale: last read ${age}s ago`, `${age}s ago`));
+    else node.replaceChildren(status("good", `Live: read ${Math.max(age, 0)}s ago, polling every ${latest.poll_seconds}s`, `${Math.max(age, 0)}s ago`));
 
     const live = latest !== null && !latest.error && age !== null && age <= staleAfter;
     $("flow").classList.toggle("frozen", !live);
     const eta = batteryEta();
-    $("flow-summary").textContent = live
+    $("flow-diagram").setAttribute("aria-label", live
       ? `${flowSummary()}${eta ? ` Battery: ${eta}.` : ""}`
-      : Object.keys(values).length ? "Not live. Showing the last reading received." : "Waiting for readings.";
+      : Object.keys(values).length ? "Not live. Showing the last reading received." : "Waiting for readings.");
   }
 
   function periodRow(period) {
@@ -910,7 +1099,7 @@
       : "";
     if (!latest?.readings) return;
     renderFlow();
-    renderTiles();
+    renderReadings();
     renderChecks();
     renderEnergy();
     renderFields();
@@ -944,27 +1133,27 @@
   const GRID_BELOW_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "importing" : "exporting";
 
   const HISTORY_CHARTS = [
-    { title: "Solar and house (W)", height: 170, series: [
+    { title: "Solar and house (W)", height: 190, series: [
       { key: "pv_w", label: "Solar", unit: "W", color: "--flow-solar" },
       { key: "load_w", label: "House", unit: "W", color: "--flow-load" },
     ] },
-    { title: "Battery and grid (W)", height: 170, signed: true, series: [
+    { title: "Battery and grid (W)", height: 190, signed: true, series: [
       { key: "battery_w", label: "Battery", unit: "W", color: "--flow-battery", above: "discharging", below: "charging" },
       { key: "grid_w", label: "Grid", unit: "W", color: "--flow-grid", above: GRID_ABOVE_ZERO, below: GRID_BELOW_ZERO },
     ], note: `Above zero: battery discharging, grid ${GRID_ABOVE_ZERO}. Below zero: battery charging, grid ${GRID_BELOW_ZERO}. ` +
       "Grid direction hasn't been confirmed with a large grid flow yet." },
-    { title: "Battery charge (%)", height: 110, domain: [0, 100], series: [
+    { title: "Battery charge (%)", height: 130, domain: [0, 100], series: [
       { key: "battery_soc", label: "Battery charge", unit: "%", color: "--flow-battery" },
     ] },
   ];
 
   /* Same layout as history: above the line is energy out of the battery or to the grid. */
   const DAILY_CHARTS = [
-    { title: "Solar and house (kWh)", height: 150, columns: [
+    { title: "Solar and house (kWh)", height: 170, columns: [
       { above: "pv", aboveLabel: "Solar", label: "Solar", color: "--flow-solar" },
       { above: "load", aboveLabel: "House", label: "House", color: "--flow-load" },
     ] },
-    { title: "Battery and grid (kWh)", height: 170, columns: [
+    { title: "Battery and grid (kWh)", height: 210, columns: [
       { above: "battery_discharge", aboveLabel: "Battery discharged", below: "battery_charge", belowLabel: "Battery charged", label: "Battery", color: "--flow-battery" },
       { above: "grid_export", aboveLabel: "Grid export", below: "grid_import", belowLabel: "Grid import", label: "Grid", color: "--flow-grid" },
     ], note: "Above the line: battery discharged, grid export. Below the line: battery charged, grid import." },
@@ -974,7 +1163,6 @@
   let history = null;
   let daily = null;
   let historyRequest = 0;
-  let chartWidth = 0;
 
   const clamp = (x, low, high) => Math.min(Math.max(x, low), high);
   const isoDay = (when) => `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}-${String(when.getDate()).padStart(2, "0")}`;
@@ -1058,7 +1246,7 @@
     }));
     tip.hidden = false;
     const box = tip.getBoundingClientRect();
-    tip.style.left = `${x + 16 + box.width > innerWidth ? x - 16 - box.width : x + 16}px`;
+    tip.style.left = `${x + 16 + box.width > innerWidth ? Math.max(x - 16 - box.width, 8) : x + 16}px`;
     tip.style.top = `${clamp(y - box.height / 2, 8, innerHeight - box.height - 8)}px`;
   }
 
@@ -1116,7 +1304,7 @@
   function renderHistory() {
     const box = $("history-charts");
     $("chart-tip").hidden = true;
-    if (!history || $("tab-live").hidden) return; // Charts need a width, and a hidden box has none.
+    if (!history || $("view-statistics").hidden) return; // Charts need a width, and a hidden box has none.
     const { points, start, end, bucket_seconds: bucket } = history;
     $("history-note").textContent = points.length
       ? `Each point averages ${duration(bucket)}, so short spikes look smaller, and a charge and a discharge in the same period partly cancel out. ` +
@@ -1217,7 +1405,7 @@
 
   function renderDaily() {
     const box = $("daily-charts");
-    if (!daily || $("tab-live").hidden) return;
+    if (!daily || $("view-statistics").hidden) return;
     const days = daily.days;
     const anyData = days.some((day) => Object.keys(day).length > 1);
     $("daily-note").textContent = anyData
@@ -1298,7 +1486,7 @@
     const recorded = daily.days.filter((day) => Object.keys(day).length > 1).toReversed();
     $("daily-table").replaceChildren(...recorded.map((day) => {
       const row = el("tr");
-      row.append(el("td", "", new Date(`${day.day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })));
+      row.append(el("td", "pin", new Date(`${day.day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })));
       for (const key of keys) row.append(el("td", "num", kwh(day[key])));
       return row;
     }));
@@ -1360,13 +1548,18 @@
     selectRange(event.target.value ? { day: event.target.value } : { hours: 24 });
   });
   $("history-details").addEventListener("toggle", renderHistoryTable);
-  new ResizeObserver(() => {
-    const width = $("history-charts").clientWidth;
-    if (!width || width === chartWidth) return;
-    chartWidth = width;
-    renderHistory();
-    renderDaily();
-  }).observe($("history-charts"));
+  /* The two sets of charts sit side by side on a wide screen, so each has its own width. */
+  function redrawOnWidthChange(box, draw) {
+    let drawnWidth = 0;
+    new ResizeObserver(() => {
+      const width = box.clientWidth;
+      if (!width || width === drawnWidth) return;
+      drawnWidth = width;
+      draw();
+    }).observe(box);
+  }
+  redrawOnWidthChange($("history-charts"), renderHistory);
+  redrawOnWidthChange($("daily-charts"), renderDaily);
 
   /*
     Appliances. The list and the choices live in the app's database, and the server answers
@@ -1457,7 +1650,7 @@
     };
     const row = el("tr");
     row.append(
-      wrap(fields.use_in_outage), wrap(fields.name), wrap(fields.typical_w, "num"), wrap(fields.peak_w, "num"), wrap(fields.surge_w, "num"),
+      wrap(fields.use_in_outage), wrap(fields.name, "pin"), wrap(fields.typical_w, "num"), wrap(fields.peak_w, "num"), wrap(fields.surge_w, "num"),
       cells.amps, cells.share, cells.canAdd, wrap(fields.notes), wrap(remove),
     );
     row.addEventListener("change", () => sendOverview("PUT", `/api/appliances/${id}`, {
@@ -1526,8 +1719,10 @@
       const room = el("td", "num");
       room.append(overLimit(amps(load.headroom_amps), load.headroom_amps < 0));
       const runsFor = (hours) => timeLeft(load.watts > 0 ? hours : null); // Nothing to run yet.
+      const name = loadCell(label, why);
+      name.classList.add("pin");
       row.append(
-        loadCell(label, why), el("td", "num", watts(load.watts)), el("td", "num", amps(load.amps)), share, room,
+        name, el("td", "num", watts(load.watts)), el("td", "num", amps(load.amps)), share, room,
         el("td", "num", runsFor(load.hours_from_now)), el("td", "num", runsFor(load.hours_from_full)),
       );
       return row;
@@ -1695,16 +1890,33 @@
     });
   }
 
-  /* The tab is in the address, so a reload or the back button stays where it was. */
+  /*
+    The tab is in the address, so a reload or the back button stays where it was. The views'
+    ids aren't the tabs' hashes, so choosing a tab doesn't make the browser jump to it.
+  */
+  const TABS = {
+    "#dashboard": "view-dashboard",
+    "#statistics": "view-statistics",
+    "#counters": "view-counters",
+    "#appliances": "view-appliances",
+    "#schedule": "view-schedule",
+    "#fields": "view-fields",
+  };
+
   function showTab() {
-    const tab = ["#appliances", "#schedule"].includes(location.hash) ? location.hash : "#live";
-    const returning = tab === "#live" && $("tab-live").hidden;
-    $("tab-live").hidden = tab !== "#live";
-    $("tab-appliances").hidden = tab !== "#appliances";
-    $("tab-schedule").hidden = tab !== "#schedule";
-    for (const link of document.querySelectorAll(".tabs a")) {
-      if (link.hash === tab) link.setAttribute("aria-current", "page");
-      else link.removeAttribute("aria-current");
+    // Links saved when the first tab was called Live still open it.
+    if (location.hash === "#live") window.history.replaceState(null, "", "#dashboard");
+    const tab = TABS[location.hash] ? location.hash : "#dashboard";
+    const returning = tab === "#statistics" && $("view-statistics").hidden;
+    for (const [hash, view] of Object.entries(TABS)) $(view).hidden = hash !== tab;
+    const row = $("tab-row");
+    for (const link of row.querySelectorAll("a")) {
+      if (link.hash !== tab) {
+        link.removeAttribute("aria-current");
+        continue;
+      }
+      link.setAttribute("aria-current", "page");
+      row.scrollLeft = link.offsetLeft - row.offsetLeft - (row.clientWidth - link.offsetWidth) / 2;
     }
     $("chart-tip").hidden = true;
     if (tab === "#appliances") refreshOverview();
@@ -1713,12 +1925,18 @@
       refreshDaily();
     }
   }
-  window.addEventListener("hashchange", showTab);
-  setInterval(() => { if (!$("tab-appliances").hidden) refreshOverview(); }, APPLIANCES_REFRESH_MS);
+  window.addEventListener("hashchange", () => {
+    showTab();
+    // Each tab starts at its top, just under the tab row, wherever the last one was scrolled to.
+    const top = $("tabs-top").getBoundingClientRect().top + scrollY;
+    if (scrollY > top) scrollTo(0, top);
+  });
+  setInterval(() => { if (!$("view-appliances").hidden) refreshOverview(); }, APPLIANCES_REFRESH_MS);
 
   $("filter").addEventListener("input", () => { if (latest?.readings) renderFields(); });
+  TWO_FIELD_COLUMNS.addEventListener("change", () => { if (latest?.readings) renderFields(); });
   showTab();
-  buildFlow();
+  new ResizeObserver(buildFlow).observe($("stage")); // Also draws the diagram when its tab opens.
   refresh();
   setInterval(refresh, REFRESH_MS);
   setInterval(renderConnection, 1000);
@@ -1727,7 +1945,7 @@
   refreshDaily();
   setInterval(() => {
     // Redrawing would drop the tooltip and keyboard focus from under someone reading a chart.
-    if ($("tab-live").hidden || !$("chart-tip").hidden || document.activeElement?.closest("#history-charts, #daily-charts")) return;
+    if ($("view-statistics").hidden || !$("chart-tip").hidden || document.activeElement?.closest("#history-charts, #daily-charts")) return;
     if (!range.day || range.day === isoDay(new Date())) refreshHistory();
     refreshDaily();
   }, CHART_REFRESH_MS);
