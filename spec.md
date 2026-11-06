@@ -111,6 +111,7 @@ solar-monitor/
 - Protecting the equipment comes first. Double check every write before it runs: read the current value again, compare the exact value to be written with what was read, and keep the old value for undo. Read it back afterwards and compare. Start with the smallest harmless change, and leave out any setting that can't be written safely.
 - Done so far: the Battery schedule tab shows the settings read-only. TOU has its own on/off switch, separate from the working mode. Don't use the library's `set_operation_mode` for the Eco modes: it overwrites the first time period and disables the others. Each period's on/off byte also marks its type, so write the matching value for that type rather than a plain 0 or 1.
 - The TOU tab changes one thing: a programme's power, through `control.py`. A change has to name the bytes the page was showing, and is refused if the inverter holds anything else. Only the power bytes differ in what's sent, keeping the direction and the type's units. It's logged in `inverter_writes` before sending, read back byte for byte afterwards, and never retried by itself. Without a login, only the machine the app runs on can send one.
+- From the first real change (50% to 30%, mid-charge): the inverter acted on it straight away, and the older copy of the period at 47515 caught up by itself within about 25 seconds. SEMS+ still showed 50% afterwards, so it isn't a check on what the inverter holds. How long it lags, and whether saving there sends the old value back, isn't known yet.
 
 ## Open questions
 
