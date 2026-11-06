@@ -1,13 +1,16 @@
 """Battery time remaining, load sums, load planners and tariffs. Plain arithmetic, with no I/O.
 
 Ratings printed on the hardware aren't used where the inverter or the log says better:
-voltage, state of health and minimum charge are read live, and capacity is measured.
+voltage, state of health and minimum charge are read live, and capacity and the inverter's
+overhead are measured.
 """
 
 from __future__ import annotations
 
+import statistics
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
+from typing import NamedTuple
 
 # Below this a power reading is mostly noise. The same gate as the dashboard's power flow.
 IDLE_W = 50
@@ -25,12 +28,31 @@ MAX_SAMPLE_GAP_SECONDS = 120
 MIN_STRETCH_POINTS = 3
 MIN_MEASURED_POINTS = 10
 
-# Typical figures for turning a household load into battery draw during an outage.
+# Typical figures for turning a household load into battery draw, until the log can measure them.
 # pbattery1 is measured on the battery side, so the time remaining doesn't need them.
 CONVERSION_EFFICIENCY = 0.93
 STANDBY_W = 40
 # Typical figure for grid to battery to home. The log has no way to measure that whole path.
 ROUND_TRIP_EFFICIENCY = 0.90
+
+# The battery only counts as supplying the house alone with next to nothing from solar or the
+# grid. This is tight because a flow of 50 W would be as big as the overhead being measured.
+BATTERY_ONLY_MARGIN_W = 20
+OVERHEAD_BAND_W = 250
+MIN_BAND_SAMPLES = 10
+# Bands close together can give a wild slope, so the fit needs a good spread of loads.
+MIN_OVERHEAD_BANDS = 4
+MIN_BELIEVABLE_EFFICIENCY = 0.8
+
+
+class Overhead(NamedTuple):
+    """What the inverter takes for itself: battery draw = load / efficiency + standby_w."""
+
+    standby_w: float
+    efficiency: float
+
+
+TYPICAL_OVERHEAD = Overhead(STANDBY_W, CONVERSION_EFFICIENCY)
 
 
 def smoothed_power(readings: Sequence[float | None]) -> float | None:
@@ -100,6 +122,82 @@ def measure_capacity(samples: Iterable[tuple[int, float | None, float | None]]) 
     return round(total_wh / total_points * 100 / 1000, 1), total_points
 
 
+def battery_only(pv_w: object, load_w: object, battery_w: object, grid_w: object) -> bool:
+    """Whether the battery alone is supplying the house, so any gap between them is the inverter's."""
+    if not all(isinstance(w, (int, float)) for w in (pv_w, load_w, battery_w, grid_w)):
+        return False
+    quiet = abs(pv_w) <= BATTERY_ONLY_MARGIN_W and abs(grid_w) <= BATTERY_ONLY_MARGIN_W
+    return quiet and battery_w >= IDLE_W and load_w > 0
+
+
+def _overhead_row(house_w: float, overhead_w: float) -> dict[str, float | None]:
+    battery_w = house_w + overhead_w
+    return {
+        "house_w": house_w,
+        "battery_w": battery_w,
+        "overhead_w": overhead_w,
+        "share": overhead_w / battery_w if battery_w > 0 else None,
+    }
+
+
+def overhead_now(pv_w: object, load_w: object, battery_w: object, grid_w: object) -> dict[str, float | None] | None:
+    """Battery power not reaching the house at this moment, if the battery alone is supplying it."""
+    if not battery_only(pv_w, load_w, battery_w, grid_w):
+        return None
+    return _overhead_row(load_w, battery_w - load_w)
+
+
+def overhead_bands(samples: Iterable[tuple[object, object, object, object]]) -> list[dict[str, float | None]]:
+    """Battery power not reaching the house at each level of load, from logged (solar, house, battery, grid).
+
+    Medians, because one reading can be a kilowatt out while a load is switching on or off.
+    Battery is worked out from the other two, in whole watts, so that each row subtracts exactly.
+    """
+    groups: dict[int, list[tuple[float, float]]] = {}
+    for pv_w, load_w, battery_w, grid_w in samples:
+        if battery_only(pv_w, load_w, battery_w, grid_w):
+            groups.setdefault(int(load_w // OVERHEAD_BAND_W), []).append((load_w, battery_w - load_w))
+    return [
+        {
+            **_overhead_row(
+                round(statistics.median(house_w for house_w, _ in group)),
+                round(statistics.median(overhead_w for _, overhead_w in group)),
+            ),
+            "samples": len(group),
+        }
+        for _, group in sorted(groups.items())
+        if len(group) >= MIN_BAND_SAMPLES
+    ]
+
+
+def fit_overhead(bands: Sequence[dict[str, float | None]]) -> Overhead | None:
+    """The straight line through the bands: overhead = standby + load * (1 / efficiency - 1).
+
+    None until there's enough to fit, or if what comes out isn't believable.
+    """
+    if len(bands) < MIN_OVERHEAD_BANDS:
+        return None
+    gaps = [band["overhead_w"] for band in bands]
+    slope, standby_w = statistics.linear_regression([band["house_w"] for band in bands], gaps)
+    if slope < 0:  # More load can't cost less, so a falling line is only noise.
+        slope, standby_w = 0, statistics.mean(gaps)
+    efficiency = 1 / (1 + slope)
+    if standby_w <= 0 or efficiency < MIN_BELIEVABLE_EFFICIENCY:
+        return None
+    return Overhead(round(standby_w), round(efficiency, 3))
+
+
+def measure_overhead(samples: Iterable[tuple[object, object, object, object]]) -> dict[str, object]:
+    """The inverter's overhead from the log once there's enough of it, until then the typical figures."""
+    bands = overhead_bands(samples)
+    fitted = fit_overhead(bands)
+    return {
+        **(fitted or TYPICAL_OVERHEAD)._asdict(),
+        "source": "measured" if fitted else "typical",
+        "bands": bands,
+    }
+
+
 def battery_estimate(
     soc: float | None,
     power_w: float | None,
@@ -131,21 +229,29 @@ def available_wh(capacity_kwh: float, start_soc: float, stop_soc: float) -> floa
     return capacity_kwh * 1000 * max(start_soc - stop_soc, 0) / 100
 
 
-def outage_hours(load_w: float, start_soc: float, reserve_soc: float, capacity_kwh: float | None) -> float | None:
+def outage_hours(
+    load_w: float,
+    start_soc: float,
+    reserve_soc: float,
+    capacity_kwh: float | None,
+    overhead: Overhead = TYPICAL_OVERHEAD,
+) -> float | None:
     """How long the battery could carry this household load with no sun or grid."""
     if capacity_kwh is None:
         return None
-    return available_wh(capacity_kwh, start_soc, reserve_soc) / (load_w / CONVERSION_EFFICIENCY + STANDBY_W)
+    return available_wh(capacity_kwh, start_soc, reserve_soc) / (load_w / overhead.efficiency + overhead.standby_w)
 
 
-def max_load_w(energy_wh: float, hours: float) -> float:
+def max_load_w(energy_wh: float, hours: float, overhead: Overhead = TYPICAL_OVERHEAD) -> float:
     """The steady household load this energy could carry for this long: outage_hours in reverse."""
-    return max((energy_wh / hours - STANDBY_W) * CONVERSION_EFFICIENCY, 0)
+    return max((energy_wh / hours - overhead.standby_w) * overhead.efficiency, 0)
 
 
-def _allowance(energy_wh: float, hours: float, limit_w: float | None, selected_w: float) -> dict[str, object]:
+def _allowance(
+    energy_wh: float, hours: float, limit_w: float | None, selected_w: float, overhead: Overhead
+) -> dict[str, object]:
     """The most that can run, whichever of the energy or the limit runs out first."""
-    load_w = max_load_w(energy_wh, hours)
+    load_w = max_load_w(energy_wh, hours, overhead)
     capped = limit_w is not None and load_w > limit_w
     most_w = limit_w if capped else load_w
     return {"max_w": most_w, "capped": capped, "spare_w": most_w - selected_w}
@@ -158,13 +264,14 @@ def outage_plan(
     reserve_soc: float,
     capacity_kwh: float | None,
     limit_w: float | None,
+    overhead: Overhead = TYPICAL_OVERHEAD,
 ) -> dict[str, object]:
     """The most the battery could carry through a power cut this long, from now and from full."""
 
     def starting_at(start_soc: float | None) -> dict[str, object] | None:
         if start_soc is None or capacity_kwh is None:
             return None
-        return _allowance(available_wh(capacity_kwh, start_soc, reserve_soc), hours, limit_w, selected_w)
+        return _allowance(available_wh(capacity_kwh, start_soc, reserve_soc), hours, limit_w, selected_w, overhead)
 
     return {
         "hours": hours,
@@ -191,6 +298,7 @@ def run_until_plan(
     limit_w: float | None,
     selected_w: float,
     battery_w: float | None,
+    overhead: Overhead = TYPICAL_OVERHEAD,
 ) -> dict[str, object]:
     """The average load the battery could carry until a clock time, ignoring solar and the grid.
 
@@ -216,7 +324,7 @@ def run_until_plan(
     energy_wh = available_wh(capacity_kwh, soc, min_soc)
     return {
         **plan,
-        **_allowance(energy_wh, hours, limit_w, selected_w),
+        **_allowance(energy_wh, hours, limit_w, selected_w, overhead),
         "energy_kwh": energy_wh / 1000,
         "max_battery_w": energy_wh / hours,
     }
@@ -251,7 +359,13 @@ def worst_w(appliance: dict[str, object]) -> float:
 
 
 def _case(
-    load_w: float, volts: float, limit_amps: float | None, soc: float | None, reserve_soc: float, capacity_kwh: float | None
+    load_w: float,
+    volts: float,
+    limit_amps: float | None,
+    soc: float | None,
+    reserve_soc: float,
+    capacity_kwh: float | None,
+    overhead: Overhead,
 ) -> dict[str, object]:
     amps = load_w / volts
     return {
@@ -259,8 +373,8 @@ def _case(
         "amps": amps,
         "share": None if limit_amps is None else amps / limit_amps,
         "headroom_amps": None if limit_amps is None else limit_amps - amps,
-        "hours_from_now": None if soc is None else outage_hours(load_w, soc, reserve_soc, capacity_kwh),
-        "hours_from_full": outage_hours(load_w, 100, reserve_soc, capacity_kwh),
+        "hours_from_now": None if soc is None else outage_hours(load_w, soc, reserve_soc, capacity_kwh, overhead),
+        "hours_from_full": outage_hours(load_w, 100, reserve_soc, capacity_kwh, overhead),
     }
 
 
@@ -287,12 +401,13 @@ def summarize(
     soc: float | None,
     reserve_soc: float,
     capacity_kwh: float | None,
+    overhead: Overhead = TYPICAL_OVERHEAD,
 ) -> dict[str, object]:
     """Each appliance's share of the limit, and what each combination of them would mean."""
     selected = [a for a in appliances if a["use_in_outage"]]
 
     def case(load_w: float) -> dict[str, object]:
-        return _case(load_w, volts, limit_amps, soc, reserve_soc, capacity_kwh)
+        return _case(load_w, volts, limit_amps, soc, reserve_soc, capacity_kwh, overhead)
 
     selected_worst = case(sum(worst_w(a) for a in selected))
 

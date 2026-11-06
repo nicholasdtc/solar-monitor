@@ -231,6 +231,13 @@ def battery_samples(
     return saved + waiting
 
 
+def overhead_samples(
+    conn: sqlite3.Connection, start: int
+) -> list[tuple[float | None, float | None, float | None, float | None]]:
+    """(solar, house, battery, grid) W of every saved sample from `start` on."""
+    return conn.execute("SELECT pv_w, load_w, battery_w, grid_w FROM samples WHERE ts >= ?", (start,)).fetchall()
+
+
 def get_settings(conn: sqlite3.Connection) -> dict[str, float | None]:
     stored = dict(conn.execute("SELECT key, value FROM settings"))
     return {key: stored.get(key) for key in SETTINGS}

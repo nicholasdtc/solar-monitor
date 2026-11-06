@@ -78,6 +78,8 @@ def create_app(collector: Collector) -> FastAPI:
 
     measured: tuple[float, int] | None = None
     measured_at: float | None = None
+    measured_overhead: dict[str, object] = {}
+    measured_overhead_at: float | None = None
 
     def readings() -> dict[str, object]:
         return {r["id"]: r["value"] for r in collector.latest.get("readings", [])}
@@ -100,6 +102,22 @@ def create_app(collector: Collector) -> FastAPI:
             return {"kwh": None, "source": None, "points": 0}
         health = _positive(readings().get("battery_soh")) or 100
         return {"kwh": entered * health / 100, "source": "entered", "points": 0}
+
+    def overhead() -> dict[str, object]:
+        nonlocal measured_overhead, measured_overhead_at
+        if measured_overhead_at is None or time.monotonic() - measured_overhead_at >= MEASURE_SECONDS:
+            samples = db.overhead_samples(collector.conn, int(time.time()) - MEASURE_WINDOW_SECONDS)
+            measured_overhead = planning.measure_overhead(samples)
+            measured_overhead_at = time.monotonic()
+        return measured_overhead
+
+    def overhead_now() -> dict[str, float | None] | None:
+        if collector.latest.get("error"):
+            return None
+        values = readings()
+        return planning.overhead_now(
+            values.get("ppv"), values.get("load_ptotal"), values.get("pbattery1"), values.get("active_power_total")
+        )
 
     def smoothed_battery_w() -> float | None:
         if collector.latest.get("error"):
@@ -127,6 +145,8 @@ def create_app(collector: Collector) -> FastAPI:
         values = readings()
         settings = db.get_settings(collector.conn)
         known = capacity()
+        known_overhead = overhead()
+        allowance = planning.Overhead(known_overhead["standby_w"], known_overhead["efficiency"])
         volts = _positive(values.get("backup_v1"), values.get("vgrid"))
         soc = values.get("battery_soc")
         load = values.get("load_ptotal")
@@ -143,6 +163,7 @@ def create_app(collector: Collector) -> FastAPI:
             soc=known_soc,
             reserve_soc=reserve,
             capacity_kwh=known["kwh"],
+            overhead=allowance,
         )
         selected_w = summary["cases"]["selected_typical"]["watts"]
         outage_hours, run_until = settings["outage_hours"], settings["run_until_minutes"]
@@ -150,7 +171,7 @@ def create_app(collector: Collector) -> FastAPI:
             **summary,
             "outage_plan": None
             if outage_hours is None
-            else planning.outage_plan(outage_hours, selected_w, known_soc, reserve, known["kwh"], limit_w),
+            else planning.outage_plan(outage_hours, selected_w, known_soc, reserve, known["kwh"], limit_w, allowance),
             "run_plan": None
             if run_until is None
             else planning.run_until_plan(
@@ -162,6 +183,7 @@ def create_app(collector: Collector) -> FastAPI:
                 limit_w=limit_w,
                 selected_w=selected_w,
                 battery_w=smoothed_battery_w(),
+                overhead=allowance,
             ),
             "tariffs": planning.tariff_values(
                 settings["tariff_day"], settings["tariff_peak"], settings["tariff_night"], settings["tariff_export"]
@@ -175,8 +197,7 @@ def create_app(collector: Collector) -> FastAPI:
             "min_soc": battery_limit("min_soc"),
             "reserve_soc": reserve,
             "reserve_reported": collector.latest.get("battery_limits", {}).get("reserve_soc") is not None,
-            "conversion_efficiency": planning.CONVERSION_EFFICIENCY,
-            "standby_w": planning.STANDBY_W,
+            "overhead": known_overhead,
         }
 
     @app.get("/")
@@ -186,7 +207,11 @@ def create_app(collector: Collector) -> FastAPI:
     # async so it runs on the event loop, never mid-way through a change by the collector.
     @app.get("/api/latest")
     async def api_latest() -> Response:
-        body = {**collector.latest, "battery_estimate": battery_estimate()}
+        body = {
+            **collector.latest,
+            "battery_estimate": battery_estimate(),
+            "overhead": {**overhead(), "now": overhead_now()},
+        }
         return Response(json.dumps(body, default=str), media_type="application/json")
 
     # async too: the database connection belongs to the event loop's thread, and this way a
