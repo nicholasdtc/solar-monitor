@@ -128,6 +128,12 @@
   const GRID_SIGN_MIN_W = 50;
   // Energy in should exceed energy out by no more than plausible conversion losses.
   const MAX_LOSS_FRACTION = 0.15;
+  // Below this, counters rounded to 0.1 kWh are too coarse to show a loss percentage.
+  const MIN_BALANCE_KWH = 2;
+  // Battery current is about 1 A at low power and jumps by nearly that much between reads,
+  // which swings V × A and flips the mode label. pbattery1 stays steadier, so it sets the gate.
+  const BATTERY_NOISY_BELOW_W = 1000;
+  const BATTERY_CURRENT_NOISE_W = 400;
 
   const $ = (id) => document.getElementById(id);
   let latest = null;
@@ -199,11 +205,13 @@
     if (!ins || !outs) return { name, why, values: "—", status: "waiting", label: "No data" };
     const energyIn = ins.reduce((a, b) => a + b, 0);
     const energyOut = outs.reduce((a, b) => a + b, 0);
-    const lost = energyIn > 0 ? (energyIn - energyOut) / energyIn : NaN;
+    const shown = `In ${kwh(energyIn)}, out ${kwh(energyOut)}`;
+    if (energyIn < MIN_BALANCE_KWH) return { name, why, values: shown, status: "waiting", label: "Too small to tell" };
+    const lost = (energyIn - energyOut) / energyIn;
     const ok = lost >= 0 && lost <= MAX_LOSS_FRACTION;
     return {
       name, why,
-      values: `In ${kwh(energyIn)}, out ${kwh(energyOut)}`,
+      values: shown,
       status: ok ? "good" : "warning",
       label: ok ? `Balances (${number(lost * 100, 0)}% lost)` : "Doesn't balance",
     };
@@ -231,23 +239,30 @@
     () => {
       const n = numbers("ppv", "pbattery1", "total_inverter_power");
       return n && agrees("Power through the inverter",
-        "Solar plus signed battery power should be close to AC output, which holds if negative battery power means charging.",
-        n[0] + n[1], "ppv + pbattery1", n[2], "total_inverter_power", 100, 0.15);
+        "Solar plus signed battery power, less conversion losses, should be close to AC output. That holds if negative battery power means charging.",
+        n[0] + n[1], "ppv + pbattery1", n[2], "total_inverter_power", 200, 0.15);
     },
     () => {
+      const name = "Battery power from volts and amps";
+      const why = `Reported battery power against volts times amps. Battery current is too noisy to judge below ${watts(BATTERY_NOISY_BELOW_W)}.`;
       const n = numbers("pbattery1", "vbattery1", "ibattery1");
-      return n && agrees("Battery power from volts and amps", "Reported battery power against volts times amps.",
-        n[0], "pbattery1", n[1] * n[2], "V × A", 100, 0.15);
+      if (!n) return { name, why, values: "—", status: "waiting", label: "No data" };
+      const [power, volts, amps] = n;
+      if (Math.abs(power) < BATTERY_NOISY_BELOW_W) {
+        return { name, why, values: `pbattery1 ${watts(power)}, V × A ${watts(volts * amps)}`, status: "waiting", label: "Too small to tell" };
+      }
+      return agrees(name, why, power, "pbattery1", volts * amps, "V × A", BATTERY_CURRENT_NOISE_W, 0.15);
     },
     () => {
       const name = "Battery mode label";
-      const why = "The mode label should match what the power reading shows.";
+      const why = `The mode label should match what the power reading shows. The label is too noisy to judge below ${watts(BATTERY_NOISY_BELOW_W)}.`;
       const power = values.pbattery1;
       const label = values.battery_mode_label;
       if (!isNum(power) || !label) return { name, why, values: "—", status: "waiting", label: "No data" };
-      const expected = power < -100 ? "charge" : power > 100 ? "discharge" : "standby";
-      const ok = label.toLowerCase().includes(expected);
-      return { name, why, values: `${label}, ${watts(power)}`, status: ok ? "good" : "warning", label: ok ? "Agrees" : "Differs" };
+      const shown = `${label}, ${watts(power)}`;
+      if (Math.abs(power) < BATTERY_NOISY_BELOW_W) return { name, why, values: shown, status: "waiting", label: "Too small to tell" };
+      const ok = label.toLowerCase().includes(power < 0 ? "charge" : "discharge");
+      return { name, why, values: shown, status: ok ? "good" : "warning", label: ok ? "Agrees" : "Differs" };
     },
     () => {
       const name = "Grid direction";
@@ -271,11 +286,27 @@
     () => energyBalance("Lifetime balance, meter counters",
       "PV, import and battery discharge should cover load, export and battery charge, plus losses.",
       ["e_total", "meter_e_total_imp", "e_bat_discharge_total"], ["e_load_total", "meter_e_total_exp", "e_bat_charge_total"]),
-    () => energyBalance("Lifetime balance, inverter counters", "The same sum, using the inverter's import and export.",
-      ["e_total", "e_total_imp", "e_bat_discharge_total"], ["e_load_total", "e_total_exp", "e_bat_charge_total"]),
-    () => energyBalance("Today's balance, inverter counters",
-      "The same sum for today. The meter has no daily counters to use here.",
-      ["e_day", "e_day_imp", "e_bat_discharge_day"], ["e_load_day", "e_day_exp", "e_bat_charge_day"]),
+    () => {
+      const name = "House load from the AC side";
+      const why = "Meter import plus inverter output, minus inverter input and meter export, should equal the load counter.";
+      const n = numbers("meter_e_total_imp", "e_total_exp", "e_total_imp", "meter_e_total_exp", "e_load_total");
+      if (!n) return { name, why, values: "—", status: "waiting", label: "No data" };
+      const [gridIn, inverterOut, inverterIn, gridOut, load] = n;
+      const calculated = gridIn + inverterOut - inverterIn - gridOut;
+      const ok = Math.abs(calculated - load) <= Math.max(0.5, 0.05 * load);
+      return {
+        name, why,
+        values: `Calculated ${kwh(calculated)}, load ${kwh(load)}`,
+        status: ok ? "good" : "warning",
+        label: ok ? "Agrees" : "Differs",
+      };
+    },
+    () => energyBalance("Lifetime balance across the inverter",
+      "PV, battery discharge and AC input should cover AC output and battery charge, plus losses.",
+      ["e_total", "e_bat_discharge_total", "e_total_imp"], ["e_total_exp", "e_bat_charge_total"]),
+    () => energyBalance("Today's balance across the inverter",
+      "The same sum for today. The meter has no daily counters, so this is the only daily check.",
+      ["e_day", "e_bat_discharge_day", "e_day_imp"], ["e_day_exp", "e_bat_charge_day"]),
   ];
 
   function renderChecks() {
@@ -296,10 +327,11 @@
     ["Load", "e_load_day", "e_load_total"],
     ["Battery charge", "e_bat_charge_day", "e_bat_charge_total"],
     ["Battery discharge", "e_bat_discharge_day", "e_bat_discharge_total"],
-    ["Import, inverter counter", "e_day_imp", "e_total_imp"],
-    ["Export, inverter counter", "e_day_exp", "e_total_exp"],
-    ["Import, meter counter", null, "meter_e_total_imp"],
-    ["Export, meter counter", null, "meter_e_total_exp"],
+    // e_*_imp and e_*_exp match energy across the inverter's AC side, not the grid connection.
+    ["Into the inverter, AC side", "e_day_imp", "e_total_imp"],
+    ["Out of the inverter, AC side", "e_day_exp", "e_total_exp"],
+    ["Grid import, meter", null, "meter_e_total_imp"],
+    ["Grid export, meter", null, "meter_e_total_exp"],
   ];
 
   function renderEnergy() {
