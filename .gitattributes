@@ -1,0 +1,5 @@
+# LF everywhere, including on Windows checkouts: this code deploys to a Raspberry Pi.
+* text=auto eol=lf
+
+# Runs on Windows only.
+*.ps1 text eol=crlf

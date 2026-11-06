@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solar monitor: data check</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #6f6e69;
+    --hairline: #e1e0d9;
+    --border: rgba(11, 11, 11, 0.10);
+    --good: #0ca30c;
+    --warning: #fab219;
+    --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #f0efec;
+      --ink-2: #c3c2b7;
+      --muted: #989690;
+      --hairline: #2c2c2a;
+      --border: rgba(255, 255, 255, 0.10);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; justify-content: space-between; }
+  h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  h2 { margin: 32px 0 4px; font-size: 15px; font-weight: 600; }
+  p { margin: 0; }
+  .note { color: var(--ink-2); margin-bottom: 12px; }
+  .meta { color: var(--muted); font-size: 12px; }
+  code { font: 12px ui-monospace, Consolas, monospace; }
+
+  #error { margin-top: 12px; padding: 8px 12px; border: 1px solid var(--critical); border-radius: 8px; }
+  #error:empty { display: none; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
+  .tile, .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  .tile { padding: 12px 16px; }
+  .tile .label { color: var(--ink-2); }
+  .tile .value { margin: 2px 0 4px; font-size: 30px; font-weight: 600; line-height: 1.2; }
+  .tile .detail { color: var(--ink-2); font-size: 12px; }
+
+  .card { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px 12px; text-align: left; vertical-align: top; border-top: 1px solid var(--hairline); }
+  thead th { border-top: 0; color: var(--muted); font-size: 12px; font-weight: 500; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.values { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .why { display: block; color: var(--muted); font-size: 12px; }
+  .no-value { color: var(--muted); }
+
+  .status { display: inline-flex; gap: 6px; align-items: baseline; white-space: nowrap; }
+  .icon {
+    align-self: center; display: inline-block; width: 16px; height: 16px; border-radius: 50%;
+    font-size: 11px; font-weight: 700; line-height: 16px; text-align: center;
+  }
+  .good .icon { background: var(--good); color: #fff; }
+  .warning .icon { background: var(--warning); color: #0b0b0b; }
+  .critical .icon { background: var(--critical); color: #fff; }
+  .waiting .icon { background: var(--hairline); color: var(--ink-2); }
+
+  #filter {
+    width: min(320px, 100%); margin-bottom: 8px; padding: 6px 10px; font: inherit; color: inherit;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Solar monitor: data check</h1>
+    <div id="connection"></div>
+  </header>
+  <p class="meta" id="device"></p>
+  <p id="error" role="alert"></p>
+
+  <section class="tiles" id="tiles" aria-label="Live values"></section>
+
+  <h2>Checks</h2>
+  <p class="note">Do the readings agree with each other? A warning means a field needs a closer look, not that the equipment has a fault.</p>
+  <div class="card">
+    <table>
+      <thead><tr><th>Check</th><th>Values</th><th>Result</th></tr></thead>
+      <tbody id="checks"></tbody>
+    </table>
+  </div>
+
+  <h2>Energy counters</h2>
+  <p class="note">Compare these with the GoodWe app and your electricity meter.</p>
+  <div class="card">
+    <table>
+      <thead><tr><th>Counter</th><th class="num">Today</th><th class="num">Lifetime</th></tr></thead>
+      <tbody id="energy"></tbody>
+    </table>
+  </div>
+
+  <h2>All fields</h2>
+  <input id="filter" type="search" placeholder="Filter fields" aria-label="Filter fields">
+  <div class="card">
+    <table>
+      <thead><tr><th>Field</th><th>Description</th><th class="num">Value</th></tr></thead>
+      <tbody id="fields"></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+  const REFRESH_MS = 5000;
+  const STALE_AFTER_POLLS = 3;
+
+  // Below this the grid reading is mostly noise, so its direction can't be judged.
+  const GRID_SIGN_MIN_W = 50;
+  // Energy in should exceed energy out by no more than plausible conversion losses.
+  const MAX_LOSS_FRACTION = 0.15;
+
+  const $ = (id) => document.getElementById(id);
+  let latest = null;
+  let values = {};
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  const isNum = (x) => typeof x === "number" && Number.isFinite(x);
+  const numbers = (...ids) => {
+    const found = ids.map((id) => values[id]);
+    return found.every(isNum) ? found : null;
+  };
+
+  function number(x, digits) {
+    const text = Math.abs(x).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
+    return (x < 0 ? "−" : "") + text;
+  }
+  const watts = (x) => (isNum(x) ? `${number(x, 0)} W` : "—");
+  const kwh = (x) => (isNum(x) ? `${number(x, 1)} kWh` : "—");
+
+  function status(kind, label) {
+    const icons = { good: "✓", warning: "!", critical: "×", waiting: "–" };
+    const node = el("span", `status ${kind}`);
+    node.append(el("span", "icon", icons[kind]), el("span", "", label));
+    return node;
+  }
+
+  /* Live tiles: each names its source field so it can be traced to the table below. */
+  function renderTiles() {
+    const tiles = [
+      { label: "Solar", value: watts(values.ppv),
+        detail: `ppv. PV1 ${watts(values.ppv1)}, PV2 ${watts(values.ppv2)}` },
+      { label: "House load", value: watts(values.load_ptotal),
+        detail: `load_ptotal. Calculated house_consumption: ${watts(values.house_consumption)}` },
+      { label: "Battery power", value: watts(values.pbattery1),
+        detail: `pbattery1, signed as reported. Mode: ${values.battery_mode_label ?? "—"}` },
+      { label: "Battery charge", value: isNum(values.battery_soc) ? `${values.battery_soc}%` : "—",
+        detail: `battery_soc. ${isNum(values.vbattery1) ? `${values.vbattery1} V` : ""}` },
+      { label: "Grid power", value: watts(values.active_power_total),
+        detail: `active_power_total, signed as reported. Mode: ${values.grid_in_out_label ?? "—"}` },
+    ];
+    $("tiles").replaceChildren(...tiles.map((tile) => {
+      const node = el("div", "tile");
+      node.append(el("div", "label", tile.label), el("div", "value", tile.value), el("div", "detail", tile.detail));
+      return node;
+    }));
+  }
+
+  /* Agreement within a tolerance: the larger of a fixed margin and a share of the size. */
+  function agrees(name, why, a, aLabel, b, bLabel, minWatts, fraction) {
+    const margin = Math.max(minWatts, fraction * Math.max(Math.abs(a), Math.abs(b)));
+    const ok = Math.abs(a - b) <= margin;
+    return {
+      name, why,
+      values: `${aLabel} ${watts(a)}, ${bLabel} ${watts(b)}`,
+      status: ok ? "good" : "warning",
+      label: ok ? "Agrees" : "Differs",
+    };
+  }
+
+  function energyBalance(name, why, inIds, outIds) {
+    const ins = numbers(...inIds);
+    const outs = numbers(...outIds);
+    if (!ins || !outs) return { name, why, values: "—", status: "waiting", label: "No data" };
+    const energyIn = ins.reduce((a, b) => a + b, 0);
+    const energyOut = outs.reduce((a, b) => a + b, 0);
+    const lost = energyIn > 0 ? (energyIn - energyOut) / energyIn : NaN;
+    const ok = lost >= 0 && lost <= MAX_LOSS_FRACTION;
+    return {
+      name, why,
+      values: `In ${kwh(energyIn)}, out ${kwh(energyOut)}`,
+      status: ok ? "good" : "warning",
+      label: ok ? `Balances (${number(lost * 100, 0)}% lost)` : "Doesn't balance",
+    };
+  }
+
+  const CHECKS = [
+    () => {
+      const name = "Inverter clock";
+      const why = "The inverter's timestamp should match the time of the read.";
+      const stamp = new Date(String(values.timestamp).replace(" ", "T"));
+      const seconds = Math.abs(stamp - new Date(latest.read_at)) / 1000;
+      if (!Number.isFinite(seconds)) return { name, why, values: "—", status: "waiting", label: "No data" };
+      return {
+        name, why,
+        values: `${number(seconds, 0)} s apart`,
+        status: seconds <= 60 ? "good" : "warning",
+        label: seconds <= 60 ? "Agrees" : "Differs",
+      };
+    },
+    () => {
+      const n = numbers("ppv", "ppv_total");
+      return n && agrees("PV total", "The strings' sum against the inverter's own PV total.",
+        n[0], "ppv", n[1], "ppv_total", 30, 0.10);
+    },
+    () => {
+      const n = numbers("ppv", "pbattery1", "total_inverter_power");
+      return n && agrees("Power through the inverter",
+        "Solar plus signed battery power should be close to AC output, which holds if negative battery power means charging.",
+        n[0] + n[1], "ppv + pbattery1", n[2], "total_inverter_power", 100, 0.15);
+    },
+    () => {
+      const n = numbers("pbattery1", "vbattery1", "ibattery1");
+      return n && agrees("Battery power from volts and amps", "Reported battery power against volts times amps.",
+        n[0], "pbattery1", n[1] * n[2], "V × A", 100, 0.15);
+    },
+    () => {
+      const name = "Battery mode label";
+      const why = "The mode label should match what the power reading shows.";
+      const power = values.pbattery1;
+      const label = values.battery_mode_label;
+      if (!isNum(power) || !label) return { name, why, values: "—", status: "waiting", label: "No data" };
+      const expected = power < -100 ? "charge" : power > 100 ? "discharge" : "standby";
+      const ok = label.toLowerCase().includes(expected);
+      return { name, why, values: `${label}, ${watts(power)}`, status: ok ? "good" : "warning", label: ok ? "Agrees" : "Differs" };
+    },
+    () => {
+      const name = "Grid direction";
+      const why = "What does a positive grid reading mean? Inverter output minus load gives the expected direction; a kettle or similar load helps if grid power is near zero.";
+      const n = numbers("active_power_total", "total_inverter_power", "load_ptotal");
+      if (!n) return { name, why, values: "—", status: "waiting", label: "No data" };
+      const [grid, output, load] = n;
+      const expectedExport = output - load;
+      const shown = `active_power_total ${watts(grid)}, output − load ${watts(expectedExport)}, mode ${values.grid_in_out_label ?? "—"}`;
+      if (Math.abs(grid) < GRID_SIGN_MIN_W || Math.abs(expectedExport) < GRID_SIGN_MIN_W) {
+        return { name, why, values: shown, status: "waiting", label: "Too small to tell" };
+      }
+      const positiveIsExport = Math.sign(grid) === Math.sign(expectedExport);
+      return { name, why, values: shown, status: "good", label: positiveIsExport ? "Positive = exporting" : "Positive = importing" };
+    },
+    () => {
+      const n = numbers("meter_active_power_total", "meter_active_power1");
+      return n && agrees("Meter total against L1", "On a single-phase system these two fields should match.",
+        n[0], "total", n[1], "L1", 10, 0);
+    },
+    () => energyBalance("Lifetime balance, meter counters",
+      "PV, import and battery discharge should cover load, export and battery charge, plus losses.",
+      ["e_total", "meter_e_total_imp", "e_bat_discharge_total"], ["e_load_total", "meter_e_total_exp", "e_bat_charge_total"]),
+    () => energyBalance("Lifetime balance, inverter counters", "The same sum, using the inverter's import and export.",
+      ["e_total", "e_total_imp", "e_bat_discharge_total"], ["e_load_total", "e_total_exp", "e_bat_charge_total"]),
+    () => energyBalance("Today's balance, inverter counters",
+      "The same sum for today. The meter has no daily counters to use here.",
+      ["e_day", "e_day_imp", "e_bat_discharge_day"], ["e_load_day", "e_day_exp", "e_bat_charge_day"]),
+  ];
+
+  function renderChecks() {
+    const rows = CHECKS.map((check) => check()).filter(Boolean).map((result) => {
+      const row = el("tr");
+      const name = el("td", "", result.name);
+      name.append(el("span", "why", result.why));
+      const verdict = el("td");
+      verdict.append(status(result.status, result.label));
+      row.append(name, el("td", "values", result.values), verdict);
+      return row;
+    });
+    $("checks").replaceChildren(...rows);
+  }
+
+  const ENERGY_ROWS = [
+    ["PV generation", "e_day", "e_total"],
+    ["Load", "e_load_day", "e_load_total"],
+    ["Battery charge", "e_bat_charge_day", "e_bat_charge_total"],
+    ["Battery discharge", "e_bat_discharge_day", "e_bat_discharge_total"],
+    ["Import, inverter counter", "e_day_imp", "e_total_imp"],
+    ["Export, inverter counter", "e_day_exp", "e_total_exp"],
+    ["Import, meter counter", null, "meter_e_total_imp"],
+    ["Export, meter counter", null, "meter_e_total_exp"],
+  ];
+
+  function renderEnergy() {
+    $("energy").replaceChildren(...ENERGY_ROWS.map(([label, today, lifetime]) => {
+      const row = el("tr");
+      row.append(el("td", "", label), el("td", "num", kwh(values[today])), el("td", "num", kwh(values[lifetime])));
+      return row;
+    }));
+  }
+
+  function renderFields() {
+    const query = $("filter").value.trim().toLowerCase();
+    const rows = latest.readings
+      .filter((r) => !query || `${r.id} ${r.name}`.toLowerCase().includes(query))
+      .map((r) => {
+        const row = el("tr");
+        const id = el("td");
+        id.append(el("code", "", r.id));
+        const missing = r.value === null || r.value === "";
+        const value = el("td", missing ? "num no-value" : "num", missing ? "No value" : `${r.value} ${r.unit}`.trim());
+        row.append(id, el("td", "", r.name), value);
+        return row;
+      });
+    $("fields").replaceChildren(...rows);
+  }
+
+  function renderConnection() {
+    const age = latest?.read_at ? Math.round((Date.now() - new Date(latest.read_at)) / 1000) : null;
+    const staleAfter = (latest?.poll_seconds ?? 15) * STALE_AFTER_POLLS;
+    const node = $("connection");
+    if (latest === null) node.replaceChildren(status("critical", "Can't reach the dashboard server"));
+    else if (latest.error) node.replaceChildren(status("critical", "Inverter not responding"));
+    else if (age === null) node.replaceChildren(status("waiting", "Waiting for first reading"));
+    else if (age > staleAfter) node.replaceChildren(status("warning", `Stale: last read ${age}s ago`));
+    else node.replaceChildren(status("good", `Live: read ${Math.max(age, 0)}s ago, polling every ${latest.poll_seconds}s`));
+  }
+
+  function render() {
+    renderConnection();
+    if (latest?.device) {
+      const d = latest.device;
+      $("device").textContent = `Family ${d.family}, firmware ${d.firmware}, ARM ${d.arm_firmware}`;
+    }
+    $("error").textContent = latest?.error
+      ? `Last read failed at ${latest.error_at}: ${latest.error}${latest.readings ? " Values below are from the last good read." : ""}`
+      : "";
+    if (!latest?.readings) return;
+    values = Object.fromEntries(latest.readings.map((r) => [r.id, r.value]));
+    renderTiles();
+    renderChecks();
+    renderEnergy();
+    renderFields();
+  }
+
+  async function refresh() {
+    let next = null;
+    try {
+      const response = await fetch("/api/latest", { cache: "no-store" });
+      if (response.ok) next = await response.json();
+    } catch { /* Handled below: `latest` stays null and the header says so. */ }
+    const changed = JSON.stringify(next) !== JSON.stringify(latest);
+    latest = next;
+    if (changed) render();
+    else renderConnection();
+  }
+
+  $("filter").addEventListener("input", () => { if (latest?.readings) renderFields(); });
+  refresh();
+  setInterval(refresh, REFRESH_MS);
+  setInterval(renderConnection, 1000);
+</script>
+</body>
+</html>

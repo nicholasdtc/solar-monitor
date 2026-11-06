@@ -49,6 +49,25 @@ def discover_host() -> str | None:
     return address
 
 
+def resolve_target(host: str | None, port: int | None) -> tuple[str, int] | None:
+    """Work out the inverter's address: arguments, then .env, then broadcast."""
+    load_dotenv(REPO_ROOT / ".env")
+    host = host or os.environ.get("INVERTER_IP", "").strip()
+    port = port or int(os.environ.get("INVERTER_PORT") or DEFAULT_PORT)
+
+    if not host:
+        print("No INVERTER_IP set, broadcasting to find the inverter...")
+        host = discover_host()
+        if not host:
+            print(
+                "No reply. Set INVERTER_IP in .env (see the router's device list or "
+                "the GoodWe app), and check this PC is on the inverter's network.",
+                file=sys.stderr,
+            )
+            return None
+    return host, port
+
+
 def device_info(inverter: goodwe.Inverter) -> dict[str, object]:
     """Identifying details that are safe to print (no serial number)."""
     return {
@@ -110,20 +129,10 @@ def main() -> int:
     parser.add_argument("--port", type=int, help="default: INVERTER_PORT from .env, else 502")
     args = parser.parse_args()
 
-    load_dotenv(REPO_ROOT / ".env")
-    host = args.host or os.environ.get("INVERTER_IP", "").strip()
-    port = args.port or int(os.environ.get("INVERTER_PORT") or DEFAULT_PORT)
-
-    if not host:
-        print("No INVERTER_IP set, broadcasting to find the inverter...")
-        host = discover_host()
-        if not host:
-            print(
-                "No reply. Set INVERTER_IP in .env (see the router's device list or "
-                "the GoodWe app), and check this PC is on the inverter's network.",
-                file=sys.stderr,
-            )
-            return 1
+    target = resolve_target(args.host, args.port)
+    if target is None:
+        return 1
+    host, port = target
 
     print(f"Connecting to {host}:{port}...\n")
     try:
