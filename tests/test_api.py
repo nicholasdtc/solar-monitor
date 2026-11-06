@@ -140,9 +140,84 @@ def test_invalid_appliances_are_refused(call, body):
     assert call("GET", "/api/appliances").json()["appliances"] == []
 
 
-@pytest.mark.parametrize("body", [{"limit_amps": 0}, {"target_soc": 101}, {"capacity_kwh": -1}, {"surge_limit_w": 0}])
+@pytest.mark.parametrize("body", [
+    {"limit_amps": 0},
+    {"target_soc": 101},
+    {"capacity_kwh": -1},
+    {"surge_limit_w": 0},
+    {"outage_hours": 0},
+    {"outage_hours": 8761},
+    {"run_until_minutes": -1},
+    {"run_until_minutes": 1440},
+    {"run_until_minutes": 1.5},
+    {"tariff_day": -1},
+    {"tariff_export": "lots"},
+])
 def test_invalid_settings_are_refused(call, body):
     assert call("PUT", "/api/settings", json=body).status_code == 422
+
+
+def test_saving_one_setting_leaves_the_others_and_null_clears_it(call):
+    call("PUT", "/api/settings", json={"limit_amps": 10, "tariff_day": 5})
+    settings = call("PUT", "/api/settings", json={"tariff_day": None}).json()["settings"]
+    assert settings["limit_amps"] == 10
+    assert settings["tariff_day"] is None
+
+
+def test_the_planners_stay_empty_until_asked(call):
+    overview = call("GET", "/api/appliances").json()
+    assert overview["outage_plan"] is None
+    assert overview["run_plan"] is None
+
+
+def test_outage_plan_uses_the_ticked_load_the_reserve_and_the_limit(call, collector):
+    live(collector, backup_v1=200, battery_soc=60)
+    collector.latest["battery_limits"] = {"min_soc": 30, "reserve_soc": 10}
+    call("POST", "/api/appliances", json=lamp(typical_w=500, use_in_outage=True))
+    call("POST", "/api/appliances", json=lamp(name="Unticked", typical_w=9000))
+    call("PUT", "/api/settings", json={"capacity_kwh": 10, "outage_hours": 5})
+    plan = call("GET", "/api/appliances").json()["outage_plan"]
+    assert plan["selected_w"] == 500
+    assert plan["from_now"]["max_w"] == pytest.approx(892.8)  # 5 kWh above the 10% reserve.
+    assert plan["from_now"]["spare_w"] == pytest.approx(392.8)
+
+    plan = call("PUT", "/api/settings", json={"limit_amps": 3}).json()["outage_plan"]
+    assert plan["limit_w"] == 600  # 3 A at the live 200 V.
+    assert plan["from_now"]["max_w"] == 600
+    assert plan["from_now"]["capped"] is True
+
+
+def test_run_plan_uses_the_minimum_and_the_smoothed_battery_power(call, collector):
+    discharging(collector, power_w=700, soc=60)
+    collector.latest["battery_limits"] = {"min_soc": 30, "reserve_soc": 10}
+    plan = call("PUT", "/api/settings", json={"capacity_kwh": 10, "run_until_minutes": 90}).json()["run_plan"]
+    assert plan["min_soc"] == 30
+    assert plan["energy_kwh"] == pytest.approx(3)  # Not the 5 kWh above the reserve.
+    assert plan["until"][11:16] == "01:30"
+    assert 0 < plan["hours"] <= 24
+    assert plan["max_battery_w"] == pytest.approx(3000 / plan["hours"])
+    assert plan["battery_w"] == 700
+
+
+def test_run_plan_has_no_live_power_when_the_inverter_stops_answering(call, collector):
+    discharging(collector)
+    collector.latest["error"] = "TimeoutError: "
+    assert call("PUT", "/api/settings", json={"run_until_minutes": 90}).json()["run_plan"]["battery_w"] is None
+
+
+def test_overview_works_out_the_tariffs(call):
+    tariffs = call("GET", "/api/appliances").json()["tariffs"]
+    assert tariffs["saving_peak"] is None
+    tariffs = call("PUT", "/api/settings", json={"tariff_peak": 30, "tariff_night": 9}).json()["tariffs"]
+    assert tariffs["night_kwh_cost"] == pytest.approx(10)
+    assert tariffs["saving_peak"] == pytest.approx(20)
+    assert tariffs["saving_day"] is None
+
+
+def test_the_page_has_an_input_for_every_setting(call):
+    page = call("GET", "/").text
+    for name in db.SETTINGS:
+        assert f'name="{name}"' in page
 
 
 def test_a_cross_site_form_post_cannot_add_an_appliance(call):

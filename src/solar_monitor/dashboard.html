@@ -183,7 +183,7 @@
   .add label.tick { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 6px; }
   .add label.tick input { margin: 0; }
   .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; padding: 12px 16px; }
-  .settings input[type="number"] { width: 120px; }
+  .settings input[type="number"], .settings input[type="time"] { width: 120px; }
   header #connection { margin-left: auto; }
   #logout button { padding: 2px 8px; color: var(--ink-2); background: none; border: 1px solid var(--border); border-radius: 6px; font: inherit; cursor: pointer; }
 </style>
@@ -201,7 +201,7 @@
 
   <nav class="tabs" aria-label="Sections">
     <a href="#live" aria-current="page">Live</a>
-    <a href="#appliances">Appliances</a>
+    <a href="#appliances">Appliances &amp; tariffs</a>
     <a href="#schedule">Battery schedule</a>
   </nav>
 
@@ -326,6 +326,27 @@
       </table>
     </div>
 
+    <h2>Plan for a power cut</h2>
+    <p class="note">The biggest steady load the battery could carry for a power cut this long, with no sun or grid, down to its reserve. Compared with the ticked appliances at their typical draw.</p>
+    <form class="card edit settings" id="outage-settings">
+      <label>Length of power cut (hours) <input name="outage_hours" type="number" min="0.1" max="8760" step="any"></label>
+    </form>
+    <div class="card" id="outage-plan-card" style="margin-top: 12px">
+      <table>
+        <thead><tr><th>Starting from</th><th class="num">Most it can carry</th><th class="num">Ticked, typical</th><th>Does it fit?</th></tr></thead>
+        <tbody id="outage-plan"></tbody>
+      </table>
+    </div>
+
+    <h2>How much can I run?</h2>
+    <p class="note">The average load that would bring the battery down to its minimum by a given time. It counts only what's in the battery now, so solar and the grid would stretch it further.</p>
+    <form class="card edit settings" id="run-settings">
+      <label>Run until <input name="run_until_minutes" type="time"></label>
+    </form>
+    <div class="card" id="run-plan-card" style="margin-top: 12px">
+      <table><tbody id="run-plan"></tbody></table>
+    </div>
+
     <h2>Motors starting</h2>
     <p class="note">The worst moment: everything at its peak, and every motor starting at once.</p>
     <div class="card">
@@ -344,6 +365,22 @@
       <label>Starting battery capacity (kWh) <input name="capacity_kwh" type="number" min="0" step="any"><span class="meta" id="capacity-hint"></span></label>
     </form>
     <p class="meta" id="appliance-sources" style="margin-top: 8px"></p>
+
+    <h2>Tariffs</h2>
+    <p class="note">Your rates per kWh, in any money unit you like. The results below come out in the same unit.</p>
+    <form class="card edit settings" id="tariff-settings">
+      <label>Day rate <input name="tariff_day" type="number" min="0" step="any"></label>
+      <label>Peak rate <input name="tariff_peak" type="number" min="0" step="any"></label>
+      <label>Night rate <input name="tariff_night" type="number" min="0" step="any"></label>
+      <label>Export rate <input name="tariff_export" type="number" min="0" step="any"></label>
+    </form>
+    <div class="card" style="margin-top: 12px">
+      <table>
+        <thead><tr><th>Per kWh</th><th class="num">Amount</th><th>Verdict</th></tr></thead>
+        <tbody id="tariff-values"></tbody>
+      </table>
+    </div>
+    <p class="meta" id="tariff-sources" style="margin-top: 8px"></p>
   </div>
 </main>
 <div id="chart-tip" role="status" hidden></div>
@@ -1345,7 +1382,7 @@
     { key: "all_typical", label: "Everything, typical", why: "Every appliance at its typical draw" },
     { key: "all_worst", label: "Everything, at peak", why: "Every appliance at its peak" },
   ];
-  const COULD_NOT_SAVE = "Couldn't save that. Names can't be blank, watts can't be negative and the charge target is at most 100%. Showing what's saved.";
+  const COULD_NOT_SAVE = "Couldn't save that. Names can't be blank, watts and rates can't be negative, the charge target is at most 100% and a power cut is at least 0.1 hours. Showing what's saved.";
 
   let overview = null;
   let overviewRequest = 0;
@@ -1510,10 +1547,95 @@
     $("surge").replaceChildren(...rows);
   }
 
+  function fits(spare) {
+    if (!isNum(spare)) return "—";
+    return spare >= 0 ? status("good", `Yes, ${watts(spare)} spare`) : status("warning", `No, over by ${watts(-spare)}`);
+  }
+
+  const heldToLimit = (plan) => (plan?.capped ? "Held to your current limit" : "");
+
+  function renderOutagePlan() {
+    const plan = overview.outage_plan;
+    $("outage-plan-card").hidden = !plan;
+    if (!plan) return;
+    const rows = [
+      ["Now", isNum(overview.soc) ? `${number(overview.soc, 0)}% charged` : "", plan.from_now],
+      ["Full", "100% charged", plan.from_full],
+    ].map(([label, why, start]) => {
+      const row = el("tr");
+      const fit = el("td");
+      fit.append(fits(start?.spare_w));
+      const most = el("td", "num", watts(start?.max_w));
+      const held = heldToLimit(start);
+      if (held) most.append(el("span", "why", held));
+      row.append(loadCell(label, why), most, el("td", "num", watts(plan.selected_w)), fit);
+      return row;
+    });
+    $("outage-plan").replaceChildren(...rows);
+  }
+
+  function batteryNow(batteryW) {
+    if (!isNum(batteryW)) return "";
+    if (batteryW >= 50) return `Drawing ${watts(batteryW)} now`;
+    return batteryW <= -50 ? `Charging at ${watts(-batteryW)} now` : "About idle now";
+  }
+
+  function renderRunPlan() {
+    const plan = overview.run_plan;
+    $("run-plan-card").hidden = !plan;
+    if (!plan) return;
+    const day = plan.until.slice(0, 10) === isoDay(new Date()) ? "today" : "tomorrow";
+    const fit = el("td", "num");
+    fit.append(fits(plan.spare_w));
+    const rows = [
+      [`Until ${plan.until.slice(11, 16)} ${day}`, "", el("td", "num", timeLeft(plan.hours))],
+      [`Energy above the ${plan.min_soc}% minimum`, "", el("td", "num", kwh(plan.energy_kwh))],
+      ["Most the battery can average", batteryNow(plan.battery_w), el("td", "num", watts(plan.max_battery_w))],
+      ["Most your appliances can average", heldToLimit(plan) || "After conversion and standby", el("td", "num", watts(plan.max_w))],
+      ["Ticked, typical", `${watts(plan.selected_w)} against that`, fit],
+    ].map(([label, why, value]) => {
+      const row = el("tr");
+      row.append(loadCell(label, why), value);
+      return row;
+    });
+    $("run-plan").replaceChildren(...rows);
+  }
+
+  const TARIFF_ROWS = [
+    { key: "night_kwh_cost", label: "Cost if charged at the night rate", why: "The night rate, plus what's lost on the way in and out", verdict: () => "" },
+    { key: "saving_day", label: "Used instead of buying at the day rate", verdict: (x) => (x > 0 ? status("good", "Worth doing") : status("warning", "Not worth doing")) },
+    { key: "saving_peak", label: "Used instead of buying at the peak rate", verdict: (x) => (x > 0 ? status("good", "Worth doing") : status("warning", "Not worth doing")) },
+    { key: "gain_export", label: "Charged at the night rate, then exported", verdict: (x) => (x > 0 ? status("good", "Makes money") : status("warning", "Loses money")) },
+    { key: "leftover_export", label: "Left when the night rate starts, exported", why: "Compared with keeping it, to save buying a kWh at the night rate", verdict: (x) => (x > 0 ? "Export it" : "Keep it") },
+    { key: "solar_export", label: "Solar you can't store, exported", why: "The battery is full and the sun is still out", verdict: () => "Export it" },
+  ];
+
+  function renderTariffs() {
+    const { tariffs } = overview;
+    const rows = TARIFF_ROWS.map(({ key, label, why, verdict }) => {
+      const value = tariffs[key];
+      const row = el("tr");
+      const so = el("td");
+      so.append(isNum(value) ? verdict(value) : "—");
+      row.append(loadCell(label, why), el("td", "num", isNum(value) ? number(value, 2) : "—"), so);
+      return row;
+    });
+    $("tariff-values").replaceChildren(...rows);
+    $("tariff-sources").textContent = `Charging from the grid assumes ${number(tariffs.round_trip_efficiency * 100, 0)}% of it comes back out to the house, and energy already in the battery ${number(tariffs.delivery_efficiency * 100, 0)}%. Both are typical figures rather than measurements.`;
+  }
+
+  const SETTINGS_FORMS = document.querySelectorAll("form.settings");
+  const timeInputValue = (minutes) => (isNum(minutes) ? `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}` : "");
+  const minutesOfDay = (text) => (text ? Number(text.slice(0, 2)) * 60 + Number(text.slice(3, 5)) : null);
+
   function renderChoices() {
     const { settings, capacity } = overview;
-    const form = $("settings");
-    for (const [name, value] of Object.entries(settings)) setValue(form.elements[name], value);
+    for (const form of SETTINGS_FORMS) {
+      for (const input of form.querySelectorAll("input")) {
+        const value = settings[input.name];
+        setValue(input, input.type === "time" ? timeInputValue(value) : value);
+      }
+    }
     $("capacity-hint").textContent = capacity.source === "measured"
       ? `Not used now: the log measures ${kwh(capacity.kwh)} over ${capacity.points} percentage points of charging and discharging.`
       : "Used only until the log has enough charging and discharging to measure it, which can take a few days. Allows for the battery health the inverter reports.";
@@ -1539,9 +1661,12 @@
     if (!overview) return;
     renderApplianceRows();
     renderCases();
+    renderOutagePlan();
+    renderRunPlan();
     renderSurge();
     renderChoices();
     renderSources();
+    renderTariffs();
   }
 
   const refreshOverview = () => sendOverview("GET", "/api/appliances");
@@ -1562,13 +1687,13 @@
     form.elements.name.focus();
   });
 
-  $("settings").addEventListener("submit", (event) => event.preventDefault());
-  $("settings").addEventListener("change", (event) => {
-    const { elements } = event.currentTarget;
-    sendOverview("PUT", "/api/settings", Object.fromEntries(
-      ["capacity_kwh", "target_soc", "limit_amps", "surge_limit_w"].map((name) => [name, optionalNumber(elements[name])]),
-    ));
-  });
+  for (const form of SETTINGS_FORMS) {
+    form.addEventListener("submit", (event) => event.preventDefault());
+    form.addEventListener("change", ({ target }) => {
+      const value = target.type === "time" ? minutesOfDay(target.value) : optionalNumber(target);
+      sendOverview("PUT", "/api/settings", { [target.name]: value });
+    });
+  }
 
   /* The tab is in the address, so a reload or the back button stays where it was. */
   function showTab() {

@@ -1,4 +1,4 @@
-"""Battery time remaining and appliance load sums. Plain arithmetic, with no I/O.
+"""Battery time remaining, load sums, load planners and tariffs. Plain arithmetic, with no I/O.
 
 Ratings printed on the hardware aren't used where the inverter or the log says better:
 voltage, state of health and minimum charge are read live, and capacity is measured.
@@ -7,6 +7,7 @@ voltage, state of health and minimum charge are read live, and capacity is measu
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from datetime import datetime, timedelta
 
 # Below this a power reading is mostly noise. The same gate as the dashboard's power flow.
 IDLE_W = 50
@@ -28,6 +29,8 @@ MIN_MEASURED_POINTS = 10
 # pbattery1 is measured on the battery side, so the time remaining doesn't need them.
 CONVERSION_EFFICIENCY = 0.93
 STANDBY_W = 40
+# Typical figure for grid to battery to home. The log has no way to measure that whole path.
+ROUND_TRIP_EFFICIENCY = 0.90
 
 
 def smoothed_power(readings: Sequence[float | None]) -> float | None:
@@ -124,12 +127,121 @@ def battery_estimate(
     }
 
 
+def available_wh(capacity_kwh: float, start_soc: float, stop_soc: float) -> float:
+    return capacity_kwh * 1000 * max(start_soc - stop_soc, 0) / 100
+
+
 def outage_hours(load_w: float, start_soc: float, reserve_soc: float, capacity_kwh: float | None) -> float | None:
     """How long the battery could carry this household load with no sun or grid."""
     if capacity_kwh is None:
         return None
-    available_wh = capacity_kwh * 1000 * max(start_soc - reserve_soc, 0) / 100
-    return available_wh / (load_w / CONVERSION_EFFICIENCY + STANDBY_W)
+    return available_wh(capacity_kwh, start_soc, reserve_soc) / (load_w / CONVERSION_EFFICIENCY + STANDBY_W)
+
+
+def max_load_w(energy_wh: float, hours: float) -> float:
+    """The steady household load this energy could carry for this long: outage_hours in reverse."""
+    return max((energy_wh / hours - STANDBY_W) * CONVERSION_EFFICIENCY, 0)
+
+
+def _allowance(energy_wh: float, hours: float, limit_w: float | None, selected_w: float) -> dict[str, object]:
+    """The most that can run, whichever of the energy or the limit runs out first."""
+    load_w = max_load_w(energy_wh, hours)
+    capped = limit_w is not None and load_w > limit_w
+    most_w = limit_w if capped else load_w
+    return {"max_w": most_w, "capped": capped, "spare_w": most_w - selected_w}
+
+
+def outage_plan(
+    hours: float,
+    selected_w: float,
+    soc: float | None,
+    reserve_soc: float,
+    capacity_kwh: float | None,
+    limit_w: float | None,
+) -> dict[str, object]:
+    """The most the battery could carry through a power cut this long, from now and from full."""
+
+    def starting_at(start_soc: float | None) -> dict[str, object] | None:
+        if start_soc is None or capacity_kwh is None:
+            return None
+        return _allowance(available_wh(capacity_kwh, start_soc, reserve_soc), hours, limit_w, selected_w)
+
+    return {
+        "hours": hours,
+        "selected_w": selected_w,
+        "limit_w": limit_w,
+        "from_now": starting_at(soc),
+        "from_full": starting_at(100),
+    }
+
+
+def next_time(now: datetime, minutes_of_day: int) -> datetime:
+    """The next time this clock time comes round. Once it has arrived, that means tomorrow."""
+    today = now.replace(hour=minutes_of_day // 60, minute=minutes_of_day % 60, second=0, microsecond=0)
+    return today if today > now else today + timedelta(days=1)
+
+
+def run_until_plan(
+    now: datetime,
+    minutes_of_day: int,
+    *,
+    soc: float | None,
+    min_soc: float,
+    capacity_kwh: float | None,
+    limit_w: float | None,
+    selected_w: float,
+    battery_w: float | None,
+) -> dict[str, object]:
+    """The average load the battery could carry until a clock time, ignoring solar and the grid.
+
+    `now` is local wall-clock time, and going through timestamp() allows for a clock change.
+    """
+    until = next_time(now, minutes_of_day)
+    hours = (until.timestamp() - now.timestamp()) / 3600
+    plan: dict[str, object] = {
+        "until": until.isoformat(timespec="minutes"),
+        "hours": hours,
+        "min_soc": min_soc,
+        "selected_w": selected_w,
+        "limit_w": limit_w,
+        "battery_w": battery_w,
+        "energy_kwh": None,
+        "max_battery_w": None,
+        "max_w": None,
+        "capped": False,
+        "spare_w": None,
+    }
+    if soc is None or capacity_kwh is None:
+        return plan
+    energy_wh = available_wh(capacity_kwh, soc, min_soc)
+    return {
+        **plan,
+        **_allowance(energy_wh, hours, limit_w, selected_w),
+        "energy_kwh": energy_wh / 1000,
+        "max_battery_w": energy_wh / hours,
+    }
+
+
+def tariff_values(
+    day: float | None, peak: float | None, night: float | None, export: float | None
+) -> dict[str, float | None]:
+    """What a battery kWh is worth at these rates, in the same units as the rates."""
+
+    def less(rate: float | None, cost: float | None) -> float | None:
+        return None if rate is None or cost is None else rate - cost
+
+    delivered = None if night is None else night / ROUND_TRIP_EFFICIENCY
+    return {
+        "round_trip_efficiency": ROUND_TRIP_EFFICIENCY,
+        "delivery_efficiency": CONVERSION_EFFICIENCY,
+        "night_kwh_cost": delivered,
+        "saving_day": less(day, delivered),
+        "saving_peak": less(peak, delivered),
+        "gain_export": less(export, delivered),
+        # A kWh still in the battery as the night rate starts: export it, or use it instead of buying one?
+        "leftover_export": less(None if export is None else export * CONVERSION_EFFICIENCY, night),
+        "solar_export": export,
+    }
 
 
 def worst_w(appliance: dict[str, object]) -> float:

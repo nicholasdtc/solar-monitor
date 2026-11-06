@@ -200,10 +200,10 @@ def test_settings_start_unset(conn):
     assert db.get_settings(conn) == dict.fromkeys(db.SETTINGS)
 
 
-def test_saving_settings_replaces_them_and_none_clears_one(conn):
-    db.save_settings(conn, {"limit_amps": 16, "target_soc": 90})
+def test_saving_settings_changes_those_given_and_none_clears_one(conn):
+    db.save_settings(conn, {"limit_amps": 16, "target_soc": 90, "tariff_day": 5})
     db.save_settings(conn, {"limit_amps": None, "target_soc": 95})
-    assert db.get_settings(conn) == {**dict.fromkeys(db.SETTINGS), "target_soc": 95}
+    assert db.get_settings(conn) == {**dict.fromkeys(db.SETTINGS), "target_soc": 95, "tariff_day": 5}
 
 
 def appliance(**fields):

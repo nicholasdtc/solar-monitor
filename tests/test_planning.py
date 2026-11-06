@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 
 from solar_monitor import planning
@@ -136,6 +138,126 @@ def test_outage_hours_with_nothing_above_the_reserve_is_zero():
 
 def test_outage_hours_needs_a_capacity():
     assert planning.outage_hours(500, 100, 20, None) is None
+
+
+def test_max_load_allows_for_standby_and_conversion():
+    # 5 kWh over 5 hours is 1000 W of battery draw, less 40 W standby, times 0.93.
+    assert planning.max_load_w(5000, 5) == pytest.approx(892.8)
+
+
+def test_max_load_is_the_inverse_of_outage_hours():
+    load_w = planning.max_load_w(planning.available_wh(10, 90, 30), 7)
+    assert planning.outage_hours(load_w, 90, 30, 10) == pytest.approx(7)
+
+
+def test_max_load_is_zero_when_standby_uses_it_all():
+    assert planning.max_load_w(100, 5) == 0
+
+
+def plan_outage(**overrides):
+    options = dict(hours=5, selected_w=500, soc=60, reserve_soc=10, capacity_kwh=10, limit_w=None)
+    return planning.outage_plan(**{**options, **overrides})
+
+
+def test_outage_plan_starts_from_now_and_from_full_down_to_the_reserve():
+    plan = plan_outage()
+    # 5 kWh above the reserve from 60%, and 9 kWh from full.
+    assert plan["from_now"]["max_w"] == pytest.approx(892.8)
+    assert plan["from_full"]["max_w"] == pytest.approx(planning.max_load_w(9000, 5))
+    assert plan["from_now"]["capped"] is False
+
+
+def test_outage_plan_compares_with_the_selected_load():
+    assert plan_outage(selected_w=500)["from_now"]["spare_w"] == pytest.approx(392.8)
+    assert plan_outage(selected_w=1000)["from_now"]["spare_w"] == pytest.approx(-107.2)
+
+
+def test_outage_plan_is_held_to_the_limit():
+    start = plan_outage(limit_w=600)["from_now"]
+    assert start["max_w"] == 600
+    assert start["capped"] is True
+    assert start["spare_w"] == 100
+
+
+def test_outage_plan_needs_a_capacity_and_a_charge_level():
+    assert plan_outage(capacity_kwh=None)["from_full"] is None
+    no_soc = plan_outage(soc=None)
+    assert no_soc["from_now"] is None
+    assert no_soc["from_full"] is not None
+
+
+@pytest.mark.parametrize("now, minutes, expected", [
+    (datetime(2030, 1, 15, 3, 20, 10), 4 * 60 + 30, datetime(2030, 1, 15, 4, 30)),  # Later today.
+    (datetime(2030, 1, 15, 21, 0), 4 * 60 + 30, datetime(2030, 1, 16, 4, 30)),  # Already gone.
+    (datetime(2030, 1, 15, 4, 30), 4 * 60 + 30, datetime(2030, 1, 16, 4, 30)),  # Just arrived.
+    (datetime(2030, 1, 31, 23, 59), 0, datetime(2030, 2, 1, 0, 0)),  # Over a month's end.
+])
+def test_next_time_comes_after_now(now, minutes, expected):
+    assert planning.next_time(now, minutes) == expected
+
+
+def plan_run(**overrides):
+    options = dict(soc=60, min_soc=10, capacity_kwh=10, limit_w=None, selected_w=500, battery_w=300)
+    return planning.run_until_plan(datetime(2030, 1, 15, 3, 0), 8 * 60, **{**options, **overrides})
+
+
+def test_run_until_shares_the_energy_above_the_minimum_over_the_time_left():
+    plan = plan_run()
+    assert plan["until"] == "2030-01-15T08:00"
+    assert plan["hours"] == pytest.approx(5)
+    assert plan["energy_kwh"] == pytest.approx(5)
+    assert plan["max_battery_w"] == pytest.approx(1000)
+    assert plan["max_w"] == pytest.approx(892.8)
+    assert plan["spare_w"] == pytest.approx(392.8)
+    assert plan["battery_w"] == 300
+
+
+def test_run_until_is_held_to_the_limit_but_the_battery_figure_is_not():
+    plan = plan_run(limit_w=600)
+    assert plan["max_w"] == 600
+    assert plan["capped"] is True
+    assert plan["max_battery_w"] == pytest.approx(1000)
+
+
+def test_run_until_below_the_minimum_has_nothing_to_give():
+    plan = plan_run(soc=5)
+    assert plan["energy_kwh"] == 0
+    assert plan["max_battery_w"] == 0
+    assert plan["max_w"] == 0
+    assert plan["spare_w"] == -500
+
+
+@pytest.mark.parametrize("missing", ["soc", "capacity_kwh"])
+def test_run_until_still_reports_the_time_when_a_figure_is_missing(missing):
+    plan = plan_run(**{missing: None})
+    assert plan["hours"] == pytest.approx(5)
+    assert plan["max_w"] is None
+    assert plan["spare_w"] is None
+    assert plan["max_battery_w"] is None
+
+
+def test_tariffs_cost_night_energy_after_round_trip_losses():
+    values = planning.tariff_values(day=20, peak=30, night=9, export=8)
+    assert values["night_kwh_cost"] == pytest.approx(10)
+    assert values["saving_day"] == pytest.approx(10)
+    assert values["saving_peak"] == pytest.approx(20)
+    assert values["gain_export"] == pytest.approx(-2)
+    assert values["solar_export"] == 8
+
+
+def test_tariffs_price_a_leftover_kwh_on_the_way_out_only():
+    values = planning.tariff_values(day=None, peak=None, night=5, export=10)
+    assert values["leftover_export"] == pytest.approx(10 * planning.CONVERSION_EFFICIENCY - 5)
+
+
+def test_tariffs_leave_out_what_needs_a_missing_rate():
+    values = planning.tariff_values(day=20, peak=None, night=None, export=8)
+    assert values["night_kwh_cost"] is None
+    assert values["saving_day"] is None
+    assert values["saving_peak"] is None
+    assert values["gain_export"] is None
+    assert values["leftover_export"] is None
+    assert values["solar_export"] == 8
 
 
 def appliance(name="Lamp", typical_w=100, peak_w=None, surge_w=None, use_in_outage=False):

@@ -11,6 +11,7 @@ import asyncio
 import json
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -29,6 +30,7 @@ MEASURE_WINDOW_SECONDS = 30 * 86400
 
 Watts = Annotated[float, Field(ge=0, le=1_000_000, allow_inf_nan=False)]
 Positive = Annotated[float, Field(gt=0, le=1_000_000, allow_inf_nan=False)]
+Rate = Annotated[float, Field(ge=0, le=100_000, allow_inf_nan=False)]
 
 
 class ApplianceIn(BaseModel):
@@ -45,6 +47,12 @@ class SettingsIn(BaseModel):
     target_soc: Annotated[float, Field(ge=1, le=100, allow_inf_nan=False)] | None = None
     limit_amps: Positive | None = None
     surge_limit_w: Positive | None = None
+    outage_hours: Annotated[float, Field(ge=0.1, le=8760, allow_inf_nan=False)] | None = None
+    run_until_minutes: Annotated[int, Field(ge=0, le=1439)] | None = None
+    tariff_day: Rate | None = None
+    tariff_peak: Rate | None = None
+    tariff_night: Rate | None = None
+    tariff_export: Rate | None = None
 
 
 def _positive(*candidates: object) -> float | None:
@@ -90,16 +98,21 @@ def create_app(collector: Collector) -> FastAPI:
         health = _positive(readings().get("battery_soh")) or 100
         return {"kwh": entered * health / 100, "source": "entered", "points": 0}
 
-    def battery_estimate() -> dict[str, object] | None:
+    def smoothed_battery_w() -> float | None:
         if collector.latest.get("error"):
             return None
         start = int(time.time()) - planning.SMOOTHING_SECONDS
         recent = db.battery_samples(collector.conn, start, collector.buffer)
+        return planning.smoothed_power([power_w for _, power_w, _ in recent])
+
+    def battery_estimate() -> dict[str, object] | None:
+        if collector.latest.get("error"):
+            return None
         soc = readings().get("battery_soc")
         known = capacity()
         estimate = planning.battery_estimate(
             soc if isinstance(soc, (int, float)) else None,
-            planning.smoothed_power([power_w for _, power_w, _ in recent]),
+            smoothed_battery_w(),
             known["kwh"],
             battery_limit("min_soc"),
             db.get_settings(collector.conn)["target_soc"] or planning.DEFAULT_TARGET_SOC,
@@ -115,16 +128,40 @@ def create_app(collector: Collector) -> FastAPI:
         soc = values.get("battery_soc")
         load = values.get("load_ptotal")
         reserve = battery_limit("reserve_soc")
+        known_soc = soc if isinstance(soc, (int, float)) else None
+        volts_used = volts or planning.FALLBACK_VOLTS
+        limit_w = None if settings["limit_amps"] is None else settings["limit_amps"] * volts_used
+        summary = planning.summarize(
+            db.list_appliances(collector.conn),
+            volts=volts_used,
+            limit_amps=settings["limit_amps"],
+            surge_limit_w=settings["surge_limit_w"],
+            live_load_w=load if isinstance(load, (int, float)) else None,
+            soc=known_soc,
+            reserve_soc=reserve,
+            capacity_kwh=known["kwh"],
+        )
+        selected_w = summary["cases"]["selected_typical"]["watts"]
+        outage_hours, run_until = settings["outage_hours"], settings["run_until_minutes"]
         return {
-            **planning.summarize(
-                db.list_appliances(collector.conn),
-                volts=volts or planning.FALLBACK_VOLTS,
-                limit_amps=settings["limit_amps"],
-                surge_limit_w=settings["surge_limit_w"],
-                live_load_w=load if isinstance(load, (int, float)) else None,
-                soc=soc if isinstance(soc, (int, float)) else None,
-                reserve_soc=reserve,
+            **summary,
+            "outage_plan": None
+            if outage_hours is None
+            else planning.outage_plan(outage_hours, selected_w, known_soc, reserve, known["kwh"], limit_w),
+            "run_plan": None
+            if run_until is None
+            else planning.run_until_plan(
+                datetime.now(),
+                int(run_until),
+                soc=known_soc,
+                min_soc=battery_limit("min_soc"),
                 capacity_kwh=known["kwh"],
+                limit_w=limit_w,
+                selected_w=selected_w,
+                battery_w=smoothed_battery_w(),
+            ),
+            "tariffs": planning.tariff_values(
+                settings["tariff_day"], settings["tariff_peak"], settings["tariff_night"], settings["tariff_export"]
             ),
             "settings": settings,
             "capacity": known,
@@ -185,7 +222,7 @@ def create_app(collector: Collector) -> FastAPI:
 
     @app.put("/api/settings")
     async def api_settings(settings: SettingsIn) -> dict[str, object]:
-        db.save_settings(collector.conn, settings.model_dump())
+        db.save_settings(collector.conn, settings.model_dump(exclude_unset=True))
         return overview()
 
     return app
