@@ -84,7 +84,9 @@ def main() -> int:
     print(f"Listening on http://{host}:{BIND_PORT}, login {'required' if credentials else 'off'}")
     app = create_app(Collector(*target, conn))
     if credentials:
-        app.add_middleware(LoginRequired, username=credentials[0], password=credentials[1])
+        # Beside the database, the one folder the Pi's service lets the app write to.
+        sessions_file = path.with_name("sessions.json")
+        app.add_middleware(LoginRequired, username=credentials[0], password=credentials[1], sessions_file=sessions_file)
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=BIND_PORT, log_level="warning", access_log=False))
     finished = threading.Event()
     stop_when_window_closes(server, finished)

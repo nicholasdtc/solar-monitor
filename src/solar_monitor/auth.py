@@ -1,13 +1,22 @@
 """A login page and session cookie in front of the whole app.
 
 This wraps the app rather than its routes, so nothing can be left unprotected by accident,
-including routes added later. Sessions are kept in memory: restarting the app logs everyone out,
-and logging out really does end the session rather than just forgetting the cookie.
+including routes added later. The app keeps the list of sessions, so logging out really does end
+the session rather than just forgetting the cookie. Given a file, it saves the list there, so a
+restart or reboot keeps everyone logged in.
+
+The file holds only a keyed hash of each session, so reading it isn't enough to log in. The key is
+the username and password, so changing either one in .env logs everyone out.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import os
 import secrets
+import sys
 import time
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -23,15 +32,52 @@ ERROR = '<p class="error" role="alert">Wrong username or password.</p>'
 
 
 class LoginRequired:
-    def __init__(self, app, username: str, password: str) -> None:
+    def __init__(self, app, username: str, password: str, sessions_file: Path | None = None) -> None:
         self.app = app
         self.username = username.encode()
         self.password = password.encode()
-        self.sessions: dict[str, float] = {}  # Token to expiry time.
+        self.key = self.username + b"\0" + self.password  # Settings can't hold a \0, so no other login has this key.
+        self.sessions_file = sessions_file
+        self.sessions: dict[str, float] = self.load()  # Hash of the token to expiry time.
         self.page = PAGE.read_text(encoding="utf-8")
 
+    def hash(self, token: str) -> str:
+        return hmac.new(self.key, token.encode(), hashlib.sha256).hexdigest()
+
     def logged_in(self, token: str | None) -> bool:
-        return self.sessions.get(token, 0) > time.time()
+        return token is not None and self.sessions.get(self.hash(token), 0) > time.time()
+
+    def load(self) -> dict[str, float]:
+        """The saved sessions that haven't expired. A missing or damaged file just means logging in again."""
+        if self.sessions_file is None:
+            return {}
+        try:
+            saved = json.loads(self.sessions_file.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as problem:
+            print(f"Couldn't read the saved logins, so everyone will log in again: {problem}", file=sys.stderr)
+            return {}
+        if not isinstance(saved, dict):
+            return {}
+        now = time.time()
+        return {key: expiry for key, expiry in saved.items() if isinstance(expiry, (int, float)) and expiry > now}
+
+    def save(self) -> None:
+        if self.sessions_file is None:
+            return
+        temporary = self.sessions_file.with_name(self.sessions_file.name + ".tmp")
+        try:
+            # Readable by this app's user only, and swapped in whole, so a crash or power cut
+            # leaves either the old list or the new one.
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with open(descriptor, "w", encoding="utf-8") as file:
+                json.dump(self.sessions, file)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary, self.sessions_file)
+        except OSError as problem:
+            print(f"Couldn't save the logins, so a restart will log everyone out: {problem}", file=sys.stderr)
 
     def correct(self, username: str, password: str) -> bool:
         # Both are always compared, so the response time doesn't reveal which one was wrong.
@@ -54,16 +100,18 @@ class LoginRequired:
             return self.login_page(error=True)
 
         now = time.time()
-        self.sessions = {token: expiry for token, expiry in self.sessions.items() if expiry > now}
+        self.sessions = {key: expiry for key, expiry in self.sessions.items() if expiry > now}
         token = secrets.token_urlsafe(32)
-        self.sessions[token] = now + SESSION_SECONDS
+        self.sessions[self.hash(token)] = now + SESSION_SECONDS
+        self.save()
         response = RedirectResponse("/", status_code=303)
         # SameSite stops other sites from sending requests that carry the login.
         response.set_cookie(COOKIE, token, max_age=SESSION_SECONDS, httponly=True, samesite="lax")
         return response
 
     def log_out(self, token: str | None) -> Response:
-        self.sessions.pop(token, None)
+        if token is not None and self.sessions.pop(self.hash(token), None) is not None:
+            self.save()
         response = RedirectResponse("/login", status_code=303)
         response.delete_cookie(COOKIE)
         return response

@@ -1,4 +1,7 @@
+import json
 import re
+import stat
+import sys
 from contextlib import asynccontextmanager
 
 import pytest
@@ -135,6 +138,93 @@ def test_following_a_link_to_logout_does_not_log_out(client):
     log_in(client)
     client.get("/logout")
     assert client.get("/api/data").status_code == 200
+
+
+def saving_to(sessions_file, password=PASSWORD):
+    """A fresh app, as after a restart, that keeps its sessions in sessions_file."""
+    app = FastAPI()
+
+    @app.get("/api/data")
+    def data():
+        return "the data"
+
+    app.add_middleware(LoginRequired, username=USER, password=password, sessions_file=sessions_file)
+    return TestClient(app, follow_redirects=False)
+
+
+@pytest.fixture
+def sessions_file(tmp_path):
+    return tmp_path / "sessions.json"
+
+
+def logged_in_token(sessions_file):
+    client = saving_to(sessions_file)
+    log_in(client)
+    return client.cookies[COOKIE]
+
+
+def with_cookie(client, token):
+    client.cookies.set(COOKIE, token)
+    return client
+
+
+def test_a_login_survives_a_restart(sessions_file):
+    token = logged_in_token(sessions_file)
+    assert with_cookie(saving_to(sessions_file), token).get("/api/data").status_code == 200
+
+
+def test_the_file_holds_no_token_that_could_be_used_to_log_in(sessions_file):
+    token = logged_in_token(sessions_file)
+    saved = sessions_file.read_text(encoding="utf-8")
+    assert token not in saved
+    for key in json.loads(saved):
+        assert with_cookie(saving_to(sessions_file), key).get("/api/data").status_code == 401
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no Unix file modes")
+def test_only_the_apps_own_user_can_read_the_file(sessions_file):
+    logged_in_token(sessions_file)
+    assert stat.S_IMODE(sessions_file.stat().st_mode) == 0o600
+
+
+def test_logging_out_is_saved_too(sessions_file):
+    token = logged_in_token(sessions_file)
+    with_cookie(saving_to(sessions_file), token).post("/logout")
+    assert json.loads(sessions_file.read_text(encoding="utf-8")) == {}
+    assert with_cookie(saving_to(sessions_file), token).get("/api/data").status_code == 401
+
+
+def test_changing_the_password_logs_everyone_out(sessions_file):
+    token = logged_in_token(sessions_file)
+    assert with_cookie(saving_to(sessions_file, "new password"), token).get("/api/data").status_code == 401
+
+
+def test_sessions_that_expired_while_the_app_was_stopped_are_dropped(sessions_file, monkeypatch):
+    token = logged_in_token(sessions_file)
+    now = auth.time.time()
+    monkeypatch.setattr(auth.time, "time", lambda: now + auth.SESSION_SECONDS + 1)
+    client = saving_to(sessions_file)
+    assert with_cookie(client, token).get("/api/data").status_code == 401
+    log_in(client)
+    assert len(json.loads(sessions_file.read_text(encoding="utf-8"))) == 1
+
+
+@pytest.mark.parametrize("damage", ["", "not json", "[]", '{"key": "not a time"}', '{"key": null}'])
+def test_a_damaged_file_means_logging_in_again_not_a_crash(sessions_file, damage):
+    sessions_file.write_text(damage, encoding="utf-8")
+    client = saving_to(sessions_file)
+    assert with_cookie(client, "key").get("/api/data").status_code == 401
+    client.cookies.clear()
+    log_in(client)
+    assert client.get("/api/data").status_code == 200
+    assert len(json.loads(sessions_file.read_text(encoding="utf-8"))) == 1
+
+
+def test_a_file_that_cant_be_saved_still_lets_you_log_in(tmp_path, capsys):
+    client = saving_to(tmp_path / "no-such-folder" / "sessions.json")
+    log_in(client)
+    assert client.get("/api/data").status_code == 200
+    assert "restart will log everyone out" in capsys.readouterr().err
 
 
 def test_every_route_in_the_real_app_is_protected(tmp_path):

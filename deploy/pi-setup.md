@@ -145,4 +145,6 @@ If `pyproject.toml` or the service file changed, repeat the install command from
 copy and `daemon-reload` from step 7 before restarting. Likewise, if the `Caddyfile` or
 `solar-monitor-name.service` changed, repeat their commands from step 8, then
 `sudo systemctl restart solar-monitor-name`. A restart saves unsaved readings first,
-but a power cut can lose up to 5 minutes of them.
+but a power cut can lose up to 5 minutes of them. Restarts and reboots keep you logged in, because
+the app saves its logins in `/var/lib/solar-monitor/sessions.json`. Changing the login in `.env`
+logs everyone out.

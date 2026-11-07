@@ -24,6 +24,10 @@ HDF_*.csv
 *.sqlite
 *.sqlite3
 
+# The dashboard's saved logins, kept beside the database
+sessions.json
+sessions.json.tmp
+
 # Python
 .venv/
 __pycache__/
