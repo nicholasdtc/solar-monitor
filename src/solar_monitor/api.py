@@ -1,8 +1,9 @@
-"""The web app: serves the dashboard page, the latest readings, the logged history, appliances and exports.
+"""The web app: serves the dashboard page, the latest readings, the logged history, appliances, exports and imports.
 
 The serial number is never sent to the page. The one route that changes the inverter is the TOU
-power one, which hands over to control.py. PUT and JSON bodies can't be sent cross-site without a
-preflight, which no other site passes, so a web page elsewhere can't change anything here.
+power one, which hands over to control.py. PUT, JSON bodies and the content type an import insists
+on can't be sent cross-site without a preflight, which no other site passes, so a web page
+elsewhere can't change anything here.
 """
 
 from __future__ import annotations
@@ -10,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import sqlite3
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -22,8 +25,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 from starlette.background import BackgroundTask
 
-from solar_monitor import config, control, db, export, planning
+from solar_monitor import config, control, db, export, importer, planning
 from solar_monitor.collector import Collector
+from solar_monitor.inputs import ApplianceIn, SettingsIn
 from solar_monitor.schedule import TIME_PERIODS
 
 PAGE = Path(__file__).with_name("dashboard.html")
@@ -34,32 +38,6 @@ LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
 # Measuring reads every sample in the window, so it isn't repeated on every page refresh.
 MEASURE_SECONDS = 3600
 MEASURE_WINDOW_SECONDS = 30 * 86400
-
-Watts = Annotated[float, Field(ge=0, le=1_000_000, allow_inf_nan=False)]
-Positive = Annotated[float, Field(gt=0, le=1_000_000, allow_inf_nan=False)]
-Rate = Annotated[float, Field(ge=0, le=100_000, allow_inf_nan=False)]
-
-
-class ApplianceIn(BaseModel):
-    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
-    typical_w: Watts
-    peak_w: Watts | None = None
-    surge_w: Watts | None = None
-    use_in_outage: bool = False
-    notes: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] = ""
-
-
-class SettingsIn(BaseModel):
-    capacity_kwh: Positive | None = None
-    target_soc: Annotated[float, Field(ge=1, le=100, allow_inf_nan=False)] | None = None
-    limit_amps: Positive | None = None
-    surge_limit_w: Positive | None = None
-    outage_hours: Annotated[float, Field(ge=0.1, le=8760, allow_inf_nan=False)] | None = None
-    run_until_minutes: Annotated[int, Field(ge=0, le=1439)] | None = None
-    tariff_day: Rate | None = None
-    tariff_peak: Rate | None = None
-    tariff_night: Rate | None = None
-    tariff_export: Rate | None = None
 
 
 class PeriodPowerIn(BaseModel):
@@ -100,6 +78,7 @@ def create_app(collector: Collector) -> FastAPI:
     measured_at: float | None = None
     measured_overhead: dict[str, object] = {}
     measured_overhead_at: float | None = None
+    importing = asyncio.Lock()
 
     def readings() -> dict[str, object]:
         return {r["id"]: r["value"] for r in collector.latest.get("readings", [])}
@@ -315,6 +294,36 @@ def create_app(collector: Collector) -> FastAPI:
             headers={"Cache-Control": "no-store"},
             background=BackgroundTask(shutil.rmtree, path.parent, ignore_errors=True),
         )
+
+    @app.post("/api/import")
+    async def api_import(request: Request, apply: bool = False) -> dict[str, object]:
+        """The body is the export file. Says what it would add, and adds it only if `apply` is set."""
+        nonlocal measured_at, measured_overhead_at
+        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/octet-stream":
+            raise HTTPException(status_code=415, detail="Send the file itself, as application/octet-stream.")
+        if importing.locked():
+            raise HTTPException(status_code=409, detail="Another import is running. Try again when it has finished.")
+        async with importing:
+            folder = Path(tempfile.mkdtemp(prefix="solar-monitor-import-"))
+            try:
+                path = folder / "upload"
+                with path.open("wb") as upload:
+                    async for chunk in request.stream():
+                        upload.write(chunk)
+                collector.flush()  # So what it says is already here includes the latest readings.
+                report = await asyncio.to_thread(importer.run, path, export.database_path(collector.conn), apply=apply)
+            except importer.BadFile as bad:
+                raise HTTPException(status_code=400, detail=str(bad)) from None
+            except (sqlite3.Error, OSError) as error:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"The import couldn't finish: {error}. Anything saved so far stays, and importing the same file again adds the rest.",
+                ) from None
+            finally:
+                shutil.rmtree(folder, ignore_errors=True)
+        if apply:
+            measured_at = measured_overhead_at = None  # So the measurements include what just arrived.
+        return report
 
     app.mount("/fonts", StaticFiles(directory=FONTS), name="fonts")
 

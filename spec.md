@@ -53,7 +53,9 @@ solar-monitor/
     schedule.py          # reads the working mode, mode switches and TOU time periods (never writes)
     control.py           # the only code that writes to the inverter: one TOU period's power, checked before and after
     export.py            # downloadable copies of the app's data: one entry per format
-    api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings, /api/tou, /api/export
+    importer.py          # brings an export back in: checks the whole file first, then only adds what's missing
+    inputs.py            # the limits on appliances and settings, shared by the API and the importer
+    api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings, /api/tou, /api/export, /api/import
     dashboard.html       # the dashboard page
     fonts/               # the page's fonts, served locally so it works without internet
     main.py              # runs collector + API

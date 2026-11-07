@@ -33,9 +33,11 @@ CSV_QUERIES = {
     "outcome, old_bytes, new_bytes, held_bytes FROM inverter_writes ORDER BY id",
 }
 
-CSV_README = """Solar monitor export, CSV layout 1
+CSV_LAYOUT = "Solar monitor export, CSV layout 1"  # Importing reads this, so a change of layout needs a new number.
 
-samples.csv         One row per poll. ts is Unix seconds, local_time is the same moment on this
+CSV_README = f"""{CSV_LAYOUT}
+
+samples.csv        One row per poll. ts is Unix seconds, local_time is the same moment on this
                     machine's clock. Powers are in watts and battery_soc is a percentage.
                     battery_w is as the inverter reports it: negative means charging.
                     grid_w is too: positive means exporting.
@@ -49,6 +51,9 @@ inverter_writes.csv Every change this app sent to the inverter. Confirmed means 
 
 The other readings from each poll are only in the full database export.
 """
+
+APPLIANCES_FORMAT = "solar-monitor-appliances"
+APPLIANCES_VERSION = 1
 
 
 def _write_csv_zip(source: sqlite3.Connection, path: Path) -> None:
@@ -77,7 +82,7 @@ def _write_appliances_json(source: sqlite3.Connection, path: Path) -> None:
     appliances = db.list_appliances(source)
     for appliance in appliances:
         del appliance["id"]  # It only means something inside this database.
-    document = {"format": "solar-monitor-appliances", "version": 1, "appliances": appliances}
+    document = {"format": APPLIANCES_FORMAT, "version": APPLIANCES_VERSION, "appliances": appliances}
     path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 

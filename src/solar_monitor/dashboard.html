@@ -278,13 +278,18 @@
   .settings input[type="number"], .settings input[type="time"] { width: 120px; }
 
   /* App data */
-  .export { display: grid; gap: 16px; justify-items: start; }
+  .export, .import { display: grid; gap: 16px; justify-items: start; }
+  .import { margin-top: 16px; grid-template-columns: minmax(0, 1fr); }
+  .import > * { max-width: 100%; }
+  .import-preview { width: 68ch; }
+  .import-notes { display: grid; gap: 4px; max-width: 68ch; margin: 0; padding-left: 18px; color: var(--ink-2); }
+  .import-notes:empty { display: none; }
   .export-formats { display: grid; gap: 12px; max-width: 68ch; }
   .export-formats:empty { display: none; }
   .export-formats label { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 2px 10px; cursor: pointer; }
   .export-formats input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--ink); }
   .export-formats .meta { grid-column: 2; }
-  .export button:disabled { color: var(--muted); cursor: default; background: var(--surface); }
+  .export button:disabled, .import button:disabled { color: var(--muted); cursor: default; background: var(--surface); }
 
   /* TOU */
   .tou-change { display: grid; gap: 12px; justify-items: start; padding: 12px; border: 1px solid var(--rule-strong); }
@@ -577,6 +582,28 @@
         <div class="edit"><button id="export-button" disabled>Export</button></div>
       </form>
       <p class="meta">The download starts once the file is ready, which takes longer the more readings there are.</p>
+    </div>
+    <div class="pane">
+      <h2>Import</h2>
+      <p class="note">Bring in a file exported from this app, in any of the formats above. It only adds what's missing, so nothing already here is changed or removed. You'll see what it would add before anything is saved.</p>
+      <div class="import">
+        <input type="file" id="import-file" accept=".zip,.db,.json" aria-label="File to import">
+        <p class="alert" id="import-error" role="alert"></p>
+        <p class="meta" id="import-status" role="status"></p>
+        <div class="scroll import-preview" id="import-preview" hidden>
+          <table>
+            <thead>
+              <tr><th scope="col">What</th><th scope="col" class="num">In the file</th><th scope="col" class="num" id="import-new">New</th><th scope="col" class="num">Already here</th></tr>
+            </thead>
+            <tbody id="import-tables"></tbody>
+          </table>
+        </div>
+        <ul class="import-notes" id="import-notes"></ul>
+        <div class="edit" id="import-actions" hidden>
+          <button type="button" id="import-button">Import</button>
+          <button type="button" id="import-cancel">Cancel</button>
+        </div>
+      </div>
     </div>
   </section>
 </main>
@@ -2186,10 +2213,11 @@
     });
   }
 
+  const calendarDate = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
   function exportContents({ first_ts, last_ts, appliances, settings, size_bytes }) {
-    const date = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
     const count = (n, what) => `${n} ${what}${n === 1 ? "" : "s"}`;
-    const span = first_ts === null ? "No readings yet" : `Readings from ${date(first_ts)} to ${date(last_ts)}`;
+    const span = first_ts === null ? "No readings yet" : `Readings from ${calendarDate(first_ts)} to ${calendarDate(last_ts)}`;
     return `${span}, ${count(appliances, "appliance")} and ${count(settings, "setting")}. The full database is about ${number(size_bytes / 1e6, 1)} MB.`;
   }
 
@@ -2222,6 +2250,86 @@
     }));
     $("export-button").disabled = false;
   }
+
+  function importSummary({ label, applied, changes, tables }) {
+    const readings = tables.find(({ id }) => id === "samples");
+    const span = readings?.first_ts ? ` Readings from ${calendarDate(readings.first_ts)} to ${calendarDate(readings.last_ts)}.` : "";
+    const outcome = !changes ? "There's nothing new in it to import." : applied ? "Imported." : "Nothing is saved until you press Import.";
+    return `${label}.${span} ${outcome}`;
+  }
+
+  function showImport(report, problem = "") {
+    $("import-actions").hidden = !report?.changes || report.applied;
+    $("import-error").textContent = problem;
+    $("import-status").textContent = report ? importSummary(report) : "";
+    $("import-preview").hidden = !report;
+    $("import-new").textContent = report?.applied ? "Added" : "New";
+    $("import-tables").replaceChildren(...(report?.tables ?? []).map(({ label, in_file, new: added, already_here }) => {
+      const row = el("tr");
+      const name = el("th", "", label);
+      name.scope = "row";
+      row.append(name, ...[in_file, added, already_here].map((count) => el("td", "num", number(count, 0))));
+      return row;
+    }));
+    $("import-notes").replaceChildren(...(report?.notes ?? []).map((note) => el("li", "", note)));
+  }
+
+  function setImportBusy(message) {
+    for (const id of ["import-file", "import-button", "import-cancel"]) $(id).disabled = Boolean(message);
+    if (message) $("import-status").textContent = message;
+  }
+
+  async function postImport(file, apply) {
+    let response;
+    try {
+      response = await fetch(`/api/import?apply=${apply}`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: file,
+      });
+    } catch {
+      throw new Error(apply
+        ? "Can't reach the dashboard server, so some of the file may not have been saved. Importing it again only adds what's missing."
+        : "Can't reach the dashboard server, so the file wasn't checked.");
+    }
+    if (response.status === 404) throw new Error("The app can't import yet. If it was updated recently, restart it and try again.");
+    const answer = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(typeof answer?.detail === "string" ? answer.detail : `Couldn't do that: the server answered ${response.status}.`);
+    return answer;
+  }
+
+  /*
+    The file is sent twice, to see what it would add and then to add it, as the server keeps nothing
+    in between. With nothing left waiting the choice is cleared, so choosing the same file again counts.
+  */
+  async function sendImport(apply) {
+    const file = $("import-file").files[0];
+    if (!apply) showImport(null);
+    if (!file) return;
+    setImportBusy(apply ? "Importing…" : "Checking the file…");
+    let report = null;
+    let problem = "";
+    try {
+      report = await postImport(file, apply);
+    } catch (error) {
+      problem = error.message;
+    }
+    setImportBusy("");
+    showImport(report, problem);
+    if (!report?.changes || report.applied) $("import-file").value = "";
+    if (apply && report) {
+      refreshExport();
+      refreshDaily();
+    }
+  }
+
+  $("import-file").addEventListener("change", () => sendImport(false));
+  $("import-button").addEventListener("click", () => sendImport(true));
+  $("import-cancel").addEventListener("click", () => {
+    showImport(null);
+    $("import-file").value = "";
+  });
 
   /*
     The tab is in the address, so a reload or the back button stays where it was. The views'
