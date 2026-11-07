@@ -274,6 +274,21 @@ def test_the_page_has_an_input_for_every_setting(call):
         assert f'name="{name}"' in page
 
 
+def test_the_flow_test_covers_every_path(call):
+    page = call("GET", "/?flowtest").text
+    assert 'id="flow-test"' in page
+    routes = set(re.findall(r'"(\w+-\w+)": (?:elbow\(|`M)', page))
+    assert routes == {
+        "solar-load", "solar-battery", "solar-grid",
+        "battery-load", "battery-grid",
+        "grid-load", "grid-battery",
+    }
+    scenarios = re.findall(r"expect: \[(.*?)\]", page)
+    assert '"solar-load", "solar-battery", "solar-grid"' in scenarios
+    assert '"solar-battery", "solar-grid"' in scenarios
+    assert routes == set(re.findall(r'"([\w-]+)"', " ".join(scenarios)))
+
+
 def test_the_page_gets_every_font_from_this_app(call):
     page = call("GET", "/").text
     fonts = re.findall(r'url\("(/fonts/[^"]+)"\)', page)

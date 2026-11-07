@@ -141,22 +141,24 @@
   .stage .flow-value { fill: var(--ink); font-family: var(--display); font-weight: 600; }
   .stage .flow-eta { font-size: 14px; font-family: var(--display); font-weight: 500; }
   .flow-box { fill: var(--surface); stroke: var(--rule-strong); }
-  .flow-hub { fill: var(--ink); }
-  .stage .flow-hub-label { fill: var(--surface); font-size: 13px; font-weight: 600; text-anchor: middle; }
   .flow-icon { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .flow-track, .flow-dash { fill: none; }
+  .flow-track, .flow-glow, .flow-dash { fill: none; }
   .flow-track { stroke: var(--rule-strong); stroke-width: 2; }
-  .flow-dash, .flow-arrow { display: none; }
-  .flow-dash { stroke-dasharray: 9 15; stroke-linecap: round; animation: flow-move 1s linear infinite; }
+  .flow-glow, .flow-dash, .flow-arrow { display: none; }
+  .flow-glow { stroke: var(--flow-color); stroke-opacity: .25; stroke-width: var(--flow-width); }
+  .flow-dash { stroke: var(--flow-color); stroke-width: var(--flow-width); stroke-dasharray: 9 15; stroke-linecap: round; animation: flow-move 1s linear infinite; }
   .flow-arrow { fill: var(--flow-color); stroke: var(--surface); stroke-width: 2; paint-order: stroke; }
   .flow-node.active .flow-box { stroke: var(--flow-color); stroke-width: 2; }
   .flow-node.active .flow-icon { stroke: var(--flow-color); }
-  .flow-node.active .flow-track { stroke: var(--flow-color); stroke-opacity: .25; stroke-width: var(--flow-width); }
-  .flow-node.active .flow-dash { display: inline; stroke: var(--flow-color); stroke-width: var(--flow-width); }
-  .flow-node.active .flow-arrow { display: inline; }
-  .flow-node.outward .flow-dash { animation-direction: reverse; }
+  .flow-path.active .flow-glow, .flow-path.active .flow-dash, .flow-path.active .flow-arrow { display: inline; }
   .frozen svg { opacity: .45; }
-  .frozen .flow-node.active .flow-dash { display: none; }
+  .frozen .flow-path.active .flow-dash { display: none; }
+  .flow-test { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--rule-strong); }
+  .flow-test-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; font-weight: 600; }
+  .flow-test-controls { display: flex; gap: 8px; }
+  .flow-test select { flex: 1; min-width: 0; }
+  .flow-test select, .flow-test button { font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--rule-strong); padding: 6px 10px; }
+  .flow-test .status { white-space: normal; }
   .frozen .flow-eta { visibility: hidden; }
   @keyframes flow-move { to { stroke-dashoffset: -24; } }
   @media (prefers-reduced-motion: reduce) { .flow-dash { animation: none; } .stage svg { transition: none; } }
@@ -328,9 +330,18 @@
 <main>
   <section class="view dash" id="view-dashboard" aria-label="Dashboard">
     <div class="pane flow-pane frozen" id="flow">
+      <div class="flow-test" id="flow-test" hidden>
+        <div class="flow-test-head"><span>Test mode: made-up readings, not the inverter</span><a href="/">Back to live</a></div>
+        <div class="flow-test-controls">
+          <select id="flow-test-scenario" aria-label="Test scenario"></select>
+          <button type="button" id="flow-test-play">Pause</button>
+        </div>
+        <div id="flow-test-result" aria-live="polite"></div>
+      </div>
       <div class="stage" id="stage">
         <svg id="flow-diagram" role="img" aria-label="Waiting for readings."></svg>
       </div>
+      <p class="meta">The inverter only measures each box's total, so how power splits between paths is an estimate: solar goes to the house first, then the battery, then the grid.</p>
     </div>
     <div class="readings" id="readings" aria-label="Live values"></div>
   </section>
@@ -600,6 +611,8 @@
 <script>
   const REFRESH_MS = 5000;
   const STALE_AFTER_POLLS = 3;
+  // Opening the page with ?flowtest plays made-up readings through the diagram. See startFlowTest.
+  const FLOW_TEST = new URLSearchParams(location.search).has("flowtest");
   // From the SEMS+ device list. The inverter itself reports a garbled model name.
   const INVERTER_MODEL = "GW5K-EHA-G20";
 
@@ -665,11 +678,12 @@
   }
 
   /*
-    Power flow: each node links to the inverter in the centre and shows that node's own
-    measured power. The inverter doesn't report how much goes from solar to the battery,
-    say, so the diagram doesn't draw or claim that split.
+    Power flow: each box shows that node's own measured power, and each source and destination
+    pair has its own path. The inverter doesn't report how much goes from solar to the battery,
+    say, so flowPaths estimates the paths from the boxes' totals. The boxes are measured and the
+    split between paths isn't, which the note under the diagram says.
 
-    `sign` turns the reading into watts flowing toward the inverter.
+    `sign` turns the reading into watts flowing toward the inverter, so positive is a source.
   */
   const FLOWS = {
     solar: {
@@ -701,12 +715,23 @@
     return node;
   }
 
+  /* A line that turns one rounded corner, going across first or down first. */
+  function elbow(x1, y1, x2, y2, acrossFirst) {
+    const r = Math.min(20, Math.abs(x2 - x1), Math.abs(y2 - y1));
+    const dx = Math.sign(x2 - x1) * r;
+    const dy = Math.sign(y2 - y1) * r;
+    return acrossFirst
+      ? `M${x1} ${y1}H${x2 - dx}Q${x2} ${y1} ${x2} ${y1 + dy}V${y2}`
+      : `M${x1} ${y1}V${y2 - dy}Q${x1} ${y2} ${x1 + dx} ${y2}H${x2}`;
+  }
+
   /*
     Built for the space it has, then only updated, so the animation doesn't restart on every
-    reading. `path` runs from a node to the inverter, and `angle` is the arrow's rotation
-    when pointing that way.
+    reading. Each path runs from its source to its destination, and meets each box at its own
+    point so that paths sharing a box stay apart.
   */
   let flowSize = "";
+  let flowPathNodes = {};
 
   function buildFlow() {
     const stage = $("stage");
@@ -725,31 +750,61 @@
     const battH = boxH + 20;
     const pad = compact ? 10 : 14;
     const valueSize = compact ? 26 : clamp(W / 20, 30, 42);
-    const hubW = compact ? 60 : 76;
-    const hubH = 28;
     const cx = W / 2;
     const cy = (boxH + (H - battH)) / 2;
     const place = {
-      solar: { x: cx - boxW / 2, y: 0, w: boxW, h: boxH, path: `M${cx} ${boxH}V${cy - hubH / 2}`, arrow: [cx, (boxH + cy - hubH / 2) / 2], angle: 90 },
-      grid: { x: 0, y: cy - boxH / 2, w: boxW, h: boxH, path: `M${boxW} ${cy}H${cx - hubW / 2}`, arrow: [(boxW + cx - hubW / 2) / 2, cy], angle: 0 },
-      battery: { x: cx - battW / 2, y: H - battH, w: battW, h: battH, path: `M${cx} ${H - battH}V${cy + hubH / 2}`, arrow: [cx, (H - battH + cy + hubH / 2) / 2], angle: -90 },
-      load: { x: W - boxW, y: cy - boxH / 2, w: boxW, h: boxH, path: `M${W - boxW} ${cy}H${cx + hubW / 2}`, arrow: [(W - boxW + cx + hubW / 2) / 2, cy], angle: 180 },
+      solar: { x: cx - boxW / 2, y: 0, w: boxW, h: boxH },
+      grid: { x: 0, y: cy - boxH / 2, w: boxW, h: boxH },
+      battery: { x: cx - battW / 2, y: H - battH, w: battW, h: battH },
+      load: { x: W - boxW, y: cy - boxH / 2, w: boxW, h: boxH },
     };
+    const sideTop = cy - boxH / 2;
+    const sideBottom = cy + boxH / 2;
+    const gridX = boxW / 2;
+    const loadX = W - boxW / 2;
+    const solarY = boxH / 2;
+    const batteryY = H - battH / 2;
+    const routes = {
+      "solar-load": elbow(cx + boxW / 2, solarY, loadX, sideTop, true),
+      "solar-battery": `M${cx} ${boxH}V${H - battH}`,
+      "solar-grid": elbow(cx - boxW / 2, solarY, gridX, sideTop, true),
+      "battery-load": elbow(cx + battW / 2, batteryY, loadX, sideBottom, true),
+      "battery-grid": elbow(cx - battW / 2, batteryY, gridX, sideBottom, true),
+      "grid-load": `M${boxW} ${cy}H${W - boxW}`,
+      "grid-battery": elbow(gridX, sideBottom, cx - battW / 2, batteryY, false),
+    };
+
+    // Tracks go underneath, because battery-grid and grid-battery share a route and an idle
+    // track would otherwise draw over a working path.
+    const working = svgEl("g", {});
+    flowPathNodes = {};
+    for (const [key, d] of Object.entries(routes)) {
+      const track = svgEl("path", { d, class: "flow-track" });
+      svg.append(track);
+      // The two straight paths cross in the middle, so their arrows sit before the crossing.
+      const along = track.getTotalLength() * (key === "solar-battery" || key === "grid-load" ? 0.3 : 0.5);
+      const at = track.getPointAtLength(along);
+      const ahead = track.getPointAtLength(along + 1);
+      const angle = Math.atan2(ahead.y - at.y, ahead.x - at.x) * 180 / Math.PI;
+      const group = svgEl("g", { class: "flow-path", "data-path": key, style: `--flow-color: var(${FLOWS[key.split("-")[0]].color})` });
+      group.append(
+        svgEl("path", { d, class: "flow-glow" }),
+        svgEl("path", { d, class: "flow-dash" }),
+        svgEl("path", { d: "M-7 -8L8 0L-7 8Z", class: "flow-arrow", transform: `translate(${at.x} ${at.y}) rotate(${angle})` }),
+      );
+      working.append(group);
+      flowPathNodes[key] = group;
+    }
+    svg.append(working);
 
     for (const [name, flow] of Object.entries(FLOWS)) {
       const p = place[name];
       const textX = p.x + pad;
-      flow.arrow = p.arrow;
-      flow.angle = p.angle;
       flow.label_ = svgEl("text", { x: textX, y: p.y + (compact ? 22 : 28) }, flow.label);
       flow.value_ = svgEl("text", { x: textX, y: p.y + (compact ? 52 : 28 + valueSize + 2), class: "flow-value", style: `font-size: ${valueSize}px` }, "—");
       flow.state_ = svgEl("text", { x: textX, y: p.y + (compact ? 74 : 28 + valueSize + 24) }, "No data");
-      flow.arrow_ = svgEl("path", { d: "M-7 -8L8 0L-7 8Z", class: "flow-arrow" });
       flow.node = svgEl("g", { class: "flow-node", style: `--flow-color: var(${flow.color})` });
       flow.node.append(
-        svgEl("path", { d: p.path, class: "flow-track" }),
-        svgEl("path", { d: p.path, class: "flow-dash" }),
-        flow.arrow_,
         svgEl("rect", { x: p.x + 0.5, y: p.y + 0.5, width: p.w - 1, height: p.h - 1, class: "flow-box" }),
         flow.label_, flow.value_, flow.state_,
       );
@@ -761,10 +816,6 @@
     const battery = place.battery;
     FLOWS.battery.eta_ = svgEl("text", { x: battery.x + pad, y: battery.y + (compact ? 94 : 28 + valueSize + 44), class: "flow-eta" }, "");
     FLOWS.battery.node.append(FLOWS.battery.eta_);
-    svg.append(
-      svgEl("rect", { x: cx - hubW / 2, y: cy - hubH / 2, width: hubW, height: hubH, class: "flow-hub" }),
-      svgEl("text", { x: cx, y: cy + 5, class: "flow-hub-label" }, "Inverter"),
-    );
     renderFlow();
   }
 
@@ -772,6 +823,36 @@
   function flowWatts(flow) {
     const value = values[flow.field];
     return isNum(value) ? value * flow.sign : null;
+  }
+
+  /*
+    Estimated watts on each path, keyed "source-destination". Each source fills the destinations
+    in order, which is how the inverter prioritises in its normal mode. Conversion losses and
+    meter noise mean the two sides rarely add up to the same total, so the larger side is scaled
+    down to match first. Otherwise the last destination could be left with no path.
+  */
+  function flowPaths() {
+    const side = (names, sign) => names
+      .map((name) => ({ name, left: sign * (flowWatts(FLOWS[name]) ?? 0) }))
+      .filter((node) => node.left >= FLOW_MIN_W);
+    const total = (nodes) => nodes.reduce((sum, node) => sum + node.left, 0);
+    const sources = side(["solar", "battery", "grid"], 1);
+    const destinations = side(["load", "battery", "grid"], -1);
+    const matched = Math.min(total(sources), total(destinations));
+    for (const nodes of [sources, destinations]) {
+      const scale = matched / (total(nodes) || 1);
+      for (const node of nodes) node.left *= scale;
+    }
+    const paths = {};
+    for (const source of sources) {
+      for (const destination of destinations) {
+        const amount = Math.min(source.left, destination.left);
+        source.left -= amount;
+        destination.left -= amount;
+        if (amount >= FLOW_MIN_W) paths[`${source.name}-${destination.name}`] = amount;
+      }
+    }
+    return paths;
   }
 
   function renderFlow() {
@@ -782,14 +863,15 @@
       const active = known && Math.abs(toward) >= FLOW_MIN_W;
       const outward = known && toward < 0;
       flow.node.classList.toggle("active", active);
-      flow.node.classList.toggle("outward", outward);
       flow.value_.textContent = known ? watts(Math.abs(toward)) : "—";
       flow.state_.textContent = !known ? "No data" : !active ? flow.idle : outward ? flow.away : flow.toward;
-      if (!known) continue;
-      const scale = Math.sqrt(Math.min(Math.abs(toward) / FLOW_FULL_SCALE_W, 1));
-      flow.node.style.setProperty("--flow-width", `${2.5 + 5.5 * scale}px`);
-      const [x, y] = flow.arrow;
-      flow.arrow_.setAttribute("transform", `translate(${x} ${y}) rotate(${flow.angle + (outward ? 180 : 0)})`);
+    }
+    const paths = flowPaths();
+    for (const [key, node] of Object.entries(flowPathNodes)) {
+      node.classList.toggle("active", key in paths);
+      if (!(key in paths)) continue;
+      const scale = Math.sqrt(Math.min(paths[key] / FLOW_FULL_SCALE_W, 1));
+      node.style.setProperty("--flow-width", `${2.5 + 5.5 * scale}px`);
     }
     const soc = values.battery_soc;
     FLOWS.battery.label_.textContent = isNum(soc) ? `Battery ${soc}%` : "Battery";
@@ -807,16 +889,15 @@
 
   /* One sentence that says what the diagram shows, for screen readers. */
   function flowSummary() {
-    const toward = Object.fromEntries(Object.entries(FLOWS).map(([name, flow]) => [name, flowWatts(flow)]));
-    if (Object.values(toward).includes(null)) return "Some readings are missing.";
-    const into = (name) => toward[name] >= FLOW_MIN_W;
-    const outOf = (name) => toward[name] <= -FLOW_MIN_W;
-    const sources = [into("solar") && "Solar", into("battery") && "the battery", into("grid") && "the grid"].filter(Boolean);
-    const uses = [outOf("load") && "powering the house", outOf("battery") && "charging the battery", outOf("grid") && "exporting to the grid"].filter(Boolean);
-    if (!sources.length || !uses.length) return "No significant power is flowing.";
-    const list = (items) => new Intl.ListFormat("en").format(items);
-    const subject = list(sources);
-    return `${subject[0].toUpperCase()}${subject.slice(1)} ${sources.length > 1 ? "are" : "is"} ${list(uses)}.`;
+    if (Object.values(FLOWS).some((flow) => flowWatts(flow) === null)) return "Some readings are missing.";
+    const paths = Object.keys(flowPaths());
+    if (!paths.length) return "No significant power is flowing.";
+    const uses = { load: "powering the house", battery: "charging the battery", grid: "exporting to the grid" };
+    const sentences = Object.entries({ solar: "Solar", battery: "The battery", grid: "The grid" }).map(([source, subject]) => {
+      const mine = paths.filter((key) => key.startsWith(`${source}-`)).map((key) => uses[key.split("-")[1]]);
+      return mine.length ? `${subject} is ${new Intl.ListFormat("en").format(mine)}.` : "";
+    });
+    return sentences.filter(Boolean).join(" ");
   }
 
   /* Today it's just the time, then the day, then the date, as the estimate gets further off. */
@@ -1138,13 +1219,14 @@
     const age = latest?.read_at ? Math.round((Date.now() - new Date(latest.read_at)) / 1000) : null;
     const staleAfter = (latest?.poll_seconds ?? 15) * STALE_AFTER_POLLS;
     const node = $("conn");
-    if (latest === null) node.replaceChildren(status("critical", "Can't reach the dashboard server", "No server"));
+    if (FLOW_TEST) node.replaceChildren(status("warning", "Test mode: made-up readings", "Test"));
+    else if (latest === null) node.replaceChildren(status("critical", "Can't reach the dashboard server", "No server"));
     else if (latest.error) node.replaceChildren(status("critical", "Inverter not responding", "No reply"));
     else if (age === null) node.replaceChildren(status("waiting", "Waiting for first reading", "Waiting"));
     else if (age > staleAfter) node.replaceChildren(status("warning", `Stale: last read ${age}s ago`, `${age}s ago`));
     else node.replaceChildren(status("good", `Live: read ${Math.max(age, 0)}s ago, polling every ${latest.poll_seconds}s`, `${Math.max(age, 0)}s ago`));
 
-    const live = latest !== null && !latest.error && age !== null && age <= staleAfter;
+    const live = FLOW_TEST || (latest !== null && !latest.error && age !== null && age <= staleAfter);
     $("flow").classList.toggle("frozen", !live);
     const eta = batteryEta();
     $("flow-diagram").setAttribute("aria-label", live
@@ -1397,6 +1479,82 @@
     renderEnergy();
     renderOverhead();
     renderFields();
+  }
+
+  /*
+    Test mode, opened with ?flowtest: plays made-up readings through the real drawing code, and
+    checks the paths it drew against the ones each scenario should draw. It stops asking for
+    live readings and stays on the dashboard, so the page only reads stored history and has
+    nothing that writes to the inverter.
+  */
+  const FLOW_TEST_MS = 4000;
+  const FLOW_SCENARIOS = [
+    { name: "Solar to house, battery and grid", ppv: 4200, load_ptotal: 800, pbattery1: -1800, active_power_total: 1400, battery_soc: 62, expect: ["solar-load", "solar-battery", "solar-grid"] },
+    { name: "Solar to battery and grid", ppv: 3000, load_ptotal: 40, pbattery1: -1500, active_power_total: 1400, battery_soc: 45, expect: ["solar-battery", "solar-grid"] },
+    { name: "Solar to house and battery", ppv: 2500, load_ptotal: 900, pbattery1: -1500, active_power_total: 0, battery_soc: 70, expect: ["solar-load", "solar-battery"] },
+    { name: "Solar to house and grid", ppv: 3500, load_ptotal: 700, pbattery1: 0, active_power_total: 2700, battery_soc: 100, expect: ["solar-load", "solar-grid"] },
+    { name: "Solar and battery to house", ppv: 400, load_ptotal: 1500, pbattery1: 1150, active_power_total: 0, battery_soc: 55, expect: ["solar-load", "battery-load"] },
+    { name: "Solar and grid to house", ppv: 600, load_ptotal: 2500, pbattery1: 0, active_power_total: -1900, battery_soc: 20, expect: ["solar-load", "grid-load"] },
+    { name: "Solar and grid to house and battery", ppv: 1000, load_ptotal: 500, pbattery1: -2500, active_power_total: -2000, battery_soc: 30, expect: ["solar-load", "solar-battery", "grid-battery"] },
+    { name: "Solar and battery to house and grid", ppv: 2000, load_ptotal: 500, pbattery1: 1000, active_power_total: 2450, battery_soc: 80, expect: ["solar-load", "solar-grid", "battery-grid"] },
+    { name: "Battery to house", ppv: 0, load_ptotal: 900, pbattery1: 950, active_power_total: 0, battery_soc: 40, expect: ["battery-load"] },
+    { name: "Battery to house and grid", ppv: 0, load_ptotal: 500, pbattery1: 3000, active_power_total: 2400, battery_soc: 90, expect: ["battery-load", "battery-grid"] },
+    { name: "Grid to house", ppv: 0, load_ptotal: 1200, pbattery1: 0, active_power_total: -1200, battery_soc: 15, expect: ["grid-load"] },
+    { name: "Grid to house and battery", ppv: 0, load_ptotal: 500, pbattery1: -3000, active_power_total: -3600, battery_soc: 25, expect: ["grid-load", "grid-battery"] },
+    { name: "Losses and noise: small readings draw nothing", ppv: 3000, load_ptotal: 500, pbattery1: -2300, active_power_total: 20, battery_soc: 50, expect: ["solar-load", "solar-battery"] },
+    { name: "Nothing flowing", ppv: 0, load_ptotal: 30, pbattery1: 0, active_power_total: 0, battery_soc: 50, expect: [] },
+  ];
+
+  function startFlowTest() {
+    const select = $("flow-test-scenario");
+    const play = $("flow-test-play");
+    const title = (key) => {
+      const [source, destination] = key.split("-").map((name) => FLOWS[name].label);
+      return `${source} to ${destination}`;
+    };
+    select.append(...FLOW_SCENARIOS.map((scenario, index) => {
+      const option = el("option", "", scenario.name);
+      option.value = index;
+      return option;
+    }));
+
+    const show = (index) => {
+      const { name, expect, ...readings } = FLOW_SCENARIOS[index];
+      select.value = index;
+      latest = {
+        read_at: new Date().toISOString(),
+        poll_seconds: REFRESH_MS / 1000,
+        readings: Object.entries(readings).map(([id, value]) => ({ id, name: id, unit: "", value })),
+      };
+      render();
+      // Read back from the drawing, so this checks what's on screen and not only the estimate.
+      const drawn = [...$("flow-diagram").querySelectorAll(".flow-path.active")].map((node) => node.dataset.path);
+      const passed = JSON.stringify([...drawn].sort()) === JSON.stringify([...expect].sort());
+      const shown = drawn.map(title).join(", ") || "No paths";
+      $("flow-test-result").replaceChildren(status(passed ? "good" : "critical", passed ? shown : `${shown}, but expected ${expect.map(title).join(", ") || "no paths"}`));
+    };
+
+    let timer = null;
+    const pause = () => {
+      clearInterval(timer);
+      timer = null;
+      play.textContent = "Play";
+    };
+    const resume = () => {
+      timer = setInterval(() => show((Number(select.value) + 1) % FLOW_SCENARIOS.length), FLOW_TEST_MS);
+      play.textContent = "Pause";
+    };
+    select.addEventListener("change", () => {
+      pause();
+      show(Number(select.value));
+    });
+    play.addEventListener("click", () => (timer ? pause() : resume()));
+
+    $("tab-row").style.visibility = "hidden";
+    $("flow-test").hidden = false;
+    buildFlow();
+    show(0);
+    resume();
   }
 
   async function refresh() {
@@ -2247,7 +2405,8 @@
   function showTab() {
     // Links saved when the first tab was called Live still open it.
     if (location.hash === "#live") window.history.replaceState(null, "", "#dashboard");
-    const tab = TABS[location.hash] ? location.hash : "#dashboard";
+    // Test mode stays on the dashboard, so its made-up readings can't reach a tab that acts on them.
+    const tab = !FLOW_TEST && TABS[location.hash] ? location.hash : "#dashboard";
     const returning = tab === "#statistics" && $("view-statistics").hidden;
     for (const [hash, view] of Object.entries(TABS)) $(view).hidden = hash !== tab;
     for (const link of $("tab-row").querySelectorAll("a")) {
@@ -2276,8 +2435,12 @@
   TWO_FIELD_COLUMNS.addEventListener("change", () => { if (latest?.readings) renderFields(); });
   showTab();
   new ResizeObserver(buildFlow).observe($("stage")); // Also draws the diagram when its tab opens.
-  refresh().then(centreTab); // The connection status has now taken its share of the tab row.
-  setInterval(refresh, REFRESH_MS);
+  if (FLOW_TEST) {
+    startFlowTest();
+  } else {
+    refresh().then(centreTab); // The connection status has now taken its share of the tab row.
+    setInterval(refresh, REFRESH_MS);
+  }
   setInterval(renderConnection, 1000);
   $("history-day").max = isoDay(new Date());
   selectRange(range);
