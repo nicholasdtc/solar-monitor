@@ -196,7 +196,8 @@
   @media (min-width: 1100px) {
     .counters { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); grid-template-rows: auto 1fr; }
     .counters .tall { grid-column: 2; grid-row: 1 / span 2; }
-    .schedule { grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); grid-auto-rows: auto; }
+    .schedule { grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); grid-template-rows: auto 1fr; }
+    .schedule .tall { grid-column: 2; grid-row: 1 / span 2; }
   }
   .range { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
   .range label { display: inline-flex; gap: 8px; align-items: center; color: var(--ink-2); }
@@ -339,7 +340,6 @@
       <a href="#counters">Counters &amp; checks</a>
       <a href="#appliances">Appliances &amp; tariffs</a>
       <a href="#schedule">Battery schedule</a>
-      <a href="#tou">TOU</a>
       <a href="#fields">All fields</a>
       <a href="#app-data">App Data</a>
     </div>
@@ -543,36 +543,16 @@
 
   <section class="view schedule" id="view-schedule" aria-label="Battery schedule" hidden>
     <div class="pane">
-      <h2>Time periods</h2>
-      <p class="note">What's stored on the inverter now, in the same order as SEMS+. This page only reads it. Change a programme's power on the TOU tab, and anything else in SEMS+.</p>
-      <div class="scroll" tabindex="0" role="region" aria-label="Time periods table">
-        <table>
-          <thead><tr><th>#</th><th>Time</th><th>Action</th><th class="num">Cut-off SOC</th><th>Power</th><th>Repeats</th><th>State</th></tr></thead>
-          <tbody id="schedule-periods"></tbody>
-        </table>
-      </div>
-      <p class="meta"><span id="schedule-read-at"></span> SEMS+ AI Mode isn't listed because the app hasn't found a setting for it on the inverter.</p>
-    </div>
-    <div class="pane">
-      <h2>Modes and limits</h2>
-      <table>
-        <tbody id="schedule-modes"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="view schedule" id="view-tou" aria-label="TOU" hidden>
-    <div class="pane">
       <h2>TOU programmes</h2>
-      <p class="note">What's stored on the inverter now, in the same order as SEMS+. Only a programme's power can be changed here. Everything else about it stays as it is, and is for SEMS+. SEMS+ can take a while to show a change made here. Until it does, saving that programme there may send its old power back.</p>
+      <p class="note">What's stored on the inverter now, in the same order as SEMS+. Only a programme's power can be changed here. Everything else on this tab is for SEMS+. SEMS+ can take a while to show a change made here. Until it does, saving that programme there may send its old power back.</p>
       <div class="scroll edit" tabindex="0" role="region" aria-label="TOU programmes table">
         <table>
           <thead><tr><th>#</th><th>Time</th><th>Action</th><th class="num">Cut-off SOC</th><th>Power</th><th>Repeats</th><th>State</th><th></th></tr></thead>
           <tbody id="tou-periods"></tbody>
         </table>
       </div>
-      <p class="meta" id="tou-read-at"></p>
-      <p class="note" id="tou-restart" hidden>Restart the dashboard to be able to change programmes from here. It's still running the version from before this tab was added.</p>
+      <p class="meta"><span id="tou-read-at"></span> SEMS+ AI Mode isn't listed because the app hasn't found a setting for it on the inverter.</p>
+      <p class="note" id="tou-restart" hidden>Restart the dashboard to be able to change programmes from here. It's still running a version from before that was possible.</p>
       <form class="edit tou-change" id="tou-change" hidden>
         <h3 id="tou-change-title"></h3>
         <p class="note" id="tou-change-now"></p>
@@ -594,6 +574,12 @@
           <tbody id="tou-writes"></tbody>
         </table>
       </div>
+    </div>
+    <div class="pane tall">
+      <h2>Modes and limits</h2>
+      <table>
+        <tbody id="schedule-modes"></tbody>
+      </table>
     </div>
   </section>
 
@@ -1305,18 +1291,9 @@
     return row;
   }
 
-  function renderSchedule() {
+  // Redrawn on every reading: it has no buttons to lose focus, and the limits aren't part of the schedule.
+  function renderModes() {
     const schedule = latest?.schedule;
-    const periods = schedule?.periods.filter((period) => period.state !== "empty") ?? [];
-    let placeholder = null;
-    if (!schedule || !periods.length) {
-      placeholder = el("tr");
-      const cell = el("td", "no-value", schedule ? "No time periods are stored." : "Waiting for the first read.");
-      cell.colSpan = 7;
-      placeholder.append(cell);
-    }
-    $("schedule-periods").replaceChildren(...(placeholder ? [placeholder] : periods.map(periodRow)));
-
     const onOff = (on) => on === null ? null : on ? "On" : "Off";
     const percent = (soc) => isNum(soc) ? `${soc}%` : null;
     const rows = [
@@ -1332,16 +1309,12 @@
       return row;
     });
     $("schedule-modes").replaceChildren(...rows);
-
-    $("schedule-read-at").textContent = schedule
-      ? `Read from the inverter at ${new Date(schedule.read_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}, and again every 5 minutes.`
-      : "";
   }
 
   /*
-    The TOU tab. The change panel sits outside the table, so a new reading can't redraw it while
-    someone is typing. It holds the bytes the programme had when it was opened, and the server
-    refuses the change if the inverter no longer holds those.
+    TOU programmes, on the Battery schedule tab. The change panel sits outside the table, so a new
+    reading can't redraw it while someone is typing. It holds the bytes the programme had when it
+    was opened, and the server refuses the change if the inverter no longer holds those.
   */
   const POWER_NAMES = { charge: "Grid import power", discharge: "Battery discharge power" };
   const WRITE_RESULTS = {
@@ -1392,7 +1365,7 @@
       rows = [placeholder];
     }
     $("tou-periods").replaceChildren(...rows);
-    // Added with this tab, so a dashboard still running the version before it doesn't send them.
+    // Added with changing programmes, so a dashboard still running the version before that doesn't send them.
     $("tou-restart").hidden = !periods.some((period) => period.power_pct !== undefined && period.raw === undefined);
     $("tou-read-at").textContent = schedule
       ? `Read from the inverter at ${new Date(schedule.read_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}, and again every 5 minutes or after a change.`
@@ -1432,7 +1405,7 @@
     try {
       touWrites = (await getJson("/api/tou/writes")).writes;
     } catch {
-      touWrites = []; // A dashboard still running the version before this tab has no list to show.
+      touWrites = []; // A dashboard still running a version from before changes has no list to show.
     }
     renderTouWrites();
   }
@@ -1513,7 +1486,7 @@
 
   function render() {
     if (latest?.readings) values = Object.fromEntries(latest.readings.map((r) => [r.id, r.value]));
-    renderSchedule();
+    renderModes();
     renderTou();
     renderConnection();
     if (latest?.device) {
@@ -2792,7 +2765,6 @@
     "#counters": "view-counters",
     "#appliances": "view-appliances",
     "#schedule": "view-schedule",
-    "#tou": "view-tou",
     "#fields": "view-fields",
     "#app-data": "view-app-data",
   };
@@ -2806,6 +2778,8 @@
   function showTab() {
     // Links saved when the first tab was called Live still open it.
     if (location.hash === "#live") window.history.replaceState(null, "", "#dashboard");
+    // The TOU tab was folded into the Battery schedule one, so its links open that.
+    if (location.hash === "#tou") window.history.replaceState(null, "", "#schedule");
     // Test mode stays on the dashboard, so its made-up readings can't reach a tab that acts on them.
     const tab = !FLOW_TEST && TABS[location.hash] ? location.hash : "#dashboard";
     const returning = tab === "#statistics" && $("view-statistics").hidden;
@@ -2818,7 +2792,7 @@
     $("chart-tip").hidden = true;
     if (tab === "#appliances") refreshOverview();
     if (tab === "#app-data") refreshExport();
-    if (tab === "#tou") refreshTouWrites();
+    if (tab === "#schedule") refreshTouWrites();
     if (returning) {
       refreshHistory();
       refreshDaily();
