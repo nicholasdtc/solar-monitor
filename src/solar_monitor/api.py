@@ -221,11 +221,24 @@ def create_app(collector: Collector) -> FastAPI:
     # async too: the database connection belongs to the event loop's thread, and this way a
     # read can't land in the middle of a flush and count the moving readings twice or not at all.
     @app.get("/api/history")
-    async def api_history(start: int, end: int) -> dict[str, object]:
+    async def api_history(start: int, end: int, bucket: int | None = None) -> dict[str, object]:
+        """With a bucket, the range is widened to whole buckets, and the answer says by how much."""
         if end <= start:
             raise HTTPException(status_code=400, detail="end must be after start")
-        bucket, points = db.history(collector.conn, start, end, collector.buffer)
-        return {"start": start, "end": end, "bucket_seconds": bucket, "points": points}
+        if bucket is not None:
+            if bucket not in db.BUCKET_SECONDS:
+                raise HTTPException(status_code=400, detail=f"bucket must be one of {list(db.BUCKET_SECONDS)}")
+            start, end = db.whole_buckets(start, end, bucket)
+            if (end - start) / bucket > db.MAX_BUCKETS_PER_REQUEST:
+                raise HTTPException(status_code=400, detail=f"at most {db.MAX_BUCKETS_PER_REQUEST} buckets at once")
+        bucket, points = db.history(collector.conn, start, end, collector.buffer, bucket)
+        return {
+            "start": start,
+            "end": end,
+            "bucket_seconds": bucket,
+            "first_ts": db.first_reading(collector.conn, collector.buffer),
+            "points": points,
+        }
 
     @app.get("/api/daily")
     async def api_daily(days: int = Query(default=14, ge=1, le=366)) -> dict[str, object]:

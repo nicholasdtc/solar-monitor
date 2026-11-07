@@ -260,11 +260,27 @@ def test_history_route_includes_saved_and_unsaved_readings(conn):
 
     assert result["bucket_seconds"] == 60
     assert [(p["ts"], p["pv_w"]) for p in result["points"]] == [(600, 10), (660, 20)]
+    assert result["first_ts"] == 600
 
 
-def test_history_route_refuses_a_backwards_range(conn):
+def test_history_route_widens_a_range_to_the_buckets_it_asks_for(conn):
+    db.save_samples(conn, [db.Sample(1_800_000_000, {"ppv": 10})])
+    history = route(Collector("host", 502, conn), "/api/history")
+
+    result = asyncio.run(history(start=1_800_000_010, end=1_800_000_190, bucket=60))
+
+    assert (result["start"], result["end"], result["bucket_seconds"]) == (1_800_000_000, 1_800_000_240, 60)
+    assert [p["pv_w"] for p in result["points"]] == [10]
+
+
+@pytest.mark.parametrize("asked", [
+    {"start": 100, "end": 100},
+    {"start": 0, "end": 3600, "bucket": 90},
+    {"start": 1_800_000_000, "end": 1_800_000_000 + 3000 * 60, "bucket": 60},
+])
+def test_history_route_refuses_a_bad_request(conn, asked):
     with pytest.raises(HTTPException) as refused:
-        asyncio.run(route(Collector("host", 502, conn), "/api/history")(start=100, end=100))
+        asyncio.run(route(Collector("host", 502, conn), "/api/history")(**asked))
     assert refused.value.status_code == 400
 
 
