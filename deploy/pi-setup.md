@@ -85,7 +85,35 @@ sudo systemctl enable --now systemd-time-wait-sync
 sudo systemctl daemon-reload && sudo systemctl enable --now solar-monitor
 ```
 
-## 8. Check it
+## 8. Give it its own name (on the Pi)
+
+This puts the dashboard at http://solar.local, with no port. Skip it if `BIND_HOST` is blank.
+Make sure the router reserves the Pi's address first (step 2), because the name is announced at
+the address the Pi has when it starts.
+
+The app's name is announced alongside the Pi's own one, and Caddy passes requests for it on to the app.
+Keep `BIND_HOST=0.0.0.0`: it's what makes the app refuse to start without a login, and the app
+can't tell it's behind Caddy. Port 8000 keeps working too, behind the same login.
+
+```bash
+sudo apt install -y caddy avahi-utils
+```
+
+```bash
+sudo cp /opt/solar-monitor/deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+```
+
+```bash
+sudo cp /opt/solar-monitor/deploy/solar-monitor-name.service /etc/systemd/system/
+```
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now solar-monitor-name
+```
+
+The login cookie belongs to the address, so you'll log in again the first time you use the new one.
+
+## 9. Check it
 
 ```bash
 systemctl status solar-monitor
@@ -101,7 +129,7 @@ timedatectl
 
 - The journal should show `Polling ...` and no `Inverter reads failing` line.
 - `timedatectl` should show your time zone and `System clock synchronized: yes`.
-- Open the dashboard: `http://<pi-name>.local:8000` if you set `BIND_HOST=0.0.0.0`, otherwise
+- Open the dashboard: http://solar.local after step 8, `http://<pi-name>.local:8000` if you set `BIND_HOST=0.0.0.0`, otherwise
   http://localhost:8000 through the SSH command in step 5. The tiles should update every 15 seconds
   and the history should start filling in. Daily totals can take up to 5 minutes to appear.
 - Reboot with `sudo reboot` and check it comes back on its own.
@@ -114,5 +142,7 @@ sudo git -C /opt/solar-monitor pull && sudo systemctl restart solar-monitor
 ```
 
 If `pyproject.toml` or the service file changed, repeat the install command from step 4 or the
-copy and `daemon-reload` from step 7 before restarting. A restart saves unsaved readings first,
+copy and `daemon-reload` from step 7 before restarting. Likewise, if the `Caddyfile` or
+`solar-monitor-name.service` changed, repeat their commands from step 8, then
+`sudo systemctl restart solar-monitor-name`. A restart saves unsaved readings first,
 but a power cut can lose up to 5 minutes of them.
