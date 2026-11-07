@@ -206,7 +206,8 @@
   @media (min-width: 1100px) {
     .counters { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); grid-template-rows: auto 1fr; }
     .counters .tall { grid-column: 2; grid-row: 1 / span 2; }
-    .schedule { grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); grid-auto-rows: auto; }
+    .schedule { grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); grid-template-rows: auto 1fr; }
+    .schedule .tall { grid-column: 2; grid-row: 1 / span 2; }
   }
   .range { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
   .range label { display: inline-flex; gap: 8px; align-items: center; color: var(--ink-2); }
@@ -262,11 +263,20 @@
   th, td { padding: 8px 12px; text-align: left; vertical-align: top; border-top: 1px solid var(--rule); }
   th:first-child, td:first-child { padding-left: 0; }
   th:last-child, td:last-child { padding-right: 0; }
-  thead th { border-top: 0; color: var(--muted); font-size: 13px; font-weight: 500; white-space: nowrap; background: var(--surface); }
+  /* Header rows stay in view under the tab row (50px with its borders) while their table passes beneath.
+     The rule under them is a shadow because a collapsed border stays behind with the row below. */
+  thead th {
+    position: sticky; top: calc(var(--tabs-h) + 2px); z-index: 1; box-shadow: 0 1px 0 var(--rule);
+    border-top: 0; color: var(--muted); font-size: 13px; font-weight: 500; white-space: nowrap; background: var(--surface);
+  }
+  /* Sticky only follows the nearest box that scrolls, so in a box that scrolls sideways it can't follow the page.
+     Those tables get a copy of the header row instead (see pinHeaderRows), and this keeps the real one at the top of its box. */
+  .scroll thead th, .head-pin th { top: 0; }
+  .head-pin { position: fixed; z-index: 4; overflow: hidden; padding-bottom: 1px; pointer-events: none; }
+  .head-pin table { table-layout: fixed; }
   tbody th { font-weight: 500; }
   .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td.values { color: var(--ink-2); font-variant-numeric: tabular-nums; }
-  .pin { position: sticky; left: 0; background: var(--surface); }
   .tally { display: flex; flex-wrap: wrap; gap: 4px 20px; }
 
   /* Checks and All fields reflow into stacked rows on a phone instead of scrolling sideways. */
@@ -282,7 +292,6 @@
   /* All fields */
   .field-tables { display: grid; gap: 0 var(--gutter); align-items: start; }
   @media (min-width: 1400px) { .field-tables { grid-template-columns: 1fr 1fr; } }
-  .fields thead th { position: sticky; top: var(--tabs-h); z-index: 1; box-shadow: 0 1px 0 var(--rule); }
   #filter { width: min(360px, 100%); min-height: 40px; padding: 6px 10px; background: var(--surface); border: 1px solid var(--rule-strong); }
 
   /* Editable pages */
@@ -390,7 +399,6 @@
       <a href="#counters">Counters &amp; checks</a>
       <a href="#appliances">Appliances &amp; tariffs</a>
       <a href="#schedule">Battery schedule</a>
-      <a href="#tou">TOU</a>
       <a href="#fields">All fields</a>
       <a href="#app-data">App Data</a>
     </div>
@@ -454,7 +462,7 @@
       <h3>Daily energy as a table</h3>
       <div class="scroll" tabindex="0" role="region" aria-label="Daily energy table">
         <table>
-          <thead><tr><th class="pin">Day</th><th class="num">Solar</th><th class="num">House</th><th class="num">Battery charged</th><th class="num">Battery discharged</th><th class="num">Grid import</th><th class="num">Grid export</th><th class="num">Solar to house</th><th class="num">Solar to battery</th><th class="num">Solar to grid</th><th class="num">House from battery</th><th class="num">House from grid</th><th class="num">Self-sufficiency</th></tr></thead>
+          <thead><tr><th>Day</th><th class="num">Solar</th><th class="num">House</th><th class="num">Battery charged</th><th class="num">Battery discharged</th><th class="num">Grid import</th><th class="num">Grid export</th><th class="num">Solar to house</th><th class="num">Solar to battery</th><th class="num">Solar to grid</th><th class="num">House from battery</th><th class="num">House from grid</th><th class="num">Self-sufficiency</th></tr></thead>
           <tbody id="daily-table"></tbody>
         </table>
       </div>
@@ -589,7 +597,7 @@
       <p class="alert" id="appliances-error" role="alert"></p>
       <div class="scroll edit" tabindex="0" role="region" aria-label="Appliances table">
         <table>
-          <thead><tr><th>Power cut</th><th class="pin">Name</th><th class="num">Typical W</th><th class="num">Peak W</th><th class="num">Surge W</th><th class="num">Amps</th><th class="num">Of limit</th><th>Can add</th><th>Notes</th><th aria-label="Delete"></th></tr></thead>
+          <thead><tr><th>Power cut</th><th>Name</th><th class="num">Typical W</th><th class="num">Peak W</th><th class="num">Surge W</th><th class="num">Amps</th><th class="num">Of limit</th><th>Can add</th><th>Notes</th><th aria-label="Delete"></th></tr></thead>
           <tbody id="appliance-rows"></tbody>
         </table>
       </div>
@@ -611,7 +619,7 @@
       <p class="note">The current each combination draws, what that leaves of your limit, and how long the battery could carry it with no sun or grid.</p>
       <div class="scroll" tabindex="0" role="region" aria-label="Load combinations table">
         <table>
-          <thead><tr><th class="pin">Load</th><th class="num">Watts</th><th class="num">Amps</th><th class="num">Of limit</th><th class="num">Room left</th><th class="num">Runs for, from now</th><th class="num">Runs for, from full</th></tr></thead>
+          <thead><tr><th>Load</th><th class="num">Watts</th><th class="num">Amps</th><th class="num">Of limit</th><th class="num">Room left</th><th class="num">Runs for, from now</th><th class="num">Runs for, from full</th></tr></thead>
           <tbody id="cases"></tbody>
         </table>
       </div>
@@ -694,36 +702,16 @@
 
   <section class="view schedule" id="view-schedule" aria-label="Battery schedule" hidden>
     <div class="pane">
-      <h2>Time periods</h2>
-      <p class="note">What's stored on the inverter now, in the same order as SEMS+. This page only reads it. Change a programme's power on the TOU tab, and anything else in SEMS+.</p>
-      <div class="scroll" tabindex="0" role="region" aria-label="Time periods table">
-        <table>
-          <thead><tr><th>#</th><th>Time</th><th>Action</th><th class="num">Cut-off SOC</th><th>Power</th><th>Repeats</th><th>State</th></tr></thead>
-          <tbody id="schedule-periods"></tbody>
-        </table>
-      </div>
-      <p class="meta"><span id="schedule-read-at"></span> SEMS+ AI Mode isn't listed because the app hasn't found a setting for it on the inverter.</p>
-    </div>
-    <div class="pane">
-      <h2>Modes and limits</h2>
-      <table>
-        <tbody id="schedule-modes"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="view schedule" id="view-tou" aria-label="TOU" hidden>
-    <div class="pane">
       <h2>TOU programmes</h2>
-      <p class="note">What's stored on the inverter now, in the same order as SEMS+. Only a programme's power can be changed here. Everything else about it stays as it is, and is for SEMS+. SEMS+ can take a while to show a change made here. Until it does, saving that programme there may send its old power back.</p>
+      <p class="note">What's stored on the inverter now, in the same order as SEMS+. Only a programme's power can be changed here. Everything else on this tab is for SEMS+. SEMS+ can take a while to show a change made here. Until it does, saving that programme there may send its old power back.</p>
       <div class="scroll edit" tabindex="0" role="region" aria-label="TOU programmes table">
         <table>
           <thead><tr><th>#</th><th>Time</th><th>Action</th><th class="num">Cut-off SOC</th><th>Power</th><th>Repeats</th><th>State</th><th></th></tr></thead>
           <tbody id="tou-periods"></tbody>
         </table>
       </div>
-      <p class="meta" id="tou-read-at"></p>
-      <p class="note" id="tou-restart" hidden>Restart the dashboard to be able to change programmes from here. It's still running the version from before this tab was added.</p>
+      <p class="meta"><span id="tou-read-at"></span> SEMS+ AI Mode isn't listed because the app hasn't found a setting for it on the inverter.</p>
+      <p class="note" id="tou-restart" hidden>Restart the dashboard to be able to change programmes from here. It's still running a version from before that was possible.</p>
       <form class="edit tou-change" id="tou-change" hidden>
         <h3 id="tou-change-title"></h3>
         <p class="note" id="tou-change-now"></p>
@@ -745,6 +733,12 @@
           <tbody id="tou-writes"></tbody>
         </table>
       </div>
+    </div>
+    <div class="pane tall">
+      <h2>Modes and limits</h2>
+      <table>
+        <tbody id="schedule-modes"></tbody>
+      </table>
     </div>
   </section>
 
@@ -1456,18 +1450,9 @@
     return row;
   }
 
-  function renderSchedule() {
+  // Redrawn on every reading: it has no buttons to lose focus, and the limits aren't part of the schedule.
+  function renderModes() {
     const schedule = latest?.schedule;
-    const periods = schedule?.periods.filter((period) => period.state !== "empty") ?? [];
-    let placeholder = null;
-    if (!schedule || !periods.length) {
-      placeholder = el("tr");
-      const cell = el("td", "no-value", schedule ? "No time periods are stored." : "Waiting for the first read.");
-      cell.colSpan = 7;
-      placeholder.append(cell);
-    }
-    $("schedule-periods").replaceChildren(...(placeholder ? [placeholder] : periods.map(periodRow)));
-
     const onOff = (on) => on === null ? null : on ? "On" : "Off";
     const percent = (soc) => isNum(soc) ? `${soc}%` : null;
     const rows = [
@@ -1483,16 +1468,12 @@
       return row;
     });
     $("schedule-modes").replaceChildren(...rows);
-
-    $("schedule-read-at").textContent = schedule
-      ? `Read from the inverter at ${new Date(schedule.read_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}, and again every 5 minutes.`
-      : "";
   }
 
   /*
-    The TOU tab. The change panel sits outside the table, so a new reading can't redraw it while
-    someone is typing. It holds the bytes the programme had when it was opened, and the server
-    refuses the change if the inverter no longer holds those.
+    TOU programmes, on the Battery schedule tab. The change panel sits outside the table, so a new
+    reading can't redraw it while someone is typing. It holds the bytes the programme had when it
+    was opened, and the server refuses the change if the inverter no longer holds those.
   */
   const POWER_NAMES = { charge: "Grid import power", discharge: "Battery discharge power" };
   const WRITE_RESULTS = {
@@ -1543,7 +1524,7 @@
       rows = [placeholder];
     }
     $("tou-periods").replaceChildren(...rows);
-    // Added with this tab, so a dashboard still running the version before it doesn't send them.
+    // Added with changing programmes, so a dashboard still running the version before that doesn't send them.
     $("tou-restart").hidden = !periods.some((period) => period.power_pct !== undefined && period.raw === undefined);
     $("tou-read-at").textContent = schedule
       ? `Read from the inverter at ${new Date(schedule.read_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}, and again every 5 minutes or after a change.`
@@ -1583,7 +1564,7 @@
     try {
       touWrites = (await getJson("/api/tou/writes")).writes;
     } catch {
-      touWrites = []; // A dashboard still running the version before this tab has no list to show.
+      touWrites = []; // A dashboard still running a version from before changes has no list to show.
     }
     renderTouWrites();
   }
@@ -1664,7 +1645,7 @@
 
   function render() {
     if (latest?.readings) values = Object.fromEntries(latest.readings.map((r) => [r.id, r.value]));
-    renderSchedule();
+    renderModes();
     renderTou();
     renderConnection();
     if (latest?.device) {
@@ -1794,7 +1775,8 @@
   const GRID_BELOW_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "importing" : "exporting";
 
   const HISTORY_CHARTS = [
-    { title: "Solar and house", unit: "W", height: 190, series: [
+    // Neither should go below zero. A brief misreading of the house below it is cut off at the axis.
+    { title: "Solar and house", unit: "W", height: 190, floor: 0, series: [
       { key: "pv_w", label: "Solar", unit: "W", color: "--flow-solar" },
       { key: "load_w", label: "House", unit: "W", color: "--flow-load" },
     ] },
@@ -1853,19 +1835,25 @@
   const shortDate = (when) => when.toLocaleDateString(undefined, { day: "numeric", month: "short" });
   const power = (w) => (Math.abs(w) >= 1000 ? `${number(w / 1000, 2)} kW` : `${number(w, 0)} W`);
 
-  /* Round tick values that span low to high, always including both. */
-  function niceTicks(low, high) {
-    const rough = (high - low) / 4 || 1;
-    const power = 10 ** Math.floor(Math.log10(rough));
-    const step = [1, 2, 5, 10].find((m) => m * power >= rough) * power;
-    const first = Math.floor(low / step);
-    const count = Math.ceil(high / step) - first;
-    return Array.from({ length: count + 1 }, (_, i) => (first + i) * step);
+  /* Round tick values that span low to high, always including both. Takes the smallest round step
+     that needs no more than maxSteps, so the axis reaches only a little past the data. */
+  function niceTicks(low, high, maxSteps) {
+    const span = high - low;
+    let power = 10 ** Math.floor(Math.log10(span > 0 && Number.isFinite(span) ? span / maxSteps : 1));
+    for (let tries = 0; tries < 30; tries++, power *= 10) {
+      for (const step of [1, 2, 5].map((m) => m * power)) {
+        const first = Math.floor(low / step);
+        const count = Math.max(1, Math.ceil(high / step) - first);
+        if (count <= maxSteps) return Array.from({ length: count + 1 }, (_, i) => (first + i) * step);
+      }
+    }
+    return [low, high];
   }
 
-  /* Ticks switch to kW once they reach 1000 W. Only the top tick carries the unit. */
+  /* Ticks switch to kW once they reach 1000 W. Only the top tick carries the unit.
+     Taller plots get more ticks, about one every 28 px. */
   function yScale(low, high, top, bottom, unit) {
-    const ticks = niceTicks(low, high);
+    const ticks = niceTicks(low, high, clamp(Math.floor((bottom - top) / 28), 2, 6));
     const [min, max] = [ticks[0], ticks.at(-1)];
     const kilo = unit === "W" && Math.max(-min, max) >= 1000;
     const divisor = kilo ? 1000 : 1;
@@ -2129,7 +2117,7 @@
       const bottom = chart.height - (lastChart ? X_AXIS_HEIGHT : 10);
       const keys = chart.series.flatMap((s) => [s.key, `${s.key}_min`, `${s.key}_max`]);
       const known = points.flatMap((p) => keys.map((key) => p[key])).filter(isNum);
-      let [low, high] = chart.domain ?? [Math.min(0, ...known), Math.max(0, ...known)];
+      let [low, high] = chart.domain ?? [Math.max(chart.floor ?? -Infinity, Math.min(0, ...known)), Math.max(0, ...known)];
       if (high - low < 100 && !chart.domain) high = low + 100; // A flat night stays readable.
       return { chart, lastChart, bottom, scale: yScale(low, high, CHART_TOP, bottom, chart.unit) };
     });
@@ -2159,11 +2147,17 @@
         svg.append(svgEl("line", { x1: tx, x2: tx, y1: CHART_TOP, y2: bottom, class: "chart-grid" }));
         if (lastChart && tx < width - 20) svg.append(svgEl("text", { x: tx, y: bottom + 17, class: "chart-tick chart-x" }, tick.label));
       }
+      // Anything past the axis is cut off at its edge. The tooltip and table still give the true value.
+      const clipId = `history-clip-${i}`;
+      const clip = svgEl("clipPath", { id: clipId });
+      clip.append(svgEl("rect", { x: frame.left - 2, y: CHART_TOP - 2, width: plotWidth + 4, height: bottom - CHART_TOP + 4 }));
+      const lines = svgEl("g", { "clip-path": `url(#${clipId})` });
+      svg.append(clip, lines);
       for (const series of chart.series) {
-        svg.append(svgEl("path", { d: spreadPath(points, series.key, x, scale.y, bucket * 2), class: "chart-spread", style: `fill: var(${series.color})` }));
+        lines.append(svgEl("path", { d: spreadPath(points, series.key, x, scale.y, bucket * 2), class: "chart-spread", style: `fill: var(${series.color})` }));
       }
       for (const series of chart.series) {
-        svg.append(svgEl("path", { d: linePath(points, series.key, x, scale.y, bucket * 2), class: "chart-line", style: `stroke: var(${series.color})` }));
+        lines.append(svgEl("path", { d: linePath(points, series.key, x, scale.y, bucket * 2), class: "chart-line", style: `stroke: var(${series.color})` }));
       }
       if (endLabels) drawEndLabels(svg, chart, points, x, scale.y, bottom);
       drawInsideLabels(svg, frame, scale, bottom, chart.inside);
@@ -2186,7 +2180,7 @@
         overlay.replaceChildren(
           svgEl("line", { x1: px, x2: px, y1: CHART_TOP, y2: bottom, class: "chart-cross" }),
           ...chart.series.filter((s) => isNum(point[s.key])).map((s) => svgEl("circle", {
-            cx: px, cy: scale.y(point[s.key]), r: 4, class: "chart-dot", style: `fill: var(${s.color})`,
+            cx: px, cy: clamp(scale.y(point[s.key]), CHART_TOP, bottom), r: 4, class: "chart-dot", style: `fill: var(${s.color})`,
           })),
         );
       }
@@ -2395,7 +2389,7 @@
     const recorded = daily.days.filter((day) => Object.keys(day).length > 1).toReversed();
     $("daily-table").replaceChildren(...recorded.map((day) => {
       const row = el("tr");
-      row.append(el("td", "pin", new Date(`${day.day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })));
+      row.append(el("td", "", new Date(`${day.day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })));
       for (const key of keys) row.append(el("td", "num", kwh(day[key])));
       const share = selfSufficiency([day]);
       row.append(el("td", "num", share === null ? "—" : percent(share)));
@@ -2572,7 +2566,7 @@
     };
     const row = el("tr");
     row.append(
-      wrap(fields.use_in_outage), wrap(fields.name, "pin"), wrap(fields.typical_w, "num"), wrap(fields.peak_w, "num"), wrap(fields.surge_w, "num"),
+      wrap(fields.use_in_outage), wrap(fields.name), wrap(fields.typical_w, "num"), wrap(fields.peak_w, "num"), wrap(fields.surge_w, "num"),
       cells.amps, cells.share, cells.canAdd, wrap(fields.notes), wrap(remove),
     );
     row.addEventListener("change", () => sendOverview("PUT", `/api/appliances/${id}`, {
@@ -2641,10 +2635,8 @@
       const room = el("td", "num");
       room.append(overLimit(amps(load.headroom_amps), load.headroom_amps < 0));
       const runsFor = (hours) => timeLeft(load.watts > 0 ? hours : null); // Nothing to run yet.
-      const name = loadCell(label, why);
-      name.classList.add("pin");
       row.append(
-        name, el("td", "num", watts(load.watts)), el("td", "num", amps(load.amps)), share, room,
+        loadCell(label, why), el("td", "num", watts(load.watts)), el("td", "num", amps(load.amps)), share, room,
         el("td", "num", runsFor(load.hours_from_now)), el("td", "num", runsFor(load.hours_from_full)),
       );
       return row;
@@ -3945,7 +3937,6 @@
     "#counters": "view-counters",
     "#appliances": "view-appliances",
     "#schedule": "view-schedule",
-    "#tou": "view-tou",
     "#fields": "view-fields",
     "#app-data": "view-app-data",
   };
@@ -3959,6 +3950,8 @@
   function showTab() {
     // Links saved when the first tab was called Live still open it.
     if (location.hash === "#live") window.history.replaceState(null, "", "#dashboard");
+    // The TOU tab was folded into the Battery schedule one, so its links open that.
+    if (location.hash === "#tou") window.history.replaceState(null, "", "#schedule");
     // Test mode stays on the dashboard, so its made-up readings can't reach a tab that acts on them.
     const tab = !FLOW_TEST && TABS[location.hash] ? location.hash : "#dashboard";
     const returning = tab === "#statistics" && $("view-statistics").hidden;
@@ -3972,7 +3965,7 @@
     if (tab === "#appliances") refreshOverview();
     if (tab === "#app-data") refreshExport();
     if (tab === "#grid-meter") gridMeter.refresh();
-    if (tab === "#tou") refreshTouWrites();
+    if (tab === "#schedule") refreshTouWrites();
     if (returning) {
       refreshHistory();
       refreshDaily();
@@ -3985,6 +3978,63 @@
     if (scrollY > top) scrollTo(0, top);
   });
   setInterval(() => { if (!$("view-appliances").hidden) refreshOverview(); }, APPLIANCES_REFRESH_MS);
+
+  /*
+    A table that scrolls sideways sits in a box that scrolls, and a sticky header only follows the
+    nearest box that scrolls, so its header row can't stay under the tab row by itself. Each gets a
+    copy instead, shown under the tab row while the table passes beneath, with the real columns'
+    widths and moved sideways along with the table. Screen readers skip the copy.
+  */
+  function pinHeaderRows() {
+    const tabs = document.querySelector(".tabs");
+    const pins = [...document.querySelectorAll(".scroll")].map((box) => {
+      const table = box.querySelector("table");
+      const pin = { box, table, ghost: el("div", "head-pin"), copy: el("table"), fresh: false };
+      pin.ghost.setAttribute("aria-hidden", "true");
+      pin.ghost.hidden = true;
+      pin.ghost.append(pin.copy);
+      box.after(pin.ghost);
+      // Columns widen and narrow with what's in the rows, and a header's words can change.
+      const stale = () => { pin.fresh = false; place(); };
+      const sizes = new ResizeObserver(stale);
+      sizes.observe(table);
+      for (const cell of table.tHead.rows[0].cells) sizes.observe(cell);
+      new MutationObserver(stale).observe(table.tHead, { subtree: true, childList: true, characterData: true });
+      box.addEventListener("scroll", place, { passive: true });
+      return pin;
+    });
+
+    function copyHeader(pin) {
+      const head = pin.table.tHead.cloneNode(true);
+      for (const node of head.querySelectorAll("[id]")) node.removeAttribute("id");
+      const real = pin.table.tHead.rows[0].cells;
+      [...head.rows[0].cells].forEach((cell, i) => { cell.style.width = `${real[i].getBoundingClientRect().width}px`; });
+      pin.copy.style.width = `${pin.table.getBoundingClientRect().width}px`;
+      pin.copy.replaceChildren(head);
+      pin.fresh = true;
+    }
+
+    let frame = 0;
+    function place() {
+      frame ||= requestAnimationFrame(() => {
+        frame = 0;
+        const top = tabs.getBoundingClientRect().bottom;
+        for (const pin of pins) {
+          // A box on a hidden tab measures all zeros, so its copy hides too.
+          const area = pin.box.getBoundingClientRect();
+          const show = area.top < top && area.bottom > top + pin.table.tHead.offsetHeight;
+          if (show && (!pin.fresh || pin.ghost.hidden)) copyHeader(pin);
+          pin.ghost.hidden = !show;
+          if (!show) continue;
+          Object.assign(pin.ghost.style, { top: `${top}px`, left: `${area.left}px`, width: `${pin.box.clientWidth}px` });
+          pin.copy.style.transform = `translateX(${-pin.box.scrollLeft}px)`;
+        }
+      });
+    }
+    addEventListener("scroll", place, { passive: true });
+    addEventListener("resize", place);
+  }
+  pinHeaderRows();
 
   $("filter").addEventListener("input", () => { if (latest?.readings) renderFields(); });
   TWO_FIELD_COLUMNS.addEventListener("change", () => { if (latest?.readings) renderFields(); });

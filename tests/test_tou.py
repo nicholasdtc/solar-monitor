@@ -1,4 +1,4 @@
-"""The TOU tab's way to the inverter: the web route, who may use it, and how it fits around polling."""
+"""Changing a TOU programme from the Battery schedule tab: the web route, who may use it, and how it fits around polling."""
 
 import asyncio
 
@@ -216,10 +216,13 @@ def test_on_the_network_only_a_logged_in_request_reaches_the_inverter(collector,
     assert collector.inverter.writes == [("eco_mode_1", bytes.fromhex(TOU_30))]
 
 
-def test_the_page_has_the_tab(collector):
+def test_the_battery_schedule_tab_is_where_programmes_change(collector):
     page = get(collector, "/").text
-    assert 'href="#tou"' in page
-    assert 'id="view-tou"' in page
+    assert 'href="#tou"' not in page and 'id="view-tou"' not in page
+    assert page.count('href="#schedule"') == 1
+    tab = page.split('id="view-schedule"', 1)[1].split("</section>", 1)[0]
+    for part in ("tou-periods", "tou-change", "tou-writes", "schedule-modes"):
+        assert f'id="{part}"' in tab
 
 
 def test_a_write_never_overlaps_polling_and_polling_carries_on(monkeypatch, collector):
