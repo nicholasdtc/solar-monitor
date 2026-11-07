@@ -31,6 +31,7 @@ CSV_QUERIES = {
     "settings": "SELECT key, value FROM settings ORDER BY key",
     "inverter_writes": "SELECT id, ts, datetime(ts, 'unixepoch', 'localtime') AS local_time, slot, old_percent, new_percent, "
     "outcome, old_bytes, new_bytes, held_bytes FROM inverter_writes ORDER BY id",
+    "meter_readings": "SELECT day, slot, occurrence, kw FROM meter_readings ORDER BY day, slot, occurrence",
 }
 
 CSV_LAYOUT = "Solar monitor export, CSV layout 1"  # Importing reads this, so a change of layout needs a new number.
@@ -48,6 +49,11 @@ appliances.csv      Your appliances, in watts. use_in_outage is 1 if ticked for 
 settings.csv        Your planning choices. Unset ones aren't listed.
 inverter_writes.csv Every change this app sent to the inverter. Confirmed means it read the change
                     back. The bytes are the whole TOU programme in hex, before and after.
+meter_readings.csv  The electricity meter's half-hours, as imported from ESB Networks. day and
+                    slot are on Irish clock time: slot 0 starts at midnight, slot 47 at 23:30.
+                    occurrence is 1 for the second half-hour with the same label when the
+                    clocks go back. kw is the average drawn from the grid over the half-hour,
+                    so its kWh is half of it.
 
 The other readings from each poll are only in the full database export.
 """
@@ -98,7 +104,8 @@ class Format:
 FORMATS = {
     "csv": Format(
         "Spreadsheets (CSV files in a ZIP)",
-        "For Excel or Google Sheets. Each poll's main readings, daily counters, appliances, settings and inverter changes.",
+        "For Excel or Google Sheets. Each poll's main readings, daily counters, appliances, settings, inverter changes "
+        "and the meter's half-hours.",
         "zip",
         "application/zip",
         _write_csv_zip,
@@ -122,13 +129,14 @@ FORMATS = {
 
 def summary(conn: sqlite3.Connection) -> dict[str, object]:
     """What an export would hold, cheaply enough to ask for on the poll loop's own connection."""
-    (first_ts, last_ts, appliances, settings, pages, page_size) = conn.execute(
+    (first_ts, last_ts, appliances, settings, meter_readings, pages, page_size) = conn.execute(
         """
         SELECT
             -- Separate queries, because asking for both in one would read the whole table.
             (SELECT MIN(ts) FROM samples), (SELECT MAX(ts) FROM samples),
             (SELECT COUNT(*) FROM appliances),
             (SELECT COUNT(*) FROM settings),
+            (SELECT COUNT(*) FROM meter_readings),
             (SELECT page_count FROM pragma_page_count), (SELECT page_size FROM pragma_page_size)
         """
     ).fetchone()
@@ -137,6 +145,7 @@ def summary(conn: sqlite3.Connection) -> dict[str, object]:
         "last_ts": last_ts,
         "appliances": appliances,
         "settings": settings,
+        "meter_readings": meter_readings,
         "size_bytes": pages * page_size,
     }
 

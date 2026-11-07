@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field, StringConstraints
 Watts = Annotated[float, Field(ge=0, le=1_000_000, allow_inf_nan=False)]
 Positive = Annotated[float, Field(gt=0, le=1_000_000, allow_inf_nan=False)]
 Rate = Annotated[float, Field(ge=0, le=100_000, allow_inf_nan=False)]
+# A clock time on the half-hour, in minutes after midnight, because the meter counts in half-hours.
+HalfHour = Annotated[int, Field(ge=0, le=1410, multiple_of=30)]
 
 
 class ApplianceIn(BaseModel):
@@ -31,3 +33,7 @@ class SettingsIn(BaseModel):
     tariff_peak: Rate | None = None
     tariff_night: Rate | None = None
     tariff_export: Rate | None = None
+    band_night_start_minutes: HalfHour | None = None
+    band_night_end_minutes: HalfHour | None = None
+    band_peak_start_minutes: HalfHour | None = None
+    band_peak_end_minutes: HalfHour | None = None

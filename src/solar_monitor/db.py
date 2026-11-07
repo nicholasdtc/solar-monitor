@@ -58,6 +58,17 @@ CREATE TABLE IF NOT EXISTS inverter_writes (
     outcome     TEXT NOT NULL,          -- sent (nothing recorded since), confirmed, not_applied, mismatch or unknown
     held_bytes  TEXT                    -- what the read-back found, in hex
 );
+
+-- The electricity meter's half-hours, imported from ESB Networks. Kept by the meter's own labels,
+-- in Irish clock time, so nothing is lost or merged when the clocks change.
+CREATE TABLE IF NOT EXISTS meter_readings (
+    day        TEXT NOT NULL,           -- YYYY-MM-DD, on the meter's clock
+    slot       INTEGER NOT NULL,        -- the half-hour from midnight, 0 to 47
+    occurrence INTEGER NOT NULL,        -- 0, or 1 for the second half-hour with this label when the
+                                        -- clocks go back. ESB lists the newest first, so 1 is the earlier.
+    kw         REAL NOT NULL,           -- the average kW taken from the grid over the half-hour
+    PRIMARY KEY (day, slot, occurrence)
+) WITHOUT ROWID;
 """
 
 # Our name -> the inverter's lifetime kWh reading. Lifetime rather than "today" readings,
@@ -106,6 +117,11 @@ SETTINGS = (
     "tariff_peak",
     "tariff_night",
     "tariff_export",
+    # When the tariff's bands start and end, in minutes after midnight. Night may run past midnight.
+    "band_night_start_minutes",
+    "band_night_end_minutes",
+    "band_peak_start_minutes",
+    "band_peak_end_minutes",
 )
 
 _APPLIANCE_FIELDS = ("name", "typical_w", "peak_w", "surge_w", "use_in_outage", "notes")

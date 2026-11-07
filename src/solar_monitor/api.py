@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 from starlette.background import BackgroundTask
 
-from solar_monitor import config, control, db, export, importer, planning
+from solar_monitor import config, control, db, export, importer, meter, planning
 from solar_monitor.collector import Collector
 from solar_monitor.inputs import ApplianceIn, SettingsIn
 from solar_monitor.schedule import TIME_PERIODS
@@ -81,6 +81,8 @@ def create_app(collector: Collector) -> FastAPI:
     # Where the energy went on days that have ended, which only an import can change.
     # Working it out reading by reading takes a noticeable moment on the Pi, so it's done once.
     finished_flows: dict[str, dict[str, float]] = {}
+    # The meter's half-hours, as the page wants them. Only an import changes them.
+    meter_readings: dict[str, object] | None = None
     importing = asyncio.Lock()
 
     def readings() -> dict[str, object]:
@@ -283,6 +285,20 @@ def create_app(collector: Collector) -> FastAPI:
             raise HTTPException(status_code=502, detail=str(problem)) from None
         return result
 
+    @app.get("/api/meter")
+    async def api_meter() -> Response:
+        """The meter's half-hours from ESB Networks, the tariff to price them, and this app's own grid import."""
+        nonlocal meter_readings
+        if meter_readings is None:
+            meter_readings = meter.readings(collector.conn)
+        collector.flush()  # So this app's record runs to the latest reading.
+        body = {
+            **meter_readings,
+            **meter.tariff(db.get_settings(collector.conn)),
+            "app": meter.app_days(collector.conn),
+        }
+        return Response(json.dumps(body, separators=(",", ":")), media_type="application/json")
+
     @app.get("/api/export")
     async def api_export() -> dict[str, object]:
         return {
@@ -311,7 +327,7 @@ def create_app(collector: Collector) -> FastAPI:
     @app.post("/api/import")
     async def api_import(request: Request, apply: bool = False) -> dict[str, object]:
         """The body is the export file. Says what it would add, and adds it only if `apply` is set."""
-        nonlocal measured_at, measured_overhead_at
+        nonlocal measured_at, measured_overhead_at, meter_readings
         if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/octet-stream":
             raise HTTPException(status_code=415, detail="Send the file itself, as application/octet-stream.")
         if importing.locked():
@@ -337,6 +353,7 @@ def create_app(collector: Collector) -> FastAPI:
         if apply:
             measured_at = measured_overhead_at = None  # So the measurements include what just arrived.
             finished_flows.clear()
+            meter_readings = None
         return report
 
     app.mount("/fonts", StaticFiles(directory=FONTS), name="fonts")

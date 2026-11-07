@@ -77,7 +77,7 @@ def run(tmp_path, conn, content, *, apply=True):
 
 def contents(conn):
     """Everything in the database, to check nothing changed."""
-    tables = ("samples", "daily_counters", "appliances", "settings", "inverter_writes")
+    tables = ("samples", "daily_counters", "appliances", "settings", "inverter_writes", "meter_readings")
     return {table: conn.execute(f"SELECT * FROM {table} ORDER BY 1, 2").fetchall() for table in tables}
 
 

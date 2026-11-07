@@ -1,11 +1,15 @@
-"""Brings this app's own exports back in: the CSV ZIP, the full database and the appliances JSON.
+"""Brings this app's own exports back in (the CSV ZIP, the full database and the appliances JSON),
+and the half-hourly smart meter file from ESB Networks.
 
 It only adds what's missing, so importing the same file twice changes nothing. Readings match by
-their time, daily counters by day and name, appliances by name and settings by key, and whatever
-is already here stays as it is. The one thing that grows is a day's counters, which widen to cover
-the readings from both sides. The log of changes sent to the inverter is left out on purpose: it's
-a record of what this copy of the app did, and it holds the bytes an undo would send. Nothing here
-talks to the inverter.
+their time, daily counters by day and name, appliances by name, settings by key and the meter's
+half-hours by their label, and whatever is already here stays as it is. The one thing that grows
+is a day's counters, which widen to cover the readings from both sides. The log of changes sent to
+the inverter is left out on purpose: it's a record of what this copy of the app did, and it holds
+the bytes an undo would send. Nothing here talks to the inverter.
+
+Every row of the meter file carries the MPRN and the meter's serial number. Neither is kept, and
+neither goes into a message, because this app's exports and screens could end up anywhere.
 
 The whole file is read and checked before the first write, so a bad row anywhere means no change.
 Like exports, this runs on a worker thread with its own connections. Writes go in small batches
@@ -23,21 +27,24 @@ import sqlite3
 import time
 import zipfile
 import zlib
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime
 from itertools import islice
 from pathlib import Path
 
 from pydantic import ValidationError
 
-from solar_monitor import db, export
+from solar_monitor import db, export, meter
 from solar_monitor.inputs import ApplianceIn, SettingsIn
 
 BATCH_ROWS = 1000
 BATCH_PAUSE_SECONDS = 0.02
 WAIT_FOR_SAVE_SECONDS = 30  # A save by the poll loop is quick, so this only runs out if something's badly wrong.
 MAX_JSON_BYTES = 10_000_000  # It's read into memory, and an appliance list is far smaller.
+# Every label in a meter file is remembered while it's read, to find repeats. Two years are about 3 MB.
+MAX_METER_BYTES = 30_000_000
 LATEST_TS = 4_102_444_800  # The year 2100. Anything later is a mistake, such as milliseconds.
 
 SQLITE_HEADER = b"SQLite format 3\0"
@@ -50,11 +57,27 @@ COLUMNS = {
     "daily_counters": ("day", "counter", "first_value", "last_value"),
     "appliances": ("name", "typical_w", "peak_w", "surge_w", "use_in_outage", "notes"),
     "settings": ("key", "value"),
+    "meter_readings": ("day", "slot", "occurrence", "kw"),
 }
-LABELS = {"samples": "Readings", "daily_counters": "Daily counters", "appliances": "Appliances", "settings": "Settings"}
+OPTIONAL = {"meter_readings"}  # Exports from before the app held them don't have them.
+LABELS = {
+    "samples": "Readings",
+    "daily_counters": "Daily counters",
+    "appliances": "Appliances",
+    "settings": "Settings",
+    "meter_readings": "Meter half-hours",
+}
 WRITE_LOG = "inverter_writes"
 
+# ESB Networks' "HDF" download of half-hourly readings in kW, as it comes from their website.
+ESB_COLUMNS = ("MPRN", "Meter Serial Number", "Read Value", "Read Type", "Read Date and End Time")
+ESB_IDENTIFIERS = ("MPRN", "Meter Serial Number")
+ESB_VALUE, ESB_TYPE, ESB_TIME = ESB_COLUMNS[2:]
+ESB_IMPORT = "Active Import Interval (kW)"
+ESB_TIME_FORMAT = "%d-%m-%Y %H:%M"
+
 NOT_AN_EXPORT = "This isn't an export from this app, so nothing was imported."
+UNKNOWN_FILE = "This isn't an export from this app or a meter file from ESB Networks, so nothing was imported."
 
 Row = dict[str, object]
 
@@ -69,7 +92,8 @@ class BadFile(Exception):
 
 class CsvZip:
     format = "csv"
-    tables = tuple(COLUMNS)
+    label = export.FORMATS["csv"].label
+    tables = tuple(COLUMNS)  # Narrowed by check() to the ones in the file.
     first_row = 2  # As a spreadsheet numbers them, with the header as row 1.
 
     def __init__(self, path: Path) -> None:
@@ -88,6 +112,7 @@ class CsvZip:
 
     def check(self) -> None:
         names = self.archive.namelist()
+        self.tables = tuple(table for table in COLUMNS if table not in OPTIONAL or f"{table}.csv" in names)
         if "README.txt" not in names or any(f"{table}.csv" not in names for table in self.tables):
             raise BadFile(NOT_AN_EXPORT)
         try:
@@ -97,9 +122,9 @@ class CsvZip:
             raise BadFile(NOT_AN_EXPORT) from error
         if layout != export.CSV_LAYOUT:
             raise BadFile("This ZIP isn't in a layout this version of the app can read, so nothing was imported.")
-        for table, columns in COLUMNS.items():
+        for table in self.tables:
             with self._reader(table) as reader:
-                missing = set(columns) - set(reader.fieldnames or ())
+                missing = set(COLUMNS[table]) - set(reader.fieldnames or ())
             if missing:
                 raise BadFile(f"{table}.csv has no {', '.join(sorted(missing))} column, so nothing was imported.")
 
@@ -119,7 +144,8 @@ class CsvZip:
 
 class Database:
     format = "sqlite"
-    tables = tuple(COLUMNS)
+    label = export.FORMATS["sqlite"].label
+    tables = tuple(COLUMNS)  # Narrowed by check() to the ones in the file.
     first_row = 1
 
     def __init__(self, path: Path) -> None:
@@ -136,9 +162,10 @@ class Database:
             self.conn.execute("PRAGMA trusted_schema = OFF")
             # Only real tables, because a view or trigger in a file from elsewhere could run anything.
             found = {name for (name,) in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-            for table, columns in self.columns.items():
+            self.tables = tuple(table for table in COLUMNS if table not in OPTIONAL or table in found)
+            for table in self.tables:
                 held = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")} if table in found else set()
-                if not set(columns) <= held:
+                if not set(self.columns[table]) <= held:
                     raise BadFile(NOT_AN_EXPORT)
         except sqlite3.Error as error:
             raise self._damaged(error) from error
@@ -166,6 +193,7 @@ class Database:
 
 class AppliancesJson:
     format = "appliances"
+    label = export.FORMATS["appliances"].label
     tables = ("appliances",)
     first_row = 1
 
@@ -199,7 +227,73 @@ class AppliancesJson:
         pass
 
 
-Source = CsvZip | Database | AppliancesJson
+def _label_key(stamp: object) -> object:
+    """What makes two of the meter file's time labels the same, even if written differently."""
+    try:
+        when = datetime.strptime(str(stamp).strip(), ESB_TIME_FORMAT)
+    except ValueError:
+        return stamp  # The check names the row.
+    return when.date(), meter.slot_of(when)
+
+
+class EsbCsv:
+    """The half-hourly smart meter file from ESB Networks, newest first, one row per half-hour."""
+
+    format = "esb"
+    label = "Smart meter half-hours from ESB Networks"
+    tables = ("meter_readings",)
+    first_row = 2
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    @contextmanager
+    def _reader(self) -> Iterator[Iterator[list[str]]]:
+        try:
+            with self.path.open(encoding="utf-8-sig", newline="") as text:
+                yield csv.reader(text)
+        except (csv.Error, UnicodeError) as error:
+            raise BadFile(f"This meter file can't be read ({error}), so nothing was imported.") from error
+
+    def check(self) -> None:
+        if self.path.stat().st_size > MAX_METER_BYTES:
+            raise BadFile("This file is too big to be a meter file from ESB Networks, so nothing was imported.")
+        with self._reader() as reader:
+            header = next(reader, None)
+        if header is None or tuple(name.strip() for name in header) != ESB_COLUMNS:
+            raise BadFile(
+                "This looks like a file from ESB Networks, but not the one with each half-hour's reading in kW, "
+                "so nothing was imported."
+            )
+
+    def rows(self, table: str) -> Iterator[Row]:
+        """Each row's reading, time and type, without the identifiers, and with what the check needs to
+        know: how many times its label came before, and whether it's for a different meter."""
+        seen: Counter[object] = Counter()
+        first_meter = None
+        with self._reader() as reader:
+            next(reader, None)  # The header, already checked.
+            for fields in reader:
+                row: Row = dict(zip(ESB_COLUMNS, fields))
+                row["columns"] = len(fields)
+                if first_meter is None:
+                    first_meter = row.get("MPRN")
+                row["other_meter"] = row.get("MPRN") != first_meter  # Compared here, and dropped straight after.
+                for name in ESB_IDENTIFIERS:
+                    row.pop(name, None)
+                key = _label_key(row.get(ESB_TIME))
+                row["occurrence"] = seen[key]
+                seen[key] += 1
+                yield row
+
+    def left_out(self) -> int:
+        return 0
+
+    def close(self) -> None:
+        pass
+
+
+Source = CsvZip | Database | AppliancesJson | EsbCsv
 
 
 @contextmanager
@@ -216,8 +310,10 @@ def _opened(path: Path) -> Iterator[Source]:
         source = CsvZip(path)
     elif head.removeprefix(BYTE_ORDER_MARK).lstrip().startswith(b"{"):
         source = AppliancesJson(path)
+    elif head.removeprefix(BYTE_ORDER_MARK).startswith(b"MPRN,"):
+        source = EsbCsv(path)
     else:
-        raise BadFile(NOT_AN_EXPORT)
+        raise BadFile(UNKNOWN_FILE)
     try:
         source.check()
         yield source
@@ -280,6 +376,60 @@ def _setting(row: Row) -> tuple[object, float | None]:
     value = _number(row["value"], str(key))
     SettingsIn.model_validate({key: value})
     return key, value
+
+
+def _whole(value: object, name: str, highest: int) -> int:
+    number = _number(value, name)
+    if not number.is_integer() or not 0 <= number <= highest:
+        raise ValueError(f"{name} isn't a whole number from 0 to {highest}: {value}")
+    return int(number)
+
+
+def _kw(value: object, name: str) -> float:
+    kw = _number(value, name)
+    if kw < 0:
+        raise ValueError(f"{name} is below zero: {value}")
+    return kw
+
+
+def _doubled(day: date, slot: int, occurrence: int) -> bool:
+    """Whether a half-hour can come twice: only the hour the clocks go back repeats."""
+    return occurrence == 1 and day == meter.last_sunday(day.year, 10) and slot in meter.REPEATED_SLOTS
+
+
+def _meter_reading(row: Row) -> tuple[str, int, int, float]:
+    """A row of this app's own export: (day, slot, occurrence, kW)."""
+    day = row["day"]
+    if not isinstance(day, str) or not DAY.fullmatch(day):
+        raise ValueError(f"day isn't in the form YYYY-MM-DD: {str(day)[:40]}")
+    when = date.fromisoformat(day)
+    slot = _whole(row["slot"], "slot", 47)
+    occurrence = _whole(row["occurrence"], "occurrence", 1)
+    if occurrence and not _doubled(when, slot, occurrence):
+        raise ValueError(f"occurrence is 1 for a half-hour that only comes once: {day} slot {slot}")
+    return day, slot, occurrence, _kw(row["kw"], "kw")
+
+
+def _esb_reading(row: Row) -> tuple[str, int, int, float]:
+    """A row of the meter file: (day, slot, occurrence, kW). Its identifiers never reach here."""
+    if row["columns"] != len(ESB_COLUMNS):
+        raise ValueError(f"it has {row['columns']} columns, not {len(ESB_COLUMNS)}")
+    if row["other_meter"]:
+        raise ValueError("it's for a different meter from the rows above it, and a file should have one meter's readings")
+    stamp = str(row[ESB_TIME]).strip()
+    try:
+        when = datetime.strptime(stamp, ESB_TIME_FORMAT)
+    except ValueError:
+        raise ValueError(f"{ESB_TIME} isn't a time like 31-12-2025 23:30: {stamp[:40]}") from None
+    if when.minute % 30:
+        raise ValueError(f"{ESB_TIME} isn't on the hour or half past: {stamp}")
+    read_type = str(row[ESB_TYPE]).strip()
+    if read_type != ESB_IMPORT:
+        raise ValueError(f"{ESB_TYPE} is {read_type[:40]!r}, and only {ESB_IMPORT!r} can be imported")
+    slot = meter.slot_of(when)
+    if row["occurrence"] and not _doubled(when.date(), slot, row["occurrence"]):
+        raise ValueError(f"{stamp} is in the file more than once")
+    return when.date().isoformat(), slot, row["occurrence"], _kw(row[ESB_VALUE], ESB_VALUE)
 
 
 def _problem(error: ValueError) -> str:
@@ -377,6 +527,38 @@ def _merge_counters(source: Source, target: sqlite3.Connection, write: bool) -> 
     return {"in_file": in_file, "new": new, "extended": extended, "unknown": unknown}
 
 
+def _merge_meter_readings(source: Source, target: sqlite3.Connection, write: bool) -> dict[str, object]:
+    check = _esb_reading if isinstance(source, EsbCsv) else _meter_reading
+    in_file = new = differ = 0
+    first = last = None
+    with _checked(source, "meter_readings", check) as rows:
+        for batch in _batches(rows):
+            days = {reading[0] for reading in batch}
+            earliest, latest = min(days), max(days)
+            in_file += len(batch)
+            first = earliest if first is None else min(first, earliest)
+            last = latest if last is None else max(last, latest)
+            here = {
+                (day, slot, occurrence): kw
+                for day, slot, occurrence, kw in target.execute(
+                    "SELECT day, slot, occurrence, kw FROM meter_readings WHERE day BETWEEN ? AND ?", (earliest, latest)
+                )
+            }
+            # ESB Networks can correct a reading after publishing it. The one already here stays.
+            differ += sum(1 for *key, kw in batch if tuple(key) in here and abs(here[tuple(key)] - kw) > 1e-9)
+            if write:
+                before = target.total_changes
+                with target:
+                    target.executemany(
+                        "INSERT OR IGNORE INTO meter_readings (day, slot, occurrence, kw) VALUES (?, ?, ?, ?)", batch
+                    )
+                new += target.total_changes - before
+                time.sleep(BATCH_PAUSE_SECONDS)
+            else:
+                new += len({tuple(reading[:3]) for reading in batch} - set(here))
+    return {"in_file": in_file, "new": new, "differ": differ, "first": first, "last": last}
+
+
 def _merge_appliances(source: Source, target: sqlite3.Connection, write: bool) -> dict[str, object]:
     # Taken once, so two rows with one name both come back to an empty app, as they were when exported.
     here = {name.casefold() for (name,) in target.execute("SELECT name FROM appliances")}
@@ -415,6 +597,7 @@ MERGES = {
     "daily_counters": _merge_counters,
     "appliances": _merge_appliances,
     "settings": _merge_settings,
+    "meter_readings": _merge_meter_readings,
 }
 
 
@@ -428,6 +611,13 @@ def _notes(source: Source, results: dict[str, dict[str, object]]) -> list[str]:
         notes.append(f"Appliances with a name already here, left as they are: {', '.join(kept)}.")
     if source.format == "csv" and results["samples"]["new"]:
         notes.append("A CSV export only has each poll's main readings, so the rest aren't restored. A full database export has them.")
+    differ = results.get("meter_readings", {}).get("differ")
+    if differ:
+        notes.append(
+            f"Meter half-hours that read differently in the file from the ones already here, which were kept: {differ}."
+        )
+    if source.format == "esb":
+        notes.append("The MPRN and the meter's serial number on each row aren't kept.")
     unknown = counters.get("unknown", 0) + results.get("settings", {}).get("unknown", 0)
     if unknown:
         notes.append(f"Rows this version of the app doesn't recognise, skipped: {unknown}.")
@@ -445,7 +635,7 @@ def _merge(source: Source, target: sqlite3.Connection, write: bool) -> dict[str,
         tables.append({"id": table, "label": LABELS[table], "already_here": already_here, **result})
     return {
         "format": source.format,
-        "label": export.FORMATS[source.format].label,
+        "label": source.label,
         "applied": write,
         "changes": any(table["new"] or table.get("extended") for table in tables),
         "tables": tables,

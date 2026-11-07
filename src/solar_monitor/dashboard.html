@@ -28,6 +28,12 @@
     --flow-solar: #eb6834;
     --flow-battery: #1baf7a;
     --flow-load: #b5338a;
+    /* Grid meter rate bands: one blue ramp, the cheapest lightest. Checked with the palette validator on this surface. */
+    --band-night: #6da7ec;
+    --band-day: #2a78d6;
+    --band-peak: #104281;
+    /* Grid meter half-hours: the same ramp, low to high. */
+    --heat-0: #cde2fb; --heat-1: #9ec5f4; --heat-2: #6da7ec; --heat-3: #3987e5; --heat-4: #256abf; --heat-5: #184f95; --heat-6: #0d366b;
     --display: "Barlow Condensed", "Arial Narrow", "Segoe UI", sans-serif;
     --body: "Barlow", "Segoe UI", system-ui, sans-serif;
     --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
@@ -51,6 +57,10 @@
       --flow-solar: #d95926;
       --flow-battery: #199e70;
       --flow-load: #da64ac;
+      --band-night: #184f95;
+      --band-day: #3987e5;
+      --band-peak: #9ec5f4;
+      --heat-0: #0d366b; --heat-1: #184f95; --heat-2: #256abf; --heat-3: #3987e5; --heat-4: #6da7ec; --heat-5: #9ec5f4; --heat-6: #cde2fb;
     }
   }
 
@@ -314,6 +324,46 @@
   .tou-change .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .tou-change button:disabled { color: var(--muted); cursor: default; background: var(--surface); }
   #tou-result:empty { display: none; }
+
+  /* Grid meter */
+  .gm-empty { grid-auto-rows: auto; }
+  #view-grid-meter .chart-head { align-items: flex-start; }
+  #view-grid-meter .legend span { white-space: nowrap; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 16px 32px; margin-top: 4px; }
+  .tile { display: flex; flex-direction: column; gap: 2px; padding-top: 10px; border-top: 1px solid var(--rule); min-width: 0; }
+  .tile-label { color: var(--ink-2); font-weight: 500; }
+  .tile-value { font: 600 32px/1.1 var(--body); font-variant-numeric: tabular-nums; }
+  .tile-sub { color: var(--muted); font-size: 13px; line-height: 1.35; }
+  .head-text { display: flex; flex-direction: column; gap: 2px; }
+  .legend .lead { color: var(--muted); }
+  .btn { min-height: 36px; padding: 4px 12px; cursor: pointer; background: var(--surface); border: 1px solid var(--rule-strong); }
+  .btn:hover { background: var(--page); }
+  .btn:disabled { color: var(--muted); cursor: default; background: var(--surface); }
+  #gm-bars svg { cursor: pointer; }
+  #gm-day-chart svg { cursor: crosshair; }
+  .chart-focus { fill: none; stroke: var(--flow-grid); stroke-width: 2; }
+  .b0 { fill: var(--band-night); }
+  .b1 { fill: var(--band-day); }
+  .b2 { fill: var(--band-peak); }
+  .nodata { fill: var(--rule-strong); }
+  .sel { fill: var(--ink); }
+  .lane { fill: var(--flow-grid); }
+  .lane-edge { stroke: var(--ink-2); }
+  .carpet { position: relative; }
+  .carpet canvas { display: block; cursor: pointer; touch-action: pan-y; }
+  .carpet canvas:focus-visible { outline: 2px solid var(--flow-grid); outline-offset: 2px; }
+  .cursor { position: absolute; pointer-events: none; outline: 2px solid var(--ink); }
+  #gm-day-pane { scroll-margin-top: calc(var(--tabs-h) + 8px); }
+  #view-grid-meter thead th { position: sticky; top: 0; }
+  .gm-scroll { max-height: 360px; overflow-y: auto; }
+  .gm-scroll th[scope="row"] { white-space: nowrap; } /* The table scrolls sideways, so a date can stay on one line. */
+  td.quiet { color: var(--muted); }
+  .empty { padding: 12px 14px; border: 1px solid var(--rule-strong); max-width: 68ch; }
+  .empty strong { display: block; font-weight: 600; margin-bottom: 2px; }
+  .notes { display: grid; gap: 12px; margin: 0; max-width: 68ch; }
+  .notes dt { font-weight: 600; }
+  .notes dd { margin: 2px 0 0; color: var(--ink-2); }
+  .notes ul { margin: 4px 0 0; padding-left: 18px; }
 </style>
 </head>
 <body>
@@ -336,6 +386,7 @@
     <div class="tab-row" id="tab-row">
       <a href="#dashboard" aria-current="page">Dashboard</a>
       <a href="#statistics">Statistics</a>
+      <a href="#grid-meter">Grid meter</a>
       <a href="#counters">Counters &amp; checks</a>
       <a href="#appliances">Appliances &amp; tariffs</a>
       <a href="#schedule">Battery schedule</a>
@@ -407,6 +458,98 @@
           <tbody id="daily-table"></tbody>
         </table>
       </div>
+    </div>
+  </section>
+
+  <section class="view stats" id="view-grid-meter" aria-label="Grid meter" hidden>
+    <div class="pane span-all">
+      <h2>Grid meter</h2>
+      <p class="note" id="gm-intro"></p>
+      <div class="range gm-data">
+        <div class="seg" id="gm-range" role="group" aria-label="Grid meter range">
+          <button type="button" data-range="7">7 days</button><button type="button" data-range="30">30 days</button><button type="button" data-range="12m">12 months</button><button type="button" data-range="all">All</button>
+        </div>
+        <span class="meta" id="gm-range-note"></span>
+      </div>
+      <div class="tiles gm-data">
+        <div class="tile"><span class="tile-label">Imported</span><span class="tile-value" id="gm-t-total"></span><span class="tile-sub" id="gm-t-total-sub"></span></div>
+        <div class="tile"><span class="tile-label">Cost at your rates</span><span class="tile-value" id="gm-t-cost"></span><span class="tile-sub" id="gm-t-cost-sub"></span></div>
+        <div class="tile"><span class="tile-label">At the night rate</span><span class="tile-value" id="gm-t-night"></span><span class="tile-sub" id="gm-t-night-sub"></span></div>
+        <div class="tile"><span class="tile-label">Highest half-hour</span><span class="tile-value" id="gm-t-max"></span><span class="tile-sub" id="gm-t-max-sub"></span></div>
+      </div>
+    </div>
+
+    <div class="pane gm-data">
+      <div class="chart-head">
+        <div class="head-text"><h2>Import by rate band</h2><p class="meta" id="gm-bars-sub"></p></div>
+        <button type="button" class="btn" id="gm-zoom-out" hidden>Zoom out</button>
+      </div>
+      <div class="legend bars">
+        <span><i style="background: var(--band-night)"></i>Night</span>
+        <span><i style="background: var(--band-day)"></i>Day</span>
+        <span><i style="background: var(--band-peak)"></i>Peak</span>
+      </div>
+      <div class="chart" id="gm-bars"></div>
+      <p class="meta" id="gm-bars-hint"></p>
+      <details>
+        <summary>Show as a table</summary>
+        <p class="meta">Energy in kWh. Cost in the same unit as your rates.</p>
+        <div class="scroll" tabindex="0" role="region" aria-label="Import by rate band, as a table">
+          <table>
+            <thead><tr><th id="gm-bars-col">Day</th><th class="num">Night</th><th class="num">Day</th><th class="num">Peak</th><th class="num">Total</th><th class="num">Cost</th><th>Notes</th></tr></thead>
+            <tbody id="gm-bars-table"></tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+
+    <div class="pane gm-data" id="gm-day-pane">
+      <h2>One day</h2>
+      <div class="range">
+        <button type="button" class="btn" id="gm-prev-day">Previous day</button>
+        <label>Day <input type="date" id="gm-day-input"></label>
+        <button type="button" class="btn" id="gm-next-day">Next day</button>
+      </div>
+      <p class="note" id="gm-day-summary" aria-live="polite"></p>
+      <div class="legend bars">
+        <span><i style="background: var(--band-night)"></i>Night</span>
+        <span><i style="background: var(--band-day)"></i>Day</span>
+        <span><i style="background: var(--band-peak)"></i>Peak</span>
+        <span><i style="background: var(--rule-strong)"></i>No reading</span>
+      </div>
+      <div class="chart" id="gm-day-chart"></div>
+      <p class="meta">Average kW over each half-hour. A half-hour's kWh is half its average kW.</p>
+      <details>
+        <summary>Show as a table</summary>
+        <div class="scroll" tabindex="0" role="region" aria-label="One day, as a table">
+          <table>
+            <thead><tr><th>Half-hour</th><th>Band</th><th class="num">Average kW</th><th class="num">kWh</th></tr></thead>
+            <tbody id="gm-day-table"></tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+
+    <div class="pane span-all gm-data">
+      <div class="chart-head">
+        <div class="head-text"><h2>Every half-hour</h2><p class="meta">Each column is a day and each row a half-hour, coloured by the average kW. Click a day to open it above.</p></div>
+      </div>
+      <div class="legend bars" id="gm-heat-legend"></div>
+      <div class="carpet" id="gm-carpet">
+        <canvas id="gm-carpet-canvas" tabindex="0" role="img"></canvas>
+        <div class="cursor" id="gm-carpet-cursor" hidden></div>
+      </div>
+    </div>
+
+    <div class="pane gm-data">
+      <h2>Cross-checks with the inverter</h2>
+      <div id="gm-compare"></div>
+      <div class="chart" id="gm-timeline"></div>
+    </div>
+
+    <div class="pane gm-data">
+      <h2>About this data</h2>
+      <dl class="notes" id="gm-notes"></dl>
     </div>
   </section>
 
@@ -538,6 +681,14 @@
         </table>
       </div>
       <p class="meta" id="tariff-sources"></p>
+      <h3>When each rate applies</h3>
+      <p class="note">For the Grid meter tab. On the hour or half-hour. Blank means the usual hours: night 23:00 to 08:00 and peak 17:00 to 19:00, with the day rate the rest of the time.</p>
+      <form class="edit settings" id="band-settings">
+        <label>Night starts <input name="band_night_start_minutes" type="time" step="1800"></label>
+        <label>Night ends <input name="band_night_end_minutes" type="time" step="1800"></label>
+        <label>Peak starts <input name="band_peak_start_minutes" type="time" step="1800"></label>
+        <label>Peak ends <input name="band_peak_end_minutes" type="time" step="1800"></label>
+      </form>
     </div>
   </section>
 
@@ -618,9 +769,9 @@
     </div>
     <div class="pane">
       <h2>Import</h2>
-      <p class="note">Bring in a file exported from this app, in any of the formats above. It only adds what's missing, so nothing already here is changed or removed. You'll see what it would add before anything is saved.</p>
+      <p class="note">Bring in a file exported from this app, in any of the formats above, or your smart meter's half-hourly readings in kW downloaded from ESB Networks. It only adds what's missing, so nothing already here is changed or removed. You'll see what it would add before anything is saved.</p>
       <div class="import">
-        <input type="file" id="import-file" accept=".zip,.db,.json" aria-label="File to import">
+        <input type="file" id="import-file" accept=".zip,.db,.json,.csv" aria-label="File to import">
         <p class="alert" id="import-error" role="alert"></p>
         <p class="meta" id="import-status" role="status"></p>
         <div class="scroll import-preview" id="import-preview" hidden>
@@ -2346,7 +2497,7 @@
     { key: "all_typical", label: "Everything, typical", why: "Every appliance at its typical draw" },
     { key: "all_worst", label: "Everything, at peak", why: "Every appliance at its peak" },
   ];
-  const COULD_NOT_SAVE = "Couldn't save that. Names can't be blank, watts and rates can't be negative, the charge target is at most 100% and a power cut is at least 0.1 hours. Showing what's saved.";
+  const COULD_NOT_SAVE = "Couldn't save that. Names can't be blank, watts and rates can't be negative, the charge target is at most 100%, a power cut is at least 0.1 hours and rate times are on the hour or half-hour. Showing what's saved.";
 
   let overview = null;
   let overviewRequest = 0;
@@ -2666,10 +2817,11 @@
 
   const calendarDate = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 
-  function exportContents({ first_ts, last_ts, appliances, settings, size_bytes }) {
-    const count = (n, what) => `${n} ${what}${n === 1 ? "" : "s"}`;
+  function exportContents({ first_ts, last_ts, appliances, settings, meter_readings: meterReadings = 0, size_bytes }) {
+    const count = (n, what) => `${number(n, 0)} ${what}${n === 1 ? "" : "s"}`;
     const span = first_ts === null ? "No readings yet" : `Readings from ${calendarDate(first_ts)} to ${calendarDate(last_ts)}`;
-    return `${span}, ${count(appliances, "appliance")} and ${count(settings, "setting")}. The full database is about ${number(size_bytes / 1e6, 1)} MB.`;
+    const meter = meterReadings ? `, ${count(meterReadings, "meter half-hour")}` : "";
+    return `${span}${meter}, ${count(appliances, "appliance")} and ${count(settings, "setting")}. The full database is about ${number(size_bytes / 1e6, 1)} MB.`;
   }
 
   /*
@@ -2705,8 +2857,11 @@
   function importSummary({ label, applied, changes, tables }) {
     const readings = tables.find(({ id }) => id === "samples");
     const span = readings?.first_ts ? ` Readings from ${calendarDate(readings.first_ts)} to ${calendarDate(readings.last_ts)}.` : "";
+    const halfHours = tables.find(({ id }) => id === "meter_readings");
+    const onDay = (iso) => calendarDate(new Date(`${iso}T00:00`) / 1000);
+    const meterSpan = halfHours?.first ? ` Meter half-hours from ${onDay(halfHours.first)} to ${onDay(halfHours.last)}.` : "";
     const outcome = !changes ? "There's nothing new in it to import." : applied ? "Imported." : "Nothing is saved until you press Import.";
-    return `${label}.${span} ${outcome}`;
+    return `${label}.${span}${meterSpan} ${outcome}`;
   }
 
   function showImport(report, problem = "") {
@@ -2772,6 +2927,7 @@
     if (apply && report) {
       refreshExport();
       refreshDaily();
+      gridMeter.refresh();
     }
   }
 
@@ -2783,12 +2939,1009 @@
   });
 
   /*
+    Grid meter: the electricity meter's half-hours, imported from ESB Networks under App Data.
+    Days are calendar days on the meter's Irish clock, handled as UTC so the browser's own time
+    zone never moves them. A slot is a half-hour from midnight, 0 to 47, and holds the average
+    draw over it in whole watts, null where the file has a gap, or -1 where there was no
+    half-hour: the clocks went forward, or it's outside what the file covers.
+  */
+  const gridMeter = (() => {
+    const NOT_A_HALF_HOUR = -1;
+    const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const toDate = (iso) => new Date(`${iso}T00:00:00Z`);
+    const addDays = (iso, n) => {
+      const when = toDate(iso);
+      when.setUTCDate(when.getUTCDate() + n);
+      return when.toISOString().slice(0, 10);
+    };
+    const dayMonthYear = (iso) => {
+      const when = toDate(iso);
+      return `${when.getUTCDate()} ${MONTHS[when.getUTCMonth()]} ${when.getUTCFullYear()}`;
+    };
+    const longDay = (iso) => `${WEEKDAYS[toDate(iso).getUTCDay()]} ${dayMonthYear(iso)}`;
+    const monthLabel = (key) => `${MONTHS[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)}`;
+    const daysInMonth = (key) => new Date(Date.UTC(Number(key.slice(0, 4)), Number(key.slice(5, 7)), 0)).getUTCDate();
+    function monthsBack(key, n) {
+      let year = Number(key.slice(0, 4));
+      let month = Number(key.slice(5, 7)) - n;
+      while (month < 1) {
+        month += 12;
+        year -= 1;
+      }
+      return `${year}-${String(month).padStart(2, "0")}`;
+    }
+    const hhmm = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+    const slotTime = (slot) => hhmm(slot * 30);
+    const slotSpan = (slot) => `${slotTime(slot)}–${slotTime(slot + 1)}`;
+    // Times are "YYYY-MM-DD HH:MM" on a clock with no zone, so they're handled as UTC as well.
+    const stampMs = (stamp) => Date.parse(`${stamp.replace(" ", "T")}:00Z`);
+    const stampAt = (ms) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+    const plus30 = (stamp) => stampAt(stampMs(stamp) + 30 * 60000);
+    const stampText = (stamp) => `${stamp.slice(11)} on ${longDay(stamp.slice(0, 10))}`;
+    // The end of a run of half-hours, with midnight as 24:00 on the day it ends, like the half-hours' own spans.
+    const endText = (end) => (end.slice(11) === "00:00" ? `24:00 on ${longDay(stampAt(stampMs(end) - 30 * 60000).slice(0, 10))}` : stampText(end));
+
+    const kwhText = (x) => number(x, x >= 100 ? 0 : 1);
+    const money = (x) => (x === null ? "—" : number(x, x >= 100 ? 0 : 2));
+    const kw = (w) => `${number(w / 1000, 2)} kW`;
+    const count = (n, what) => `${number(n, 0)} ${what}${n === 1 ? "" : "s"}`;
+    const sentences = (parts) => parts.map((part) => `${part}.`).join(" ");
+    const signed = (x, digits) => {
+      const rounded = Number(x.toFixed(digits));
+      return (rounded > 0 ? "+" : "") + number(rounded, digits);
+    };
+    const hideTip = () => { $("chart-tip").hidden = true; };
+
+    const BANDS = ["Night", "Day", "Peak"];
+    const BAND_COLORS = ["--band-night", "--band-day", "--band-peak"];
+    // Whether a time of day, in minutes, is in a band, which may run past midnight.
+    const inBand = (minutes, start, end) => (start === end ? false : start < end ? start <= minutes && minutes < end : minutes >= start || minutes < end);
+
+    let meter = null; // The last answer from /api/meter.
+    let days = [];
+    let dayIndex = new Map();
+    let bandOf = []; // Each slot's band, from the time it starts: 0 night, 1 day, 2 peak. Peak wins an overlap.
+    let rates = []; // In the order of BANDS.
+    let rangeKey = "30";
+    let zoom = null; // A month, "YYYY-MM", while the bars show its days.
+    let selected = null;
+    let bars = [];
+    let barFocus = -1;
+    let slotFocus = 34;
+    let cellFocus = null;
+    let request = 0;
+
+    const costOf = (kwh) => (rates.every(isNum) ? kwh[0] * rates[0] + kwh[1] * rates[1] + kwh[2] * rates[2] : null);
+    const fileEnd = () => plus30(meter.file.last);
+
+    /* A half-hour that came twice counts both readings in the day's energy. */
+    function dayFrom([date, flags, slots, twice]) {
+      const both = new Map(twice.map(([slot, earlier, later]) => [slot, earlier + later]));
+      const kwh = [0, 0, 0];
+      let missing = 0;
+      let present = twice.length;
+      slots.forEach((w, slot) => {
+        if (w === null) {
+          missing += 1;
+        } else if (w !== NOT_A_HALF_HOUR) {
+          present += 1;
+          kwh[bandOf[slot]] += (both.get(slot) ?? w) / 2000;
+        }
+      });
+      return { date, flags, slots, twice, kwh, total: kwh[0] + kwh[1] + kwh[2], missing, present };
+    }
+
+    function dayNotes(day) {
+      const notes = [];
+      if (day.flags.includes("b")) notes.push(`The readings start at ${meter.file.first.slice(11)}`);
+      if (day.flags.includes("p")) notes.push(`The file only runs to ${fileEnd().slice(11)} so far`);
+      if (day.flags.includes("s")) notes.push("The clocks went forward: a 23-hour day");
+      if (day.flags.includes("a")) notes.push("The clocks went back: a 25-hour day");
+      if (day.missing) notes.push(`${count(day.missing, "half-hour")} missing`);
+      return notes;
+    }
+
+    /* Whether a half-hour comes within an hour after one with no reading. */
+    function afterGap(position, slot) {
+      for (let back = 1; back <= 2; back++) {
+        const at = position * 48 + slot - back;
+        if (at >= 0 && days[Math.floor(at / 48)].slots[at % 48] === null) return true;
+      }
+      return false;
+    }
+
+    function yAxis(nodes, m, width, plotHeight, max) {
+      const ticks = niceTicks(0, max);
+      const top = ticks.at(-1);
+      const digits = ticks[1] - ticks[0] < 1 ? 1 : 0;
+      const y = (value) => m.t + plotHeight - (value / top) * plotHeight;
+      for (const value of ticks) {
+        const at = Math.round(y(value)) + 0.5;
+        if (value > 0) nodes.push(svgEl("line", { x1: m.l, x2: width - m.r, y1: at, y2: at, class: "chart-grid" }));
+        nodes.push(svgEl("text", { x: m.l - 8, y: at + 4, class: "chart-tick chart-y" }, number(value, digits)));
+      }
+      return y;
+    }
+
+    function rangeDays(key) {
+      if (key === "7" || key === "30") return days.slice(-Number(key));
+      if (key === "12m") {
+        const start = monthsBack(days.at(-1).date.slice(0, 7), 11);
+        return days.filter((day) => day.date.slice(0, 7) >= start);
+      }
+      return days;
+    }
+
+    function renderIntro() {
+      const first = days[0];
+      const last = days.at(-1);
+      const partly = last.flags.includes("p") ? " The last day is only partly in the file so far." : "";
+      $("gm-intro").textContent = `Half-hourly import from your electricity meter, downloaded from ESB Networks: ${longDay(first.date)} to ${longDay(last.date)}.${partly}`;
+    }
+
+    function renderEmpty() {
+      const link = el("a", "", "App Data");
+      link.href = "#app-data";
+      $("gm-intro").replaceChildren(
+        "No meter readings yet. Download your smart meter's half-hourly readings in kW from the ESB Networks website, then import the file under ",
+        link,
+        ". This tab then shows what you imported from the grid, and when, priced at your rates.",
+      );
+    }
+
+    /* ---- Tiles ---- */
+    function renderTiles() {
+      const span = rangeDays(rangeKey);
+      const kwh = [0, 0, 0];
+      let present = 0;
+      let best = null;
+      for (const day of span) {
+        for (let band = 0; band < 3; band++) kwh[band] += day.kwh[band];
+        present += day.present;
+        day.slots.forEach((w, slot) => {
+          if (w > 0 && (!best || w > best.w)) best = { w, day, slot };
+        });
+      }
+      const total = kwh[0] + kwh[1] + kwh[2];
+      const cost = costOf(kwh);
+      const share = (x) => (total > 0 ? `${number((100 * x) / total, 0)}%` : "—");
+      $("gm-range-note").textContent = `${longDay(span[0].date)} to ${longDay(span.at(-1).date)}`;
+      $("gm-t-total").textContent = `${kwhText(total)} kWh`;
+      $("gm-t-total-sub").textContent = present ? `About ${number(total / (present / 48), 1)} kWh a day` : "No readings in this range";
+      $("gm-t-cost").textContent = money(cost);
+      $("gm-t-cost-sub").textContent = cost === null
+        ? "Enter your night, day and peak rates under Appliances & tariffs to see this."
+        : `${total > 0 ? `${number(cost / total, cost / total < 1 ? 3 : 2)} a kWh on average, in` : "In"} the same unit as your rates. No standing charge.`;
+      $("gm-t-night").textContent = share(kwh[0]);
+      $("gm-t-night-sub").textContent = `Day ${share(kwh[1])}, peak ${share(kwh[2])}`;
+      if (best) {
+        const gap = afterGap(dayIndex.get(best.day.date), best.slot) ? " It comes just after a gap in the readings." : "";
+        $("gm-t-max").textContent = kw(best.w);
+        $("gm-t-max-sub").textContent = `Average over ${slotSpan(best.slot)} on ${longDay(best.day.date)}.${gap}`;
+      } else {
+        $("gm-t-max").textContent = "—";
+        $("gm-t-max-sub").textContent = "Nothing above 0 kW in this range";
+      }
+    }
+
+    /* ---- Bars: kWh by band, each day or each month ---- */
+    const dayBar = (day) => ({ kind: "day", key: day.date, label: longDay(day.date), kwh: day.kwh, total: day.total, notes: dayNotes(day) });
+
+    function monthBars(span) {
+      const months = new Map();
+      for (const day of span) {
+        const key = day.date.slice(0, 7);
+        if (!months.has(key)) months.set(key, { kind: "month", key, label: monthLabel(key), kwh: [0, 0, 0], total: 0, days: 0, missing: 0 });
+        const bar = months.get(key);
+        for (let band = 0; band < 3; band++) bar.kwh[band] += day.kwh[band];
+        bar.total += day.total;
+        bar.days += 1;
+        bar.missing += day.missing;
+      }
+      const last = days.at(-1);
+      for (const bar of months.values()) {
+        const all = daysInMonth(bar.key);
+        bar.notes = [];
+        if (bar.days < all) bar.notes.push(`${bar.days} of its ${all} days are in the file`);
+        else if (bar.key === last.date.slice(0, 7) && last.flags.includes("p")) bar.notes.push("Its last day is only partly in the file");
+        if (bar.missing) bar.notes.push(`${count(bar.missing, "half-hour")} missing`);
+      }
+      return [...months.values()];
+    }
+
+    function computeBars() {
+      if (zoom) return days.filter((day) => day.date.startsWith(zoom)).map(dayBar);
+      if (rangeKey === "7" || rangeKey === "30") return rangeDays(rangeKey).map(dayBar);
+      return monthBars(rangeDays(rangeKey));
+    }
+
+    const barsSvg = svgEl("svg", { tabindex: "0", role: "img" });
+    const barsFocus = svgEl("rect", { class: "chart-focus", visibility: "hidden" });
+    $("gm-bars").append(barsSvg);
+    let barsShape = null;
+
+    function renderBars(focusKey) {
+      bars = computeBars();
+      if (focusKey !== undefined) barFocus = Math.max(0, bars.findIndex((bar) => bar.key === focusKey));
+      barFocus = Math.min(barFocus, bars.length - 1);
+      const monthly = bars[0].kind === "month";
+      $("gm-bars-sub").textContent = zoom ? `${monthLabel(zoom)}: kWh imported each day` : `kWh imported each ${monthly ? "month" : "day"}`;
+      $("gm-bars-hint").textContent = monthly ? "Click a month to see its days." : "Click a day to see its half-hours.";
+      $("gm-zoom-out").hidden = !zoom;
+      $("gm-bars-col").textContent = monthly ? "Month" : "Day";
+      $("gm-bars-table").replaceChildren(...bars.toReversed().map((bar) => {
+        const row = el("tr");
+        const name = el("th", "", bar.label);
+        name.scope = "row";
+        row.append(name, ...[...bar.kwh, bar.total].map((x) => el("td", "num", number(x, 1))));
+        const cost = costOf(bar.kwh);
+        row.append(el("td", "num", cost === null ? "—" : number(cost, 2)), el("td", "quiet", sentences(bar.notes))); // Every row to the cent, so the column lines up.
+        return row;
+      }));
+      drawBars();
+    }
+
+    function drawBars() {
+      const width = Math.floor($("gm-bars").clientWidth);
+      if (!width || !bars.length) return;
+      const height = width < 560 ? 250 : 300;
+      const m = { l: 44, r: 16, t: 16, b: 44 };
+      const plotWidth = width - m.l - m.r;
+      const plotHeight = height - m.t - m.b;
+      const monthly = bars[0].kind === "month";
+      barsSvg.setAttribute("width", width);
+      barsSvg.setAttribute("height", height);
+      barsSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      barsSvg.setAttribute("aria-label", `kWh imported each ${monthly ? "month" : "day"} by rate band, ${bars[0].label} to ${bars.at(-1).label}. Use the arrow keys to read each bar, and Enter to open it. The same figures are in the table below.`);
+
+      const nodes = [];
+      const y = yAxis(nodes, m, width, plotHeight, Math.max(1, ...bars.map((bar) => bar.total)));
+      const step = plotWidth / bars.length;
+      const barWidth = Math.max(2, Math.min(24, step * 0.7, step - 2));
+      barsShape = { m, step, plotHeight };
+
+      bars.forEach((bar, i) => {
+        const left = m.l + step * (i + 0.5) - barWidth / 2;
+        const parts = [];
+        let sum = 0;
+        for (let band = 0; band < 3; band++) {
+          const base = y(sum);
+          sum += bar.kwh[band];
+          const tip = y(sum);
+          if (base - tip > 2) parts.push([band, base, tip]); // Too thin to see: the tooltip and table have it.
+        }
+        parts.forEach(([band, base, tip], j) => {
+          const top = j === parts.length - 1;
+          const end = top ? tip : tip + 2; // A 2px gap under the part above.
+          if (base - end < 0.5) return;
+          nodes.push(top
+            ? svgEl("path", { d: columnPath(left, barWidth, base, end), class: `b${band}` })
+            : svgEl("rect", { x: left, y: end, width: barWidth, height: base - end, class: `b${band}` }));
+        });
+        if (selected && (bar.kind === "day" ? bar.key === selected : selected.startsWith(bar.key))) {
+          nodes.push(svgEl("rect", { x: left, y: m.t + plotHeight + 3, width: barWidth, height: 3, class: "sel" }));
+        }
+      });
+      const zero = Math.round(y(0)) + 0.5;
+      nodes.push(svgEl("line", { x1: m.l, x2: width - m.r, y1: zero, y2: zero, class: "chart-zero" }));
+
+      // Day numbers with the month under them where it changes, or months with the year.
+      let lastX = -Infinity;
+      let lastGroup = null;
+      bars.forEach((bar, i) => {
+        const x = m.l + step * (i + 0.5);
+        if (x - lastX < (monthly ? 36 : 26)) return;
+        const when = toDate(monthly ? `${bar.key}-01` : bar.key);
+        const group = monthly ? String(when.getUTCFullYear()) : MONTHS[when.getUTCMonth()];
+        nodes.push(svgEl("text", { x, y: m.t + plotHeight + 21, class: "chart-tick chart-x" }, monthly ? MONTHS[when.getUTCMonth()] : String(when.getUTCDate())));
+        if (group !== lastGroup) nodes.push(svgEl("text", { x, y: m.t + plotHeight + 37, class: "chart-tick chart-x" }, group));
+        lastX = x;
+        lastGroup = group;
+      });
+
+      barsSvg.replaceChildren(...nodes, barsFocus);
+      if (document.activeElement === barsSvg && barsSvg.matches(":focus-visible") && barFocus >= 0) focusBar();
+      else barsFocus.setAttribute("visibility", "hidden");
+    }
+
+    function barTip(i, x, y) {
+      const bar = bars[i];
+      const rows = [
+        { label: "Total", value: `${number(bar.total, 1)} kWh` },
+        ...[2, 1, 0].map((band) => ({ color: BAND_COLORS[band], label: BANDS[band], value: `${number(bar.kwh[band], 1)} kWh` })),
+      ];
+      const cost = costOf(bar.kwh);
+      if (cost !== null) rows.push({ label: "Cost", value: money(cost) });
+      showTip(x, y, bar.label, rows, sentences(bar.notes));
+    }
+
+    function barAt(event) {
+      if (!barsShape) return -1;
+      const i = Math.floor((event.clientX - barsSvg.getBoundingClientRect().left - barsShape.m.l) / barsShape.step);
+      return i >= 0 && i < bars.length ? i : -1;
+    }
+
+    function focusBar() {
+      const { m, step, plotHeight } = barsShape;
+      const box = barsSvg.getBoundingClientRect();
+      const place = { x: m.l + step * barFocus + 1, y: m.t - 4, width: Math.max(2, step - 2), height: plotHeight + 12, visibility: "visible" };
+      for (const [name, value] of Object.entries(place)) barsFocus.setAttribute(name, value);
+      barTip(barFocus, box.left + m.l + step * (barFocus + 1), box.top + m.t + 40);
+    }
+
+    function openBar(i, fromPointer) {
+      const bar = bars[i];
+      if (!bar) return;
+      if (bar.kind === "month") {
+        zoom = bar.key;
+        barFocus = 0;
+        renderBars();
+      } else {
+        selectDay(bar.key, fromPointer);
+      }
+    }
+
+    function zoomOut() {
+      const key = zoom;
+      zoom = null;
+      renderBars(key);
+    }
+
+    barsSvg.addEventListener("pointermove", (event) => {
+      const i = barAt(event);
+      if (i < 0) hideTip();
+      else barTip(i, event.clientX, event.clientY);
+    });
+    barsSvg.addEventListener("pointerleave", hideTip);
+    barsSvg.addEventListener("click", (event) => {
+      const i = barAt(event);
+      if (i < 0) return;
+      hideTip();
+      openBar(i, true);
+    });
+    barsSvg.addEventListener("focus", () => {
+      if (!barsSvg.matches(":focus-visible") || !barsShape) return;
+      if (barFocus < 0) barFocus = bars.length - 1;
+      focusBar();
+    });
+    barsSvg.addEventListener("blur", () => {
+      barsFocus.setAttribute("visibility", "hidden");
+      hideTip();
+    });
+    barsSvg.addEventListener("keydown", (event) => {
+      if (!barsShape) return;
+      let i = barFocus < 0 ? bars.length - 1 : barFocus;
+      if (event.key === "ArrowLeft") i -= 1;
+      else if (event.key === "ArrowRight") i += 1;
+      else if (event.key === "Home") i = 0;
+      else if (event.key === "End") i = bars.length - 1;
+      else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openBar(i, false);
+        return;
+      } else if (event.key === "Escape") {
+        if (zoom) {
+          event.preventDefault();
+          zoomOut();
+        } else {
+          hideTip();
+        }
+        return;
+      } else {
+        return;
+      }
+      event.preventDefault();
+      barFocus = clamp(i, 0, bars.length - 1);
+      focusBar();
+    });
+    $("gm-zoom-out").addEventListener("click", zoomOut);
+
+    /* ---- One day ---- */
+    const daySvg = svgEl("svg", { tabindex: "0", role: "img" });
+    const dayFocus = svgEl("rect", { class: "chart-focus", visibility: "hidden" });
+    $("gm-day-chart").append(daySvg);
+    let dayShape = null;
+
+    function selectDay(iso, fromPointer) {
+      if (!dayIndex.has(iso)) return;
+      selected = iso;
+      renderDay();
+      drawBars();
+      drawCarpet();
+      if (fromPointer) {
+        const box = $("gm-day-pane").getBoundingClientRect();
+        if (box.top > innerHeight - 80 || box.bottom < 120) $("gm-day-pane").scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+    }
+
+    const noHalfHour = (day, slot) => (day.flags.includes("s") && slot >= 2 && slot <= 3 ? "The clocks went forward, so this half-hour didn't happen" : "Not in the file");
+
+    function slotRows(day, slot) {
+      const w = day.slots[slot];
+      const band = bandOf[slot];
+      if (w === NOT_A_HALF_HOUR) return { rows: [], notes: [noHalfHour(day, slot)] };
+      if (w === null) return { rows: [{ color: "--rule-strong", label: "No reading", value: "" }], notes: [] };
+      const twice = day.twice.find(([at]) => at === slot);
+      if (twice) {
+        return {
+          rows: [
+            { color: BAND_COLORS[band], label: `${BANDS[band]} rate, first time`, value: kw(twice[1]) },
+            { label: "Second time", value: kw(twice[2]) },
+            { label: "Energy, both", value: `${number((twice[1] + twice[2]) / 2000, 2)} kWh` },
+          ],
+          notes: ["The clocks went back, so this half-hour happened twice. The chart shows the average of the two"],
+        };
+      }
+      return {
+        rows: [
+          { color: BAND_COLORS[band], label: `${BANDS[band]} rate`, value: kw(w) },
+          { label: "Energy", value: `${number(w / 2000, 2)} kWh` },
+        ],
+        notes: [],
+      };
+    }
+
+    function slotTip(day, slot, x, y, extra = []) {
+      const { rows, notes } = slotRows(day, slot);
+      showTip(x, y, `${longDay(day.date)}, ${slotSpan(slot)}`, rows, sentences([...notes, ...extra]));
+    }
+
+    function renderDay() {
+      const position = dayIndex.get(selected);
+      const day = days[position];
+      const cost = costOf(day.kwh);
+      $("gm-day-input").value = selected;
+      $("gm-prev-day").disabled = position === 0;
+      $("gm-next-day").disabled = position === days.length - 1;
+      const priced = cost === null ? "" : `, ${money(cost)} at your rates`;
+      const split = `Night ${number(day.kwh[0], 1)}, day ${number(day.kwh[1], 1)}, peak ${number(day.kwh[2], 1)} kWh`;
+      $("gm-day-summary").textContent = `${longDay(day.date)}: ${kwhText(day.total)} kWh imported${priced}. ${sentences([split, ...dayNotes(day)])}`;
+      const rows = [];
+      day.slots.forEach((w, slot) => {
+        const twice = day.twice.find(([at]) => at === slot);
+        const readings = twice ? [[", first time", twice[1]], [", second time", twice[2]]] : [["", w]];
+        for (const [which, reading] of readings) {
+          const row = el("tr");
+          const name = el("th", "", slotSpan(slot) + which);
+          name.scope = "row";
+          row.append(name, el("td", "", BANDS[bandOf[slot]]));
+          if (reading === null || reading === NOT_A_HALF_HOUR) {
+            const cell = el("td", "quiet", reading === null ? "No reading" : noHalfHour(day, slot));
+            cell.colSpan = 2;
+            row.append(cell);
+          } else {
+            row.append(el("td", "num", number(reading / 1000, 2)), el("td", "num", number(reading / 2000, 2)));
+          }
+          rows.push(row);
+        }
+      });
+      $("gm-day-table").replaceChildren(...rows);
+      drawDay();
+    }
+
+    function drawDay() {
+      const width = Math.floor($("gm-day-chart").clientWidth);
+      if (!width || !selected) return;
+      const day = days[dayIndex.get(selected)];
+      const height = 240;
+      const m = { l: 40, r: 20, t: 12, b: 30 };
+      const plotWidth = width - m.l - m.r;
+      const plotHeight = height - m.t - m.b;
+      daySvg.setAttribute("width", width);
+      daySvg.setAttribute("height", height);
+      daySvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      daySvg.setAttribute("aria-label", `Average kW in each half-hour of ${longDay(day.date)}. Use the arrow keys to read each half-hour. The same figures are in the table below.`);
+      const nodes = [];
+      const y = yAxis(nodes, m, width, plotHeight, Math.max(500, ...day.slots.filter((w) => w > 0)) / 1000);
+      const step = plotWidth / 48;
+      const barWidth = Math.max(2, Math.min(24, step - 2));
+      dayShape = { m, step, plotHeight };
+      day.slots.forEach((w, slot) => {
+        const left = m.l + step * (slot + 0.5) - barWidth / 2;
+        if (w === null) {
+          nodes.push(svgEl("rect", { x: left, y: m.t + plotHeight - 4, width: barWidth, height: 4, class: "nodata" }));
+        } else if (w > 0) {
+          const tip = y(w / 1000);
+          if (m.t + plotHeight - tip >= 1) nodes.push(svgEl("path", { d: columnPath(left, barWidth, m.t + plotHeight, tip), class: `b${bandOf[slot]}` }));
+        }
+      });
+      const zero = Math.round(y(0)) + 0.5;
+      nodes.push(svgEl("line", { x1: m.l, x2: width - m.r, y1: zero, y2: zero, class: "chart-zero" }));
+      const every = plotWidth < 330 ? 6 : 4;
+      for (let hour = 0; hour <= 24; hour += every) {
+        nodes.push(svgEl("text", { x: m.l + step * 2 * hour, y: m.t + plotHeight + 20, class: "chart-tick chart-x" }, hhmm(hour * 60)));
+      }
+      daySvg.replaceChildren(...nodes, dayFocus);
+      if (document.activeElement === daySvg && daySvg.matches(":focus-visible")) focusSlot();
+      else dayFocus.setAttribute("visibility", "hidden");
+    }
+
+    function slotAt(event) {
+      if (!dayShape) return -1;
+      const slot = Math.floor((event.clientX - daySvg.getBoundingClientRect().left - dayShape.m.l) / dayShape.step);
+      return slot >= 0 && slot < 48 ? slot : -1;
+    }
+
+    function focusSlot() {
+      const { m, step, plotHeight } = dayShape;
+      const box = daySvg.getBoundingClientRect();
+      const place = { x: m.l + step * slotFocus, y: m.t - 4, width: step, height: plotHeight + 8, visibility: "visible" };
+      for (const [name, value] of Object.entries(place)) dayFocus.setAttribute(name, value);
+      slotTip(days[dayIndex.get(selected)], slotFocus, box.left + m.l + step * (slotFocus + 1), box.top + m.t + 40);
+    }
+
+    daySvg.addEventListener("pointermove", (event) => {
+      const slot = slotAt(event);
+      if (slot < 0) hideTip();
+      else slotTip(days[dayIndex.get(selected)], slot, event.clientX, event.clientY);
+    });
+    daySvg.addEventListener("pointerleave", hideTip);
+    daySvg.addEventListener("focus", () => { if (daySvg.matches(":focus-visible") && dayShape) focusSlot(); });
+    daySvg.addEventListener("blur", () => {
+      dayFocus.setAttribute("visibility", "hidden");
+      hideTip();
+    });
+    daySvg.addEventListener("keydown", (event) => {
+      if (!dayShape) return;
+      let slot = slotFocus;
+      if (event.key === "ArrowLeft") slot -= 1;
+      else if (event.key === "ArrowRight") slot += 1;
+      else if (event.key === "Home") slot = 0;
+      else if (event.key === "End") slot = 47;
+      else if (event.key === "Escape") return hideTip();
+      else return;
+      event.preventDefault();
+      slotFocus = clamp(slot, 0, 47);
+      focusSlot();
+    });
+    $("gm-prev-day").addEventListener("click", () => selectDay(days[dayIndex.get(selected) - 1].date));
+    $("gm-next-day").addEventListener("click", () => selectDay(days[dayIndex.get(selected) + 1].date));
+    $("gm-day-input").addEventListener("change", (event) => {
+      if (dayIndex.has(event.target.value)) selectDay(event.target.value);
+      else event.target.value = selected;
+    });
+
+    /* ---- Every half-hour, as a grid of days by half-hours ---- */
+    const HEAT_STEPS = [250, 500, 1000, 2000, 3000, 4000]; // W, where each colour starts.
+    const HEAT_LABELS = ["under 0.25", "0.25 to 0.5", "0.5 to 1", "1 to 2", "2 to 3", "3 to 4", "4 or more"];
+    const heatOf = (w) => HEAT_STEPS.filter((start) => w >= start).length;
+    const key = (label, color) => {
+      const item = el("span", "", label);
+      const swatch = el("i");
+      swatch.style.background = `var(${color})`;
+      item.prepend(swatch);
+      return item;
+    };
+    $("gm-heat-legend").append(
+      el("span", "lead", "Average kW"),
+      ...HEAT_LABELS.map((label, i) => key(label, `--heat-${i}`)),
+      key("No reading", "--rule-strong"),
+    );
+
+    const canvas = $("gm-carpet-canvas");
+    const cursor = $("gm-carpet-cursor");
+    let carpet = null;
+    const token = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+    function drawCarpet() {
+      const width = Math.floor($("gm-carpet").clientWidth);
+      if (!width || !days.length) return;
+      const span = rangeDays(rangeKey);
+      const narrow = width < 600;
+      const m = { l: 46, r: narrow ? 10 : 56, t: 8, b: 44 };
+      const rowHeight = narrow ? 4 : 5;
+      const plotHeight = rowHeight * 48;
+      const plotWidth = width - m.l - m.r;
+      const height = m.t + plotHeight + m.b;
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = Math.round(width * ratio);
+      canvas.height = Math.round(height * ratio);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      canvas.setAttribute("aria-label", `Average kW in every half-hour, ${longDay(span[0].date)} to ${longDay(span.at(-1).date)}. Use the arrow keys to move, and Enter to open a day.`);
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      const heat = HEAT_LABELS.map((_, i) => token(`--heat-${i}`));
+      const none = token("--rule-strong");
+      const columnWidth = plotWidth / span.length;
+      const gap = columnWidth >= 6 ? 1 : 0;
+      carpet = { m, columnWidth, rowHeight, span };
+
+      span.forEach((day, i) => {
+        const left = Math.round(m.l + i * columnWidth);
+        const right = Math.max(left + 1, Math.round(m.l + (i + 1) * columnWidth) - gap);
+        day.slots.forEach((w, slot) => {
+          if (w === NOT_A_HALF_HOUR) return;
+          ctx.fillStyle = w === null ? none : heat[heatOf(w)];
+          ctx.fillRect(left, m.t + slot * rowHeight, right - left, rowHeight);
+        });
+      });
+
+      // A hairline where the rate changes, its time on the left, and the band's name on the right.
+      const changes = [0];
+      for (let slot = 1; slot < 48; slot++) if (bandOf[slot] !== bandOf[slot - 1]) changes.push(slot);
+      ctx.fillStyle = token("--surface");
+      for (const slot of changes.slice(1)) ctx.fillRect(m.l, m.t + slot * rowHeight, plotWidth, 1);
+      ctx.font = `13px ${token("--body")}`;
+      ctx.fillStyle = token("--muted");
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      let lastY = -Infinity;
+      for (const slot of changes) {
+        const y = m.t + slot * rowHeight;
+        if (y - lastY < 14) continue;
+        ctx.fillText(slotTime(slot), m.l - 8, y);
+        lastY = y;
+      }
+      if (!narrow) {
+        ctx.textAlign = "left";
+        ctx.fillStyle = token("--ink-2");
+        changes.forEach((start, i) => {
+          const end = changes[i + 1] ?? 48;
+          if (end - start >= 3) ctx.fillText(BANDS[bandOf[start]], width - m.r + 8, m.t + ((start + end) / 2) * rowHeight);
+        });
+      }
+
+      const at = span.findIndex((day) => day.date === selected);
+      if (at >= 0) {
+        ctx.fillStyle = token("--ink");
+        ctx.fillRect(Math.round(m.l + at * columnWidth), m.t + plotHeight + 3, Math.max(3, Math.round(columnWidth) - gap), 3);
+      }
+
+      ctx.fillStyle = token("--muted");
+      ctx.textAlign = "center";
+      ctx.textBaseline = "alphabetic";
+      const long = span.length > 62;
+      let lastX = -Infinity;
+      let lastGroup = null;
+      span.forEach((day, i) => {
+        const when = toDate(day.date);
+        if (long && when.getUTCDate() !== 1) return;
+        const x = long ? m.l + i * columnWidth : m.l + (i + 0.5) * columnWidth;
+        if (x - lastX < (long ? 36 : 26) || x + 16 > width || x - 16 < 0) return;
+        const group = long ? String(when.getUTCFullYear()) : MONTHS[when.getUTCMonth()];
+        ctx.fillText(long ? MONTHS[when.getUTCMonth()] : String(when.getUTCDate()), x, m.t + plotHeight + 22);
+        if (group !== lastGroup) ctx.fillText(group, x, m.t + plotHeight + 38);
+        lastX = x;
+        lastGroup = group;
+      });
+
+      if (cellFocus && cellFocus.i >= span.length) cellFocus = null;
+      if (document.activeElement === canvas && cellFocus) placeCursor(cellFocus);
+      else cursor.hidden = true;
+    }
+
+    function cellAt(event) {
+      if (!carpet) return null;
+      const box = canvas.getBoundingClientRect();
+      const i = Math.floor((event.clientX - box.left - carpet.m.l) / carpet.columnWidth);
+      const slot = Math.floor((event.clientY - box.top - carpet.m.t) / carpet.rowHeight);
+      return i >= 0 && i < carpet.span.length && slot >= 0 && slot < 48 ? { i, slot } : null;
+    }
+
+    function placeCursor({ i, slot }) {
+      Object.assign(cursor.style, {
+        left: `${Math.round(carpet.m.l + i * carpet.columnWidth)}px`,
+        top: `${carpet.m.t + slot * carpet.rowHeight}px`,
+        width: `${Math.max(2, Math.round(carpet.columnWidth))}px`,
+        height: `${carpet.rowHeight}px`,
+      });
+      cursor.hidden = false;
+    }
+
+    const cellTip = (cell, x, y) => slotTip(carpet.span[cell.i], cell.slot, x, y, ["Click to open this day"]);
+
+    function showCellFocus() {
+      placeCursor(cellFocus);
+      const box = canvas.getBoundingClientRect();
+      cellTip(cellFocus, box.left + carpet.m.l + (cellFocus.i + 1) * carpet.columnWidth, box.top + carpet.m.t + (cellFocus.slot + 1) * carpet.rowHeight);
+    }
+
+    canvas.addEventListener("pointermove", (event) => {
+      const cell = cellAt(event);
+      if (!cell) {
+        hideTip();
+        cursor.hidden = true;
+        return;
+      }
+      placeCursor(cell);
+      cellTip(cell, event.clientX, event.clientY);
+    });
+    canvas.addEventListener("pointerleave", () => {
+      hideTip();
+      if (document.activeElement !== canvas) cursor.hidden = true;
+    });
+    canvas.addEventListener("click", (event) => {
+      const cell = cellAt(event);
+      if (!cell) return;
+      hideTip();
+      selectDay(carpet.span[cell.i].date, true);
+    });
+    canvas.addEventListener("focus", () => {
+      if (!canvas.matches(":focus-visible") || !carpet) return;
+      cellFocus ??= { i: carpet.span.length - 1, slot: slotFocus };
+      showCellFocus();
+    });
+    canvas.addEventListener("blur", () => {
+      cursor.hidden = true;
+      hideTip();
+    });
+    canvas.addEventListener("keydown", (event) => {
+      if (!carpet) return;
+      const cell = cellFocus ?? { i: carpet.span.length - 1, slot: slotFocus };
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectDay(carpet.span[cell.i].date);
+        return;
+      }
+      if (event.key === "Escape") return hideTip();
+      const move = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
+      if (!move) return;
+      event.preventDefault();
+      cellFocus = { i: clamp(cell.i + move[0], 0, carpet.span.length - 1), slot: clamp(cell.slot + move[1], 0, 47) };
+      showCellFocus();
+    });
+
+    /* ---- Cross-checks with this app's own record of the grid ---- */
+    function renderCompare() {
+      const { app } = meter;
+      const whole = new Map(days.filter((day) => !day.missing && !/[bp]/.test(day.flags)).map((day) => [day.date, day.total]));
+      const pairs = app.days.filter(([day]) => whole.has(day)).map(([day, appKwh]) => ({ day, meter: whole.get(day), app: appKwh }));
+      const box = $("gm-compare");
+      if (!pairs.length) {
+        const empty = el("div", "empty");
+        let why = "No day is covered in full by both the meter file and this app's log yet. A day counts once the file has all its half-hours and this app logged readings just before the midnight at each end.";
+        if (!app.first) why = "This app hasn't logged any readings yet.";
+        else if (fileEnd() <= app.first) why = `The meter file ends at ${endText(fileEnd())}, and this app's log starts at ${stampText(app.first)}. ESB Networks publishes a day or two behind, so a download in a few days will overlap the log, and these checks can start.`;
+        empty.append(el("strong", "", "Nothing to compare yet"), why);
+        box.replaceChildren(empty);
+        return;
+      }
+      const meterSum = pairs.reduce((sum, pair) => sum + pair.meter, 0);
+      const appSum = pairs.reduce((sum, pair) => sum + pair.app, 0);
+      const percent = meterSum > 0 ? (100 * (appSum - meterSum)) / meterSum : null;
+      const verdict = percent === null ? "" : Math.abs(percent) < 0.05 ? " They agree." : ` This app's figure is ${number(Math.abs(percent), 1)}% ${percent > 0 ? "higher" : "lower"}.`;
+      const over = pairs.length === 1 ? "On the one day both cover in full" : `Over the ${pairs.length} days both cover in full`;
+      const table = el("table");
+      table.innerHTML = '<thead><tr><th>Day</th><th class="num">Meter kWh</th><th class="num">This app kWh</th><th class="num">Difference kWh</th><th class="num">Difference</th></tr></thead>';
+      const body = el("tbody");
+      body.append(...pairs.toReversed().map((pair) => {
+        const row = el("tr");
+        const name = el("th", "", longDay(pair.day));
+        name.scope = "row";
+        const diff = pair.app - pair.meter;
+        row.append(
+          name,
+          el("td", "num", number(pair.meter, 1)),
+          el("td", "num", number(pair.app, 1)),
+          el("td", "num", signed(diff, 1)),
+          el("td", "num", pair.meter > 0 ? `${signed((100 * diff) / pair.meter, 1)}%` : "—"),
+        );
+        return row;
+      }));
+      table.append(body);
+      const scroll = el("div", "scroll gm-scroll");
+      scroll.tabIndex = 0;
+      scroll.setAttribute("role", "region");
+      scroll.setAttribute("aria-label", "Each day's import, from the meter and from this app");
+      scroll.append(table);
+      box.replaceChildren(
+        el("p", "note", `${over}, the meter recorded ${kwhText(meterSum)} kWh from the grid and this app ${kwhText(appSum)} kWh.${verdict}`),
+        scroll,
+        el("p", "meta", "This app's figure is the change in the inverter's lifetime grid import counter, which counts in steps of 0.1 kWh, so a day can be out by that much on its own. Only days the file has every half-hour of, and this app logged just before both midnights, are compared."),
+      );
+    }
+
+    /* Where the two records sit over the last two weeks, while they don't share a whole day. */
+    function drawTimeline() {
+      const host = $("gm-timeline");
+      const { app } = meter ?? {};
+      const width = Math.floor(host.clientWidth);
+      if (!width || !app?.first || $("gm-compare").querySelector("table")) {
+        host.replaceChildren();
+        return;
+      }
+      const end = fileEnd();
+      const endDay = [app.last.slice(0, 10), end.slice(0, 10)].sort()[1];
+      const startDay = addDays(endDay, -13);
+      const t0 = stampMs(`${startDay} 00:00`);
+      const t1 = stampMs(`${addDays(endDay, 1)} 00:00`);
+      const height = 128;
+      const m = { l: 0, r: 12, t: 4, b: 30 };
+      const plotWidth = width - m.l - m.r;
+      const x = (stamp) => m.l + ((clamp(stampMs(stamp), t0, t1) - t0) / (t1 - t0)) * plotWidth;
+      const nodes = [];
+      for (let i = 0; i <= 14; i++) {
+        const at = Math.round(m.l + (i / 14) * plotWidth) + 0.5;
+        nodes.push(svgEl("line", { x1: at, x2: at, y1: m.t, y2: height - m.b, class: "chart-grid" }));
+      }
+      const lanes = [
+        { label: "Meter file from ESB Networks", from: meter.file.first, to: end, y: 22 },
+        { label: "This app's log", from: app.first, to: app.last, y: 68 },
+      ];
+      for (const lane of lanes) {
+        const a = x(lane.from);
+        const b = x(lane.to);
+        nodes.push(svgEl("text", { x: m.l + 4, y: lane.y, class: "chart-words" }, lane.label));
+        nodes.push(svgEl("rect", { x: a, y: lane.y + 8, width: Math.max(2, b - a), height: 12, rx: 2, class: "lane" }));
+      }
+      if (end <= app.first) {
+        const fileEdge = x(end);
+        for (const edge of [fileEdge, x(app.first)]) {
+          nodes.push(svgEl("line", { x1: Math.round(edge) + 0.5, x2: Math.round(edge) + 0.5, y1: 30, y2: 88, class: "lane-edge" }));
+        }
+        if (fileEdge - 6 > 200) nodes.push(svgEl("text", { x: fileEdge - 6, y: 68, "text-anchor": "end", class: "chart-words" }, "No overlap yet"));
+      }
+      let lastX = -Infinity;
+      for (let i = 0; i < 14; i++) {
+        const day = addDays(startDay, i);
+        const at = m.l + ((i + 0.5) / 14) * plotWidth;
+        if (at - lastX < 52 || at < 26 || at > width - 26) continue;
+        nodes.push(svgEl("text", { x: at, y: height - m.b + 20, class: "chart-tick chart-x" }, `${toDate(day).getUTCDate()} ${MONTHS[toDate(day).getUTCMonth()]}`));
+        lastX = at;
+      }
+      const svg = svgEl("svg", {
+        width, height, viewBox: `0 0 ${width} ${height}`, role: "img",
+        "aria-label": `The last two weeks: the meter file runs from ${stampText(meter.file.first)} to ${stampText(end)}, and this app's log from ${stampText(app.first)} to ${stampText(app.last)}.`,
+      });
+      svg.append(...nodes);
+      host.replaceChildren(svg);
+    }
+
+    /* ---- About this data ---- */
+    function gapText([start, halfHours]) {
+      const end = stampAt(stampMs(start) + halfHours * 30 * 60000);
+      const [startDay, startTime] = start.split(" ");
+      const [endDay, endTime] = end.split(" ");
+      const hours = halfHours / 2;
+      const when = startDay === endDay
+        ? `${dayMonthYear(startDay)}, ${startTime}–${endTime}`
+        : `${dayMonthYear(startDay)} ${startTime} to ${dayMonthYear(endDay)} ${endTime}`;
+      return `${when} (${number(hours, hours % 1 ? 1 : 0)} hour${hours === 1 ? "" : "s"})`;
+    }
+
+    function renderNotes() {
+      const { file, bands, bandsSet } = meter;
+      const list = (items) => {
+        const node = el("ul");
+        node.append(...items.map((item) => el("li", "", item)));
+        return node;
+      };
+      const joined = (items) => (items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}` : items[0]);
+      const bandText = (name, start, end) => (start === end ? `no ${name} rate` : `${name} ${hhmm(start)} to ${hhmm(end)}`);
+      const hours = `${bandText("night", bands.night_start, bands.night_end)} and ${bandText("peak", bands.peak_start, bands.peak_end)}, with the day rate the rest of the time`;
+      const rateText = (rate) => rate.toLocaleString(undefined, { maximumFractionDigits: 4 });
+      const items = [
+        ["What a reading is", `The average kW drawn from the grid over a half-hour, so a half-hour's kWh is half its reading. There are ${count(file.readings, "reading")}, from ${stampText(file.first)} to ${endText(fileEnd())}.`],
+        ["Time labels", "ESB Networks calls each reading's time its end time, but the jump in use when the night rate starts shows up at the 23:00 label, so each label is taken as the start of its half-hour."],
+        ["Rate bands", bandsSet
+          ? `${hours[0].toUpperCase()}${hours.slice(1)}, using the times you entered under Appliances & tariffs and the usual ones for any left blank. A half-hour takes the rate in force when it starts.`
+          : `The usual hours, ${hours}, until you set your own under Appliances & tariffs. A half-hour takes the rate in force when it starts.`],
+        ["Costs", rates.every(isNum)
+          ? `Today's rates from Appliances & tariffs (night ${rateText(rates[0])}, day ${rateText(rates[1])}, peak ${rateText(rates[2])}) for every half-hour, even ones from before those rates applied. No standing charge.`
+          : "Enter your night, day and peak rates under Appliances & tariffs to see costs."],
+        ["Gaps", file.gapCount
+          ? list([...file.gaps.map(gapText), ...(file.gapCount > file.gaps.length ? [`and ${number(file.gapCount - file.gaps.length, 0)} more`] : [])])
+          : "None. Every half-hour in the file's span has a reading."],
+      ];
+      if (file.zeros) items.push(["Zero readings", `${count(file.zeros, "half-hour")} read exactly 0 kW. They're kept as readings, not treated as gaps.`]);
+      const spring = days.filter((day) => day.flags.includes("s")).map((day) => dayMonthYear(day.date));
+      const autumn = days.filter((day) => day.flags.includes("a")).map((day) => dayMonthYear(day.date));
+      const clocks = [];
+      if (spring.length) clocks.push(`${joined(spring)} ${spring.length > 1 ? "have" : "has"} no 01:00 or 01:30, as the clocks went forward.`);
+      if (autumn.length) clocks.push(`On ${joined(autumn)} those half-hours happened twice, as the clocks went back. The day chart shows their average, and the day's totals count both.`);
+      if (clocks.length) items.push(["Clock changes", clocks.join(" ")]);
+      items.push(
+        ["Time zones", "ESB Networks' times are Irish clock time. The cross-checks compare whole days on this app's clock, so they need the computer running this app set to Irish time."],
+        ["Export", "The file has import only, so this tab shows only what came from the grid."],
+      );
+      let best = null;
+      let next = null;
+      days.forEach((day, position) => day.slots.forEach((w, slot) => {
+        if (!(w > 0)) return;
+        const here = { w, position, slot };
+        if (!best || w > best.w) [best, next] = [here, best];
+        else if (!next || w > next.w) next = here;
+      }));
+      if (best && afterGap(best.position, best.slot)) {
+        const nextText = next ? ` The next highest is ${kw(next.w)} over ${slotSpan(next.slot)} on ${dayMonthYear(days[next.position].date)}.` : "";
+        items.push(["Highest half-hour", `The highest reading, ${kw(best.w)} over ${slotSpan(best.slot)} on ${dayMonthYear(days[best.position].date)}, comes just after a gap in the readings.${nextText}`]);
+      }
+      items.push(
+        ["Identifiers", "Every row of the file carries the MPRN and the meter's serial number. The import skips both, so they aren't stored or shown anywhere in this app."],
+        ["Updating", "Import a newer download under App Data whenever you like. Only the half-hours that aren't here yet are added."],
+      );
+      $("gm-notes").replaceChildren(...items.flatMap(([term, body]) => {
+        const detail = el("dd");
+        if (typeof body === "string") detail.textContent = body;
+        else detail.append(body);
+        return [el("dt", "", term), detail];
+      }));
+    }
+
+    /* ---- Putting it together ---- */
+    function showRange() {
+      for (const button of $("gm-range").querySelectorAll("button")) button.setAttribute("aria-pressed", String(button.dataset.range === rangeKey));
+      renderTiles();
+      renderBars();
+      drawCarpet();
+    }
+
+    function setRange(next) {
+      rangeKey = next;
+      zoom = null;
+      cellFocus = null;
+      showRange();
+    }
+    $("gm-range").addEventListener("click", (event) => {
+      const button = event.target.closest("button");
+      if (button) setRange(button.dataset.range);
+    });
+
+    function drawAll() {
+      if (!days.length) return;
+      hideTip();
+      drawBars();
+      drawDay();
+      drawCarpet();
+      drawTimeline();
+    }
+
+    function load(answer) {
+      meter = answer;
+      const { night_start: nightStart, night_end: nightEnd, peak_start: peakStart, peak_end: peakEnd } = answer.bands;
+      bandOf = Array.from({ length: 48 }, (_, slot) => (inBand(slot * 30, peakStart, peakEnd) ? 2 : inBand(slot * 30, nightStart, nightEnd) ? 0 : 1));
+      rates = [answer.rates.night, answer.rates.day, answer.rates.peak];
+      days = answer.days.map(dayFrom);
+      dayIndex = new Map(days.map((day, i) => [day.date, i]));
+      const empty = !days.length;
+      $("view-grid-meter").classList.toggle("gm-empty", empty);
+      for (const node of document.querySelectorAll("#view-grid-meter .gm-data")) node.hidden = empty;
+      if (empty) {
+        renderEmpty();
+        return;
+      }
+      if (!dayIndex.has(selected)) selected = (days.findLast((day) => !day.flags.includes("p")) ?? days.at(-1)).date;
+      if (zoom && !days.some((day) => day.date.startsWith(zoom))) zoom = null;
+      $("gm-day-input").min = days[0].date;
+      $("gm-day-input").max = days.at(-1).date;
+      renderIntro();
+      renderNotes();
+      renderCompare();
+      showRange();
+      renderDay();
+      drawTimeline();
+    }
+
+    async function refresh() {
+      const mine = ++request;
+      let answer;
+      try {
+        answer = await getJson("/api/meter");
+      } catch {
+        if (mine === request) $("gm-intro").textContent = "Couldn't get the meter readings from the app. If it was updated recently, restart it and try again.";
+        return;
+      }
+      if (mine === request) load(answer);
+    }
+
+    redrawOnWidthChange($("view-grid-meter"), drawAll);
+    document.fonts.ready.then(drawAll); // The carpet's labels are drawn in the web font.
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCarpet);
+
+    return { refresh };
+  })();
+
+  /*
     The tab is in the address, so a reload or the back button stays where it was. The views'
     ids aren't the tabs' hashes, so choosing a tab doesn't make the browser jump to it.
   */
   const TABS = {
     "#dashboard": "view-dashboard",
     "#statistics": "view-statistics",
+    "#grid-meter": "view-grid-meter",
     "#counters": "view-counters",
     "#appliances": "view-appliances",
     "#schedule": "view-schedule",
@@ -2818,6 +3971,7 @@
     $("chart-tip").hidden = true;
     if (tab === "#appliances") refreshOverview();
     if (tab === "#app-data") refreshExport();
+    if (tab === "#grid-meter") gridMeter.refresh();
     if (tab === "#tou") refreshTouWrites();
     if (returning) {
       refreshHistory();

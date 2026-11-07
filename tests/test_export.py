@@ -56,6 +56,8 @@ def filled(collector):
         {"name": "Crème fridge", "typical_w": 120, "peak_w": None, "surge_w": 600, "use_in_outage": True, "notes": 'a "cold", one'},
     )
     db.save_settings(collector.conn, {"tariff_day": 0.25})
+    with collector.conn:
+        collector.conn.execute("INSERT INTO meter_readings (day, slot, occurrence, kw) VALUES ('2026-10-25', 2, 1, 0.75)")
     return collector
 
 
@@ -71,12 +73,14 @@ def write(collector, name):
 def test_csv_zip_holds_each_table(filled, temp_folder):
     with zipfile.ZipFile(write(filled, "csv")) as archive:
         assert sorted(archive.namelist()) == [
-            "README.txt", "appliances.csv", "daily_counters.csv", "inverter_writes.csv", "samples.csv", "settings.csv",
+            "README.txt", "appliances.csv", "daily_counters.csv", "inverter_writes.csv", "meter_readings.csv",
+            "samples.csv", "settings.csv",
         ]
         samples = read_csv(archive, "samples.csv")
         counters = read_csv(archive, "daily_counters.csv")
         appliances = read_csv(archive, "appliances.csv")
         settings = read_csv(archive, "settings.csv")
+        meter_readings = read_csv(archive, "meter_readings.csv")
 
     assert len(samples) == 1
     assert samples[0]["ts"] == "1800000000"
@@ -90,6 +94,7 @@ def test_csv_zip_holds_each_table(filled, temp_folder):
     assert appliances[0]["notes"] == 'a "cold", one'
     assert appliances[0]["peak_w"] == ""
     assert settings == [{"key": "tariff_day", "value": "0.25"}]
+    assert meter_readings == [{"day": "2026-10-25", "slot": "2", "occurrence": "1", "kw": "0.75"}]
 
 
 def test_csv_zip_of_an_empty_database_has_just_the_headers(collector, temp_folder):
@@ -151,6 +156,7 @@ def test_summary_describes_what_an_export_would_hold(filled):
     assert contents["last_ts"] == 1_800_000_060
     assert contents["appliances"] == 1
     assert contents["settings"] == 1
+    assert contents["meter_readings"] == 1
     assert contents["size_bytes"] > 0
 
 
@@ -159,6 +165,7 @@ def test_summary_of_an_empty_database(collector):
     assert contents["first_ts"] is None
     assert contents["last_ts"] is None
     assert contents["appliances"] == 0
+    assert contents["meter_readings"] == 0
 
 
 def test_api_lists_every_format(call):
