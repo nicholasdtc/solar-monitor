@@ -551,7 +551,18 @@
 
     <div class="pane gm-data">
       <h2>Cross-checks with the inverter</h2>
-      <div id="gm-compare"></div>
+      <div class="empty" id="gm-compare-empty" hidden></div>
+      <div id="gm-compare" hidden>
+        <p class="note" id="gm-compare-summary"></p>
+        <!-- In the page from the start, so its header row is copied under the tab row like the other tables'. -->
+        <div class="scroll gm-scroll" tabindex="0" role="region" aria-label="Each day's import, from the meter and from this app">
+          <table>
+            <thead><tr><th>Day</th><th class="num">Meter kWh</th><th class="num">This app kWh</th><th class="num">Difference kWh</th><th class="num">Difference</th></tr></thead>
+            <tbody id="gm-compare-table"></tbody>
+          </table>
+        </div>
+        <p class="meta">This app's figure is the change in the inverter's lifetime grid import counter, which counts in steps of 0.1 kWh, so a day can be out by that much on its own. Only days the file has every half-hour of, and this app logged just before both midnights, are compared.</p>
+      </div>
       <div class="chart" id="gm-timeline"></div>
     </div>
 
@@ -3681,14 +3692,14 @@
       const { app } = meter;
       const whole = new Map(days.filter((day) => !day.missing && !/[bp]/.test(day.flags)).map((day) => [day.date, day.total]));
       const pairs = app.days.filter(([day]) => whole.has(day)).map(([day, appKwh]) => ({ day, meter: whole.get(day), app: appKwh }));
-      const box = $("gm-compare");
+      $("gm-compare").hidden = !pairs.length;
+      $("gm-compare-empty").hidden = pairs.length > 0;
       if (!pairs.length) {
-        const empty = el("div", "empty");
         let why = "No day is covered in full by both the meter file and this app's log yet. A day counts once the file has all its half-hours and this app logged readings just before the midnight at each end.";
         if (!app.first) why = "This app hasn't logged any readings yet.";
         else if (fileEnd() <= app.first) why = `The meter file ends at ${endText(fileEnd())}, and this app's log starts at ${stampText(app.first)}. ESB Networks publishes a day or two behind, so a download in a few days will overlap the log, and these checks can start.`;
-        empty.append(el("strong", "", "Nothing to compare yet"), why);
-        box.replaceChildren(empty);
+        $("gm-compare-empty").replaceChildren(el("strong", "", "Nothing to compare yet"), why);
+        $("gm-compare-table").replaceChildren();
         return;
       }
       const meterSum = pairs.reduce((sum, pair) => sum + pair.meter, 0);
@@ -3696,10 +3707,8 @@
       const percent = meterSum > 0 ? (100 * (appSum - meterSum)) / meterSum : null;
       const verdict = percent === null ? "" : Math.abs(percent) < 0.05 ? " They agree." : ` This app's figure is ${number(Math.abs(percent), 1)}% ${percent > 0 ? "higher" : "lower"}.`;
       const over = pairs.length === 1 ? "On the one day both cover in full" : `Over the ${pairs.length} days both cover in full`;
-      const table = el("table");
-      table.innerHTML = '<thead><tr><th>Day</th><th class="num">Meter kWh</th><th class="num">This app kWh</th><th class="num">Difference kWh</th><th class="num">Difference</th></tr></thead>';
-      const body = el("tbody");
-      body.append(...pairs.toReversed().map((pair) => {
+      $("gm-compare-summary").textContent = `${over}, the meter recorded ${kwhText(meterSum)} kWh from the grid and this app ${kwhText(appSum)} kWh.${verdict}`;
+      $("gm-compare-table").replaceChildren(...pairs.toReversed().map((pair) => {
         const row = el("tr");
         const name = el("th", "", longDay(pair.day));
         name.scope = "row";
@@ -3713,17 +3722,6 @@
         );
         return row;
       }));
-      table.append(body);
-      const scroll = el("div", "scroll gm-scroll");
-      scroll.tabIndex = 0;
-      scroll.setAttribute("role", "region");
-      scroll.setAttribute("aria-label", "Each day's import, from the meter and from this app");
-      scroll.append(table);
-      box.replaceChildren(
-        el("p", "note", `${over}, the meter recorded ${kwhText(meterSum)} kWh from the grid and this app ${kwhText(appSum)} kWh.${verdict}`),
-        scroll,
-        el("p", "meta", "This app's figure is the change in the inverter's lifetime grid import counter, which counts in steps of 0.1 kWh, so a day can be out by that much on its own. Only days the file has every half-hour of, and this app logged just before both midnights, are compared."),
-      );
     }
 
     /* Where the two records sit over the last two weeks, while they don't share a whole day. */
@@ -3731,7 +3729,7 @@
       const host = $("gm-timeline");
       const { app } = meter ?? {};
       const width = Math.floor(host.clientWidth);
-      if (!width || !app?.first || $("gm-compare").querySelector("table")) {
+      if (!width || !app?.first || !$("gm-compare").hidden) {
         host.replaceChildren();
         return;
       }
