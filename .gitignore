@@ -13,6 +13,10 @@ sems-app-screenshots/
 sems-exports/
 solar-monitor-export-*
 
+# Smart meter downloads from ESB Networks (every row has the MPRN and meter serial number)
+esb-*.csv
+HDF_*.csv
+
 # Databases
 *.db
 *.db-wal
