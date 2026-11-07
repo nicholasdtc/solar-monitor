@@ -253,11 +253,20 @@
   th, td { padding: 8px 12px; text-align: left; vertical-align: top; border-top: 1px solid var(--rule); }
   th:first-child, td:first-child { padding-left: 0; }
   th:last-child, td:last-child { padding-right: 0; }
-  thead th { border-top: 0; color: var(--muted); font-size: 13px; font-weight: 500; white-space: nowrap; background: var(--surface); }
+  /* Header rows stay in view under the tab row (50px with its borders) while their table passes beneath.
+     The rule under them is a shadow because a collapsed border stays behind with the row below. */
+  thead th {
+    position: sticky; top: calc(var(--tabs-h) + 2px); z-index: 1; box-shadow: 0 1px 0 var(--rule);
+    border-top: 0; color: var(--muted); font-size: 13px; font-weight: 500; white-space: nowrap; background: var(--surface);
+  }
+  /* Sticky only follows the nearest box that scrolls, so in a box that scrolls sideways it can't follow the page.
+     Those tables get a copy of the header row instead (see pinHeaderRows), and this keeps the real one at the top of its box. */
+  .scroll thead th, .head-pin th { top: 0; }
+  .head-pin { position: fixed; z-index: 4; overflow: hidden; padding-bottom: 1px; pointer-events: none; }
+  .head-pin table { table-layout: fixed; }
   tbody th { font-weight: 500; }
   .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td.values { color: var(--ink-2); font-variant-numeric: tabular-nums; }
-  .pin { position: sticky; left: 0; background: var(--surface); }
   .tally { display: flex; flex-wrap: wrap; gap: 4px 20px; }
 
   /* Checks and All fields reflow into stacked rows on a phone instead of scrolling sideways. */
@@ -273,7 +282,6 @@
   /* All fields */
   .field-tables { display: grid; gap: 0 var(--gutter); align-items: start; }
   @media (min-width: 1400px) { .field-tables { grid-template-columns: 1fr 1fr; } }
-  .fields thead th { position: sticky; top: var(--tabs-h); z-index: 1; box-shadow: 0 1px 0 var(--rule); }
   #filter { width: min(360px, 100%); min-height: 40px; padding: 6px 10px; background: var(--surface); border: 1px solid var(--rule-strong); }
 
   /* Editable pages */
@@ -403,7 +411,7 @@
       <h3>Daily energy as a table</h3>
       <div class="scroll" tabindex="0" role="region" aria-label="Daily energy table">
         <table>
-          <thead><tr><th class="pin">Day</th><th class="num">Solar</th><th class="num">House</th><th class="num">Battery charged</th><th class="num">Battery discharged</th><th class="num">Grid import</th><th class="num">Grid export</th><th class="num">Solar to house</th><th class="num">Solar to battery</th><th class="num">Solar to grid</th><th class="num">House from battery</th><th class="num">House from grid</th><th class="num">Self-sufficiency</th></tr></thead>
+          <thead><tr><th>Day</th><th class="num">Solar</th><th class="num">House</th><th class="num">Battery charged</th><th class="num">Battery discharged</th><th class="num">Grid import</th><th class="num">Grid export</th><th class="num">Solar to house</th><th class="num">Solar to battery</th><th class="num">Solar to grid</th><th class="num">House from battery</th><th class="num">House from grid</th><th class="num">Self-sufficiency</th></tr></thead>
           <tbody id="daily-table"></tbody>
         </table>
       </div>
@@ -446,7 +454,7 @@
       <p class="alert" id="appliances-error" role="alert"></p>
       <div class="scroll edit" tabindex="0" role="region" aria-label="Appliances table">
         <table>
-          <thead><tr><th>Power cut</th><th class="pin">Name</th><th class="num">Typical W</th><th class="num">Peak W</th><th class="num">Surge W</th><th class="num">Amps</th><th class="num">Of limit</th><th>Can add</th><th>Notes</th><th aria-label="Delete"></th></tr></thead>
+          <thead><tr><th>Power cut</th><th>Name</th><th class="num">Typical W</th><th class="num">Peak W</th><th class="num">Surge W</th><th class="num">Amps</th><th class="num">Of limit</th><th>Can add</th><th>Notes</th><th aria-label="Delete"></th></tr></thead>
           <tbody id="appliance-rows"></tbody>
         </table>
       </div>
@@ -468,7 +476,7 @@
       <p class="note">The current each combination draws, what that leaves of your limit, and how long the battery could carry it with no sun or grid.</p>
       <div class="scroll" tabindex="0" role="region" aria-label="Load combinations table">
         <table>
-          <thead><tr><th class="pin">Load</th><th class="num">Watts</th><th class="num">Amps</th><th class="num">Of limit</th><th class="num">Room left</th><th class="num">Runs for, from now</th><th class="num">Runs for, from full</th></tr></thead>
+          <thead><tr><th>Load</th><th class="num">Watts</th><th class="num">Amps</th><th class="num">Of limit</th><th class="num">Room left</th><th class="num">Runs for, from now</th><th class="num">Runs for, from full</th></tr></thead>
           <tbody id="cases"></tbody>
         </table>
       </div>
@@ -2217,7 +2225,7 @@
     const recorded = daily.days.filter((day) => Object.keys(day).length > 1).toReversed();
     $("daily-table").replaceChildren(...recorded.map((day) => {
       const row = el("tr");
-      row.append(el("td", "pin", new Date(`${day.day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })));
+      row.append(el("td", "", new Date(`${day.day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })));
       for (const key of keys) row.append(el("td", "num", kwh(day[key])));
       const share = selfSufficiency([day]);
       row.append(el("td", "num", share === null ? "—" : percent(share)));
@@ -2394,7 +2402,7 @@
     };
     const row = el("tr");
     row.append(
-      wrap(fields.use_in_outage), wrap(fields.name, "pin"), wrap(fields.typical_w, "num"), wrap(fields.peak_w, "num"), wrap(fields.surge_w, "num"),
+      wrap(fields.use_in_outage), wrap(fields.name), wrap(fields.typical_w, "num"), wrap(fields.peak_w, "num"), wrap(fields.surge_w, "num"),
       cells.amps, cells.share, cells.canAdd, wrap(fields.notes), wrap(remove),
     );
     row.addEventListener("change", () => sendOverview("PUT", `/api/appliances/${id}`, {
@@ -2463,10 +2471,8 @@
       const room = el("td", "num");
       room.append(overLimit(amps(load.headroom_amps), load.headroom_amps < 0));
       const runsFor = (hours) => timeLeft(load.watts > 0 ? hours : null); // Nothing to run yet.
-      const name = loadCell(label, why);
-      name.classList.add("pin");
       row.append(
-        name, el("td", "num", watts(load.watts)), el("td", "num", amps(load.amps)), share, room,
+        loadCell(label, why), el("td", "num", watts(load.watts)), el("td", "num", amps(load.amps)), share, room,
         el("td", "num", runsFor(load.hours_from_now)), el("td", "num", runsFor(load.hours_from_full)),
       );
       return row;
@@ -2805,6 +2811,63 @@
     if (scrollY > top) scrollTo(0, top);
   });
   setInterval(() => { if (!$("view-appliances").hidden) refreshOverview(); }, APPLIANCES_REFRESH_MS);
+
+  /*
+    A table that scrolls sideways sits in a box that scrolls, and a sticky header only follows the
+    nearest box that scrolls, so its header row can't stay under the tab row by itself. Each gets a
+    copy instead, shown under the tab row while the table passes beneath, with the real columns'
+    widths and moved sideways along with the table. Screen readers skip the copy.
+  */
+  function pinHeaderRows() {
+    const tabs = document.querySelector(".tabs");
+    const pins = [...document.querySelectorAll(".scroll")].map((box) => {
+      const table = box.querySelector("table");
+      const pin = { box, table, ghost: el("div", "head-pin"), copy: el("table"), fresh: false };
+      pin.ghost.setAttribute("aria-hidden", "true");
+      pin.ghost.hidden = true;
+      pin.ghost.append(pin.copy);
+      box.after(pin.ghost);
+      // Columns widen and narrow with what's in the rows, and a header's words can change.
+      const stale = () => { pin.fresh = false; place(); };
+      const sizes = new ResizeObserver(stale);
+      sizes.observe(table);
+      for (const cell of table.tHead.rows[0].cells) sizes.observe(cell);
+      new MutationObserver(stale).observe(table.tHead, { subtree: true, childList: true, characterData: true });
+      box.addEventListener("scroll", place, { passive: true });
+      return pin;
+    });
+
+    function copyHeader(pin) {
+      const head = pin.table.tHead.cloneNode(true);
+      for (const node of head.querySelectorAll("[id]")) node.removeAttribute("id");
+      const real = pin.table.tHead.rows[0].cells;
+      [...head.rows[0].cells].forEach((cell, i) => { cell.style.width = `${real[i].getBoundingClientRect().width}px`; });
+      pin.copy.style.width = `${pin.table.getBoundingClientRect().width}px`;
+      pin.copy.replaceChildren(head);
+      pin.fresh = true;
+    }
+
+    let frame = 0;
+    function place() {
+      frame ||= requestAnimationFrame(() => {
+        frame = 0;
+        const top = tabs.getBoundingClientRect().bottom;
+        for (const pin of pins) {
+          // A box on a hidden tab measures all zeros, so its copy hides too.
+          const area = pin.box.getBoundingClientRect();
+          const show = area.top < top && area.bottom > top + pin.table.tHead.offsetHeight;
+          if (show && (!pin.fresh || pin.ghost.hidden)) copyHeader(pin);
+          pin.ghost.hidden = !show;
+          if (!show) continue;
+          Object.assign(pin.ghost.style, { top: `${top}px`, left: `${area.left}px`, width: `${pin.box.clientWidth}px` });
+          pin.copy.style.transform = `translateX(${-pin.box.scrollLeft}px)`;
+        }
+      });
+    }
+    addEventListener("scroll", place, { passive: true });
+    addEventListener("resize", place);
+  }
+  pinHeaderRows();
 
   $("filter").addEventListener("input", () => { if (latest?.readings) renderFields(); });
   TWO_FIELD_COLUMNS.addEventListener("change", () => { if (latest?.readings) renderFields(); });
