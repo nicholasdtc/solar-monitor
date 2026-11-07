@@ -3044,7 +3044,7 @@
     }
 
     function yAxis(nodes, m, width, plotHeight, max) {
-      const ticks = niceTicks(0, max);
+      const ticks = niceTicks(0, max, clamp(Math.floor(plotHeight / 28), 2, 6)); // About one every 28 px, like the other charts.
       const top = ticks.at(-1);
       const digits = ticks[1] - ticks[0] < 1 ? 1 : 0;
       const y = (value) => m.t + plotHeight - (value / top) * plotHeight;
