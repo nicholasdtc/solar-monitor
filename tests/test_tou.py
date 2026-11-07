@@ -10,6 +10,7 @@ from goodwe.sensor import EcoModeV2
 from solar_monitor import collector as collector_module
 from solar_monitor import config, control, db
 from solar_monitor.api import create_app
+from solar_monitor.auth import COOKIE, LoginRequired
 from solar_monitor.collector import Collector
 
 TOU_40 = "17010500f97ffe70005a0fff"
@@ -185,6 +186,34 @@ def test_a_login_lets_the_home_network_change_it(tou, collector, monkeypatch):
     monkeypatch.setenv("DASHBOARD_PASSWORD", "password")
     assert tou(base_url="http://solar.lan:8000").status_code == 200
     assert len(collector.inverter.writes) == 1
+
+
+def test_on_the_network_only_a_logged_in_request_reaches_the_inverter(collector, monkeypatch):
+    # Built as main.py builds it. The login is the only thing guarding this route when BIND_HOST opens the app up.
+    monkeypatch.setattr(config, "load_dotenv", lambda *_: None)
+    monkeypatch.setenv("BIND_HOST", "0.0.0.0")
+    monkeypatch.setenv("DASHBOARD_USER", "user")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "password")
+    app = create_app(collector)
+    app.add_middleware(LoginRequired, username="user", password="password")
+    change = {"percent": 30, "expected": TOU_40}
+
+    async def send():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://solar.lan:8000") as client:
+            no_session = await client.put("/api/tou/1/power", json=change)
+            made_up = await client.put("/api/tou/1/power", json=change, headers={"Cookie": f"{COOKIE}=made-up"})
+            sent_before_login = list(collector.inverter.writes)
+            logged_in = await client.post("/login", data={"username": "user", "password": "password"})
+            sent = await client.put("/api/tou/1/power", json=change)
+        return no_session, made_up, sent_before_login, logged_in, sent
+
+    no_session, made_up, sent_before_login, logged_in, sent = asyncio.run(send())
+    assert (no_session.status_code, made_up.status_code) == (401, 401)
+    assert sent_before_login == []
+    assert logged_in.status_code == 303
+    assert sent.status_code == 200
+    assert collector.inverter.writes == [("eco_mode_1", bytes.fromhex(TOU_30))]
 
 
 def test_the_page_has_the_tab(collector):
