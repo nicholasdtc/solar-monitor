@@ -1,0 +1,73 @@
+#!/usr/sbin/nft -f
+# Installed to /etc/solar-monitor/firewall.nft and loaded by solar-monitor-firewall.service,
+# by the steps in deploy/pi-setup.md.
+#
+# Only the home network and your own Tailscale devices can reach SSH and the dashboard. Everything else
+# that wasn't asked for is dropped, so the Pi doesn't answer at all.
+#
+# Only this table is replaced, never the whole ruleset, so Tailscale's own rules are left alone.
+# A packet has to get past every table, so Tailscale accepting it doesn't get round this one.
+
+# Private addresses, which only the home network can use. A visitor from the internet can't come from these.
+define home4 = { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }
+# fc00::/7 is the home network's own IPv6 addresses, and fe80::/10 the ones that only reach the next device.
+define home6 = { fc00::/7, fe80::/10 }
+# SSH, the dashboard through Caddy, and the dashboard directly.
+define services = { 22, 80, 8000 }
+
+# Creating the table first means deleting it works on the first load too. Then it's built afresh,
+# all in one go, so there's never a moment with half the rules.
+table inet solar_firewall
+delete table inet solar_firewall
+
+table inet solar_firewall {
+	chain input {
+		type filter hook input priority filter; policy drop;
+
+		iif "lo" accept
+		ct state invalid drop
+		ct state established,related accept
+
+		# The network itself. Without these, IPv6 stops working, and the switch stops passing on
+		# the announcements that make solar.local work.
+		ip protocol igmp accept
+		icmp type { destination-unreachable, time-exceeded, parameter-problem } accept
+		icmpv6 type {
+			destination-unreachable, packet-too-big, time-exceeded, parameter-problem,
+			nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert, mld-listener-query
+		} accept
+
+		# Getting an address from the router.
+		udp sport 67 udp dport 68 accept
+		ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept
+
+		# solar.local, and the inverter's reply when the app looks for it on the network.
+		ip saddr $home4 udp dport 5353 accept
+		ip6 saddr fe80::/10 udp dport 5353 accept
+		ip saddr $home4 udp sport 48899 accept
+
+		# Tailscale. Its connections are encrypted and checked by Tailscale, and it doesn't answer anything else.
+		udp dport 41641 accept
+
+		# SSH and the dashboard, from home and from your Tailscale devices. tailscale0 is matched by name
+		# because it may not exist yet when this loads.
+		ip saddr $home4 tcp dport $services accept
+		ip6 saddr $home6 tcp dport $services accept
+		iifname "tailscale0" tcp dport $services accept
+
+		ip saddr $home4 icmp type echo-request accept
+		ip6 saddr $home6 icmpv6 type echo-request accept
+		iifname "tailscale0" icmp type echo-request accept
+		iifname "tailscale0" icmpv6 type echo-request accept
+
+		# Anyone else trying SSH or the dashboard is turned away at once rather than ignored. That's
+		# because a computer at home may try the Pi's public IPv6 address first, and it then goes
+		# straight on to an address that works, instead of waiting.
+		tcp dport $services reject with tcp reset
+	}
+
+	chain forward {
+		# The Pi passes nothing on between networks.
+		type filter hook forward priority filter; policy drop;
+	}
+}

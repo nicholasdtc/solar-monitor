@@ -20,9 +20,11 @@ from solar_monitor.api import create_app
 from solar_monitor.auth import LoginRequired
 from solar_monitor.collector import FLUSH_SECONDS, POLL_SECONDS, Collector
 from solar_monitor.config import bind_host, db_path, is_local, login, resolve_target
+from solar_monitor.password import is_hashed
 from solar_monitor.stop import on_stop_request
 
 BIND_PORT = 8000
+TRUSTED_PROXIES = ["127.0.0.1", "::1"]
 CLOSE_EVENTS = {2, 5, 6}  # Windows: console window closed, user logging off, computer shutting down.
 CLOSE_WAIT_SECONDS = 10  # Longer than Windows allows (about 5s), so Windows sets the real limit.
 
@@ -73,6 +75,13 @@ def main() -> int:
         )
         return 1
 
+    if credentials and not is_hashed(credentials[1]):
+        print(
+            "DASHBOARD_PASSWORD in .env is the password itself. "
+            "Store a hash instead, made with: python -m solar_monitor.password",
+            file=sys.stderr,
+        )
+
     target = resolve_target(args.host, args.port)
     if target is None:
         return 1
@@ -85,7 +94,18 @@ def main() -> int:
     app = create_app(Collector(*target, conn))
     if credentials:
         app.add_middleware(LoginRequired, username=credentials[0], password=credentials[1])
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=BIND_PORT, log_level="warning", access_log=False))
+    server_config = uvicorn.Config(
+        app,
+        host=host,
+        port=BIND_PORT,
+        log_level="warning",
+        access_log=False,
+        # Caddy on the Pi says who's really asking, so the login log shows the visitor's address.
+        # That's believed only from this machine. The login itself doesn't depend on it.
+        proxy_headers=True,
+        forwarded_allow_ips=TRUSTED_PROXIES,
+    )
+    server = uvicorn.Server(server_config)
     finished = threading.Event()
     stop_when_window_closes(server, finished)
     on_stop_request(os.getpid(), lambda: setattr(server, "should_exit", True))

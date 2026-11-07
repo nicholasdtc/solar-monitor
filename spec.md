@@ -11,13 +11,13 @@ Runs on a Raspberry Pi 5 (8GB, wired Ethernet). Developed on Windows.
 | 2 | Log daily energy counters (import/export, PV yield, battery charge/discharge) | 1-2 |
 | 3 | Web dashboard: live values, history, "why was the battery empty at 17:00?" | 3 |
 | 4 | Runs 24/7 on the Pi as a systemd service | 4 |
-| 5 | Nightly backup to the PC, and remote access via Tailscale only if it's ever wanted | 5 |
+| 5 | Nightly backup to the PC, and remote access through Tailscale | 5 |
 | 6 | Control panel: battery schedule / settings writes (auth required) | 6 |
 
 ## Hard rules
 
 - **Read-only first.** No writes to the inverter until phase 6. A wrong write to a battery schedule is harder to undo than a missing data point.
-- **Never expose the inverter or the app to the public internet.** The inverter's local protocol has no authentication. On the local Wi-Fi no VPN is needed, as long as the app has a login and the router forwards nothing to it or the inverter. Reaching the app from the internet would require a VPN first (Tailscale, see issue #2).
+- **Never expose the inverter or the app to the public internet.** The inverter's local protocol has no authentication. On the local Wi-Fi no VPN is needed, as long as the app has a login and the router forwards nothing to it or the inverter. From away, the app is reached only through Tailscale (issue #3), never through the router.
 - **Poll gently** (10-30s). Check the GoodWe app still updates while polling (the Wi-Fi dongle can get overloaded).
 - **No secrets in git.** Inverter IP, tokens and passwords live in `.env` (gitignored). Commit `.env.example` only.
 
@@ -30,7 +30,7 @@ Runs on a Raspberry Pi 5 (8GB, wired Ethernet). Developed on Windows.
 | API | FastAPI + uvicorn |
 | UI | A single plain HTML page with no build step or dependencies, served by FastAPI |
 | Host | Raspberry Pi OS (64-bit), plain systemd (no Docker) |
-| Remote | None on the local Wi-Fi. Tailscale if access from the internet is ever wanted |
+| Remote | None on the local Wi-Fi. Tailscale from away, plain HTTP inside it, with a firewall on the Pi |
 
 ## Repo layout
 
@@ -103,12 +103,13 @@ solar-monitor/
 - The app listens on localhost unless `BIND_HOST` in `.env` says otherwise. Opening it to the home network is allowed, and requires a login (`DASHBOARD_USER` and `DASHBOARD_PASSWORD`, through the app's own login page). Forwarding it at the router never is: plain HTTP doesn't encrypt the password or the session cookie.
 
 **Phase 5: remote access + backup**
-- Only if access from the internet is ever wanted (issue #2): install Tailscale on the Pi, PC and phone, and access the dashboard at `http://<pi-name>:<port>`. It isn't needed on the local Wi-Fi.
+- Remote access (issue #3): Tailscale on the Pi and phone, with the dashboard at `http://<pi-name>/`. Tailscale encrypts it, so it stays plain HTTP, and it works as it does at home, changing settings included. It isn't needed on the local Wi-Fi.
+- Harden the Pi: SSH keys only, a firewall that only lets the home network and Tailscale reach SSH and the dashboard, a hashed dashboard password, and a login lockout. Steps are in `deploy/pi-setup.md`.
 - Nightly cron on the Pi runs `sqlite3 .backup` (never a plain file copy while the collector writes). The PC pulls the backup via scp/rsync, with a Windows scheduled task. A missed night just catches up.
 - Keep the config and service files in git. Write the restore steps in `deploy/restore.md`: flash a new card, reinstall, copy back config and database, enable the service.
 
 **Phase 6: control (optional)**
-- Battery schedule and settings writes behind login, on the local Wi-Fi with nothing forwarded at the router (see the hard rules and issue #1).
+- Battery schedule and settings writes behind login, on the local Wi-Fi or through Tailscale, with nothing forwarded at the router (see the hard rules and issue #1).
 - Log every write. Show the current value before changing it. Make it easy to revert.
 - Protecting the equipment comes first. Double check every write before it runs: read the current value again, compare the exact value to be written with what was read, and keep the old value for undo. Read it back afterwards and compare. Start with the smallest harmless change, and leave out any setting that can't be written safely.
 - Done so far: the Battery schedule tab shows the settings read-only. TOU has its own on/off switch, separate from the working mode. Don't use the library's `set_operation_mode` for the Eco modes: it overwrites the first time period and disables the others. Each period's on/off byte also marks its type, so write the matching value for that type rather than a plain 0 or 1.

@@ -1,8 +1,10 @@
 # Installed to /etc/caddy/Caddyfile by the steps in deploy/pi-setup.md.
-# Serves the dashboard at http://solar.local, with no port, by passing requests on to the app.
+# Serves the dashboard on port 80, with no port in the address, by passing requests on to the app.
+# It answers to any name: http://solar.local at home, and the Pi's Tailscale name from away.
 
-# The http:// matters. Without it Caddy makes its own certificate for the name, and browsers warn about it.
-http://solar.local {
+# Plain HTTP on purpose. With a name in place of :80, Caddy would make its own certificate, and browsers warn
+# about it. From away the connection is already encrypted by Tailscale.
+:80 {
 	reverse_proxy 127.0.0.1:8000 {
 		# Caddy already keeps the visitor's Host. This says so, because the app checks it to tell
 		# requests from the Pi itself apart from the network's.

@@ -10,6 +10,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from solar_monitor.password import is_hashed, parse
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PORT = 502  # Modbus TCP. goodwe uses UDP only when the port is 8899.
 
@@ -46,7 +48,8 @@ def is_local(host: str) -> bool:
 def login() -> tuple[str, str] | None:
     """The dashboard's username and password from .env, or None if neither is set.
 
-    Setting only one is a mistake that would leave the app open, so it's an error.
+    The password is either a hash from `python -m solar_monitor.password` or, as before, the password itself.
+    Setting only one is a mistake that would leave the app open, so it's an error, as is a damaged hash.
     """
     load_dotenv(REPO_ROOT / ".env")
     username = os.environ.get("DASHBOARD_USER", "").strip()
@@ -55,6 +58,14 @@ def login() -> tuple[str, str] | None:
         return None
     if not username or not password:
         raise ValueError("Set both DASHBOARD_USER and DASHBOARD_PASSWORD in .env, or neither.")
+    if is_hashed(password):
+        try:
+            parse(password)
+        except ValueError as problem:
+            raise ValueError(
+                f"DASHBOARD_PASSWORD in .env is a damaged hash ({problem}). "
+                "Make it again with: python -m solar_monitor.password"
+            ) from None
     return username, password
 
 

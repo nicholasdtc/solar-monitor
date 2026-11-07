@@ -1,0 +1,22 @@
+// Pasted into the Tailscale admin console, under Access controls, by the steps in deploy/pi-setup.md.
+// It replaces the policy a new tailnet starts with, which lets every device reach every other on every port.
+//
+// Your own devices can reach SSH and the dashboard on the Pi, and nothing else on it.
+// Nothing lets the Pi start a connection to anything, so even if it were taken over, it couldn't reach your devices.
+// Your devices can't reach each other through Tailscale either. Add a grant if you ever want that.
+{
+	// The Pi is tagged rather than logged in as you, so it isn't allowed what your own devices are,
+	// and it doesn't need logging in again every few months.
+	"tagOwners": {
+		"tag:solar": ["autogroup:admin"],
+	},
+
+	"grants": [
+		{
+			// SSH, the dashboard through Caddy, and the dashboard directly.
+			"src": ["autogroup:member"],
+			"dst": ["tag:solar"],
+			"ip":  ["tcp:22", "tcp:80", "tcp:8000"],
+		},
+	],
+}
