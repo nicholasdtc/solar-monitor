@@ -1624,7 +1624,8 @@
   const GRID_BELOW_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "importing" : "exporting";
 
   const HISTORY_CHARTS = [
-    { title: "Solar and house", unit: "W", height: 190, series: [
+    // Neither should go below zero. A brief misreading of the house below it is cut off at the axis.
+    { title: "Solar and house", unit: "W", height: 190, floor: 0, series: [
       { key: "pv_w", label: "Solar", unit: "W", color: "--flow-solar" },
       { key: "load_w", label: "House", unit: "W", color: "--flow-load" },
     ] },
@@ -1683,19 +1684,25 @@
   const shortDate = (when) => when.toLocaleDateString(undefined, { day: "numeric", month: "short" });
   const power = (w) => (Math.abs(w) >= 1000 ? `${number(w / 1000, 2)} kW` : `${number(w, 0)} W`);
 
-  /* Round tick values that span low to high, always including both. */
-  function niceTicks(low, high) {
-    const rough = (high - low) / 4 || 1;
-    const power = 10 ** Math.floor(Math.log10(rough));
-    const step = [1, 2, 5, 10].find((m) => m * power >= rough) * power;
-    const first = Math.floor(low / step);
-    const count = Math.ceil(high / step) - first;
-    return Array.from({ length: count + 1 }, (_, i) => (first + i) * step);
+  /* Round tick values that span low to high, always including both. Takes the smallest round step
+     that needs no more than maxSteps, so the axis reaches only a little past the data. */
+  function niceTicks(low, high, maxSteps) {
+    const span = high - low;
+    let power = 10 ** Math.floor(Math.log10(span > 0 && Number.isFinite(span) ? span / maxSteps : 1));
+    for (let tries = 0; tries < 30; tries++, power *= 10) {
+      for (const step of [1, 2, 5].map((m) => m * power)) {
+        const first = Math.floor(low / step);
+        const count = Math.max(1, Math.ceil(high / step) - first);
+        if (count <= maxSteps) return Array.from({ length: count + 1 }, (_, i) => (first + i) * step);
+      }
+    }
+    return [low, high];
   }
 
-  /* Ticks switch to kW once they reach 1000 W. Only the top tick carries the unit. */
+  /* Ticks switch to kW once they reach 1000 W. Only the top tick carries the unit.
+     Taller plots get more ticks, about one every 28 px. */
   function yScale(low, high, top, bottom, unit) {
-    const ticks = niceTicks(low, high);
+    const ticks = niceTicks(low, high, clamp(Math.floor((bottom - top) / 28), 2, 6));
     const [min, max] = [ticks[0], ticks.at(-1)];
     const kilo = unit === "W" && Math.max(-min, max) >= 1000;
     const divisor = kilo ? 1000 : 1;
@@ -1959,7 +1966,7 @@
       const bottom = chart.height - (lastChart ? X_AXIS_HEIGHT : 10);
       const keys = chart.series.flatMap((s) => [s.key, `${s.key}_min`, `${s.key}_max`]);
       const known = points.flatMap((p) => keys.map((key) => p[key])).filter(isNum);
-      let [low, high] = chart.domain ?? [Math.min(0, ...known), Math.max(0, ...known)];
+      let [low, high] = chart.domain ?? [Math.max(chart.floor ?? -Infinity, Math.min(0, ...known)), Math.max(0, ...known)];
       if (high - low < 100 && !chart.domain) high = low + 100; // A flat night stays readable.
       return { chart, lastChart, bottom, scale: yScale(low, high, CHART_TOP, bottom, chart.unit) };
     });
@@ -1989,11 +1996,17 @@
         svg.append(svgEl("line", { x1: tx, x2: tx, y1: CHART_TOP, y2: bottom, class: "chart-grid" }));
         if (lastChart && tx < width - 20) svg.append(svgEl("text", { x: tx, y: bottom + 17, class: "chart-tick chart-x" }, tick.label));
       }
+      // Anything past the axis is cut off at its edge. The tooltip and table still give the true value.
+      const clipId = `history-clip-${i}`;
+      const clip = svgEl("clipPath", { id: clipId });
+      clip.append(svgEl("rect", { x: frame.left - 2, y: CHART_TOP - 2, width: plotWidth + 4, height: bottom - CHART_TOP + 4 }));
+      const lines = svgEl("g", { "clip-path": `url(#${clipId})` });
+      svg.append(clip, lines);
       for (const series of chart.series) {
-        svg.append(svgEl("path", { d: spreadPath(points, series.key, x, scale.y, bucket * 2), class: "chart-spread", style: `fill: var(${series.color})` }));
+        lines.append(svgEl("path", { d: spreadPath(points, series.key, x, scale.y, bucket * 2), class: "chart-spread", style: `fill: var(${series.color})` }));
       }
       for (const series of chart.series) {
-        svg.append(svgEl("path", { d: linePath(points, series.key, x, scale.y, bucket * 2), class: "chart-line", style: `stroke: var(${series.color})` }));
+        lines.append(svgEl("path", { d: linePath(points, series.key, x, scale.y, bucket * 2), class: "chart-line", style: `stroke: var(${series.color})` }));
       }
       if (endLabels) drawEndLabels(svg, chart, points, x, scale.y, bottom);
       drawInsideLabels(svg, frame, scale, bottom, chart.inside);
@@ -2016,7 +2029,7 @@
         overlay.replaceChildren(
           svgEl("line", { x1: px, x2: px, y1: CHART_TOP, y2: bottom, class: "chart-cross" }),
           ...chart.series.filter((s) => isNum(point[s.key])).map((s) => svgEl("circle", {
-            cx: px, cy: scale.y(point[s.key]), r: 4, class: "chart-dot", style: `fill: var(${s.color})`,
+            cx: px, cy: clamp(scale.y(point[s.key]), CHART_TOP, bottom), r: 4, class: "chart-dot", style: `fill: var(${s.color})`,
           })),
         );
       }
