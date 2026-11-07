@@ -644,6 +644,8 @@
   const INVERTER_MODEL = "GW5K-EHA-G20";
 
   // Below this a power reading is mostly noise, so its direction can't be judged.
+  // Solar is exempt: it reads exactly 0 in the dark, so any watts at all are real
+  // generation, and at dawn and dusk it's under this for a while. See FLOWS.solar.minW.
   const FLOW_MIN_W = 50;
   // The goodwe library's convention, confirmed here: with no solar and the battery stopped,
   // a 4.3 kW house load read about -4.3 kW. See sems-delay-findings.md.
@@ -711,25 +713,26 @@
     split between paths isn't, which the note under the diagram says.
 
     `sign` turns the reading into watts flowing toward the inverter, so positive is a source.
+    `minW` is the least that counts as flowing, for the box and for any path it's part of.
   */
   const FLOWS = {
     solar: {
-      label: "Solar", field: "ppv", sign: 1, color: "--flow-solar",
+      label: "Solar", field: "ppv", sign: 1, minW: 1, color: "--flow-solar",
       toward: "Generating", away: "Generating", idle: "No generation",
       icon: "M5.5 9a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M9 1v2M9 15v2M1 9h2M15 9h2M3.3 3.3l1.4 1.4M13.3 13.3l1.4 1.4M3.3 14.7l1.4-1.4M13.3 4.7l1.4-1.4",
     },
     grid: {
-      label: "Grid", field: "active_power_total", sign: GRID_POSITIVE_MEANS_EXPORT ? -1 : 1, color: "--flow-grid",
+      label: "Grid", field: "active_power_total", sign: GRID_POSITIVE_MEANS_EXPORT ? -1 : 1, minW: FLOW_MIN_W, color: "--flow-grid",
       toward: "Importing", away: "Exporting", idle: "Idle",
       icon: "M9 1L4 17M9 1l5 16M3 6h12M4.8 11h8.4M5.5 12l7 5M12.5 12l-7 5",
     },
     battery: {
-      label: "Battery", field: "pbattery1", sign: 1, color: "--flow-battery",
+      label: "Battery", field: "pbattery1", sign: 1, minW: FLOW_MIN_W, color: "--flow-battery",
       toward: "Discharging", away: "Charging", idle: "Idle",
       icon: "M2 5h13v8H2zM17 8v2M5 9h4M7 7v4",
     },
     load: {
-      label: "House", field: "load_ptotal", sign: -1, color: "--flow-load",
+      label: "House", field: "load_ptotal", sign: -1, minW: FLOW_MIN_W, color: "--flow-load",
       toward: "Using power", away: "Using power", idle: "Idle",
       icon: "M2 9l7-7 7 7M4 7.5V16h10V7.5M7.5 16v-5h3v5",
     },
@@ -861,7 +864,7 @@
   function flowPaths() {
     const side = (names, sign) => names
       .map((name) => ({ name, left: sign * (flowWatts(FLOWS[name]) ?? 0) }))
-      .filter((node) => node.left >= FLOW_MIN_W);
+      .filter((node) => node.left >= FLOWS[node.name].minW);
     const total = (nodes) => nodes.reduce((sum, node) => sum + node.left, 0);
     const sources = side(["solar", "battery", "grid"], 1);
     const destinations = side(["load", "battery", "grid"], -1);
@@ -876,7 +879,7 @@
         const amount = Math.min(source.left, destination.left);
         source.left -= amount;
         destination.left -= amount;
-        if (amount >= FLOW_MIN_W) paths[`${source.name}-${destination.name}`] = amount;
+        if (amount >= FLOWS[source.name].minW) paths[`${source.name}-${destination.name}`] = amount;
       }
     }
     return paths;
@@ -887,7 +890,7 @@
     for (const flow of Object.values(FLOWS)) {
       const toward = flowWatts(flow);
       const known = toward !== null;
-      const active = known && Math.abs(toward) >= FLOW_MIN_W;
+      const active = known && Math.abs(toward) >= flow.minW;
       const outward = known && toward < 0;
       flow.node.classList.toggle("active", active);
       flow.value_.textContent = known ? watts(Math.abs(toward)) : "—";
@@ -1529,6 +1532,7 @@
     { name: "Grid to house", ppv: 0, load_ptotal: 1200, pbattery1: 0, active_power_total: -1200, battery_soc: 15, expect: ["grid-load"] },
     { name: "Grid to house and battery", ppv: 0, load_ptotal: 500, pbattery1: -3000, active_power_total: -3600, battery_soc: 25, expect: ["grid-load", "grid-battery"] },
     { name: "Losses and noise: small readings draw nothing", ppv: 3000, load_ptotal: 500, pbattery1: -2300, active_power_total: 20, battery_soc: 50, expect: ["solar-load", "solar-battery"] },
+    { name: "Dusk: a little solar still reaches the house", ppv: 44, load_ptotal: 2331, pbattery1: 2368, active_power_total: 0, battery_soc: 65, expect: ["solar-load", "battery-load"] },
     { name: "Nothing flowing", ppv: 0, load_ptotal: 30, pbattery1: 0, active_power_total: 0, battery_soc: 50, expect: [] },
   ];
 
