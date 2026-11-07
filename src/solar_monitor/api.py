@@ -78,6 +78,9 @@ def create_app(collector: Collector) -> FastAPI:
     measured_at: float | None = None
     measured_overhead: dict[str, object] = {}
     measured_overhead_at: float | None = None
+    # Where the energy went on days that have ended, which only an import can change.
+    # Working it out reading by reading takes a noticeable moment on the Pi, so it's done once.
+    finished_flows: dict[str, dict[str, float]] = {}
     importing = asyncio.Lock()
 
     def readings() -> dict[str, object]:
@@ -224,7 +227,17 @@ def create_app(collector: Collector) -> FastAPI:
 
     @app.get("/api/daily")
     async def api_daily(days: int = Query(default=14, ge=1, le=366)) -> dict[str, object]:
-        return {"days": db.daily_series(collector.conn, days)}
+        series = db.daily_series(collector.conn, days)
+        today = series[-1]["day"]
+        first = next(day["day"] for day in series if day["day"] not in finished_flows or day["day"] == today)
+        flows = db.daily_flows(
+            collector.conn, int(datetime.fromisoformat(first).timestamp()), int(time.time()) + 1, collector.buffer
+        )
+        for day in series:
+            if first <= day["day"] < today:
+                finished_flows[day["day"]] = flows.get(day["day"], {})
+        flows = {**finished_flows, **flows}
+        return {"days": [{**day, **flows.get(day["day"], {})} for day in series]}
 
     @app.get("/api/appliances")
     async def api_appliances() -> dict[str, object]:
@@ -323,6 +336,7 @@ def create_app(collector: Collector) -> FastAPI:
                 shutil.rmtree(folder, ignore_errors=True)
         if apply:
             measured_at = measured_overhead_at = None  # So the measurements include what just arrived.
+            finished_flows.clear()
         return report
 
     app.mount("/fonts", StaticFiles(directory=FONTS), name="fonts")

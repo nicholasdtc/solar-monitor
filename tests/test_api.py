@@ -354,3 +354,20 @@ def test_battery_limits_come_from_the_inverter_settings():
 
 def test_an_unreadable_limit_is_none_rather_than_a_failed_poll():
     assert asyncio.run(read_battery_limits(FakeInverter())) == {"min_soc": None, "reserve_soc": None}
+
+
+def test_daily_adds_where_the_energy_went_to_days_with_readings(call, collector):
+    now = int(time.time())
+    collector.buffer.extend(db.Sample(now - age, {"ppv": 3600, "load_ptotal": 3600}) for age in (1, 0))
+    days = call("GET", "/api/daily?days=2").json()["days"]
+    assert days[-1]["solar_home"] == 0.001
+    assert "solar_home" not in days[0]
+
+
+def test_daily_works_out_a_finished_day_once(call, collector):
+    from datetime import date, datetime, timedelta
+    noon = int(datetime.combine(date.today() - timedelta(days=1), datetime.min.time()).timestamp()) + 12 * 3600
+    db.save_samples(collector.conn, [db.Sample(noon + age, {"ppv": 3600, "load_ptotal": 3600}) for age in (0, 1)])
+    assert call("GET", "/api/daily?days=2").json()["days"][0]["solar_home"] == 0.001
+    db.save_samples(collector.conn, [db.Sample(noon + 2, {"ppv": 3600, "load_ptotal": 3600})])
+    assert call("GET", "/api/daily?days=2").json()["days"][0]["solar_home"] == 0.001

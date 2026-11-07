@@ -208,17 +208,30 @@
   .legend { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); font-size: 13px; }
   .legend i { display: inline-block; width: 14px; height: 2px; margin-right: 5px; vertical-align: middle; }
   .legend.bars i { width: 10px; height: 10px; }
-  .chart svg { display: block; margin-top: 4px; touch-action: pan-y; }
+  .chart svg { display: block; margin-top: 4px; touch-action: pan-y; user-select: none; }
   .chart svg:focus-visible { outline: 2px solid var(--flow-grid); outline-offset: 2px; }
+  #history-charts svg { cursor: crosshair; }
   .chart-grid { stroke: var(--rule); }
   .chart-zero { stroke: var(--rule-strong); }
   .chart-cross { stroke: var(--muted); }
   .chart-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .chart-spread { opacity: .16; }
   .chart-dot { stroke: var(--surface); stroke-width: 2; }
   .chart-band { fill: var(--rule); opacity: .6; }
-  .chart-tick { fill: var(--muted); font-size: 12px; font-family: var(--body); font-variant-numeric: tabular-nums; }
+  .chart-tou { fill: var(--ink); opacity: .06; }
+  .chart-zoom { fill: var(--flow-grid); opacity: .15; }
+  .chart-tick { fill: var(--muted); font-size: 13px; font-family: var(--body); font-variant-numeric: tabular-nums; }
   .chart-y { text-anchor: end; }
   .chart-x { text-anchor: middle; }
+  /* Words drawn over the plot get a halo in the surface colour, so lines under them don't cut through. */
+  .chart-words { fill: var(--ink-2); font-size: 13px; font-family: var(--body); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+  .chart-words.middle { text-anchor: middle; fill: var(--muted); }
+  .zoom-reset { min-height: 36px; padding: 4px 12px; cursor: pointer; background: var(--surface); border: 1px solid var(--rule-strong); }
+  .zoom-reset:hover { background: var(--page); }
+  .flows { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+  .headline { color: var(--ink-2); max-width: 68ch; }
+  .headline strong { color: var(--ink); font-size: 24px; font-weight: 600; margin-right: 4px; font-variant-numeric: tabular-nums; }
+  td small.spread { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; }
   #chart-tip {
     position: fixed; z-index: 6; padding: 8px 10px; pointer-events: none; font-size: 13px;
     background: var(--surface); border: 1px solid var(--rule-strong); box-shadow: 0 2px 8px rgba(0, 0, 0, .18);
@@ -228,6 +241,8 @@
   .tip-row strong { text-align: right; font-variant-numeric: tabular-nums; }
   .tip-row i { height: 2px; }
   .tip-row span { color: var(--ink-2); }
+  .tip-row small { grid-column: 3; margin-top: -3px; color: var(--muted); font-size: 12px; }
+  .tip-note { margin-top: 4px; color: var(--ink-2); }
   summary { cursor: pointer; color: var(--ink-2); min-height: 28px; }
   details .scroll { max-height: 360px; margin-top: 8px; overflow-y: auto; }
 
@@ -359,11 +374,13 @@
           <button type="button" data-hours="6">6 hours</button><button type="button" data-hours="24">24 hours</button><button type="button" data-hours="168">7 days</button><button type="button" data-hours="720">30 days</button>
         </div>
         <label>Day <input type="date" id="history-day"></label>
+        <button type="button" class="zoom-reset" id="zoom-reset" hidden>Zoom out</button>
       </div>
       <div class="charts" id="history-charts"></div>
       <p class="meta" id="history-note"></p>
       <details id="history-details">
         <summary>Show as a table</summary>
+        <p class="meta" id="history-table-note"></p>
         <div class="scroll" tabindex="0" role="region" aria-label="History table">
           <table>
             <thead><tr><th>Time</th><th class="num">Solar (W)</th><th class="num">House (W)</th><th class="num">Battery (W)</th><th class="num">Grid (W)</th><th class="num">Battery charge (%)</th></tr></thead>
@@ -376,12 +393,17 @@
       <h2>Daily energy</h2>
       <div class="charts" id="daily-charts"></div>
       <p class="meta" id="daily-note"></p>
+      <div class="flows" id="flow-section" hidden>
+        <p class="headline" id="self-sufficiency"></p>
+        <div class="charts" id="flow-charts"></div>
+        <p class="meta" id="flow-note"></p>
+      </div>
     </div>
     <div class="pane span-all">
       <h3>Daily energy as a table</h3>
       <div class="scroll" tabindex="0" role="region" aria-label="Daily energy table">
         <table>
-          <thead><tr><th class="pin">Day</th><th class="num">Solar</th><th class="num">House</th><th class="num">Battery charged</th><th class="num">Battery discharged</th><th class="num">Grid import</th><th class="num">Grid export</th></tr></thead>
+          <thead><tr><th class="pin">Day</th><th class="num">Solar</th><th class="num">House</th><th class="num">Battery charged</th><th class="num">Battery discharged</th><th class="num">Grid import</th><th class="num">Grid export</th><th class="num">Solar to house</th><th class="num">Solar to battery</th><th class="num">Solar to grid</th><th class="num">House from battery</th><th class="num">House from grid</th><th class="num">Self-sufficiency</th></tr></thead>
           <tbody id="daily-table"></tbody>
         </table>
       </div>
@@ -644,6 +666,8 @@
   const INVERTER_MODEL = "GW5K-EHA-G20";
 
   // Below this a power reading is mostly noise, so its direction can't be judged.
+  // Solar is exempt: it reads exactly 0 in the dark, so any watts at all are real
+  // generation, and at dawn and dusk it's under this for a while. See FLOWS.solar.minW.
   const FLOW_MIN_W = 50;
   // The goodwe library's convention, confirmed here: with no solar and the battery stopped,
   // a 4.3 kW house load read about -4.3 kW. See sems-delay-findings.md.
@@ -711,25 +735,26 @@
     split between paths isn't, which the note under the diagram says.
 
     `sign` turns the reading into watts flowing toward the inverter, so positive is a source.
+    `minW` is the least that counts as flowing, for the box and for any path it's part of.
   */
   const FLOWS = {
     solar: {
-      label: "Solar", field: "ppv", sign: 1, color: "--flow-solar",
+      label: "Solar", field: "ppv", sign: 1, minW: 1, color: "--flow-solar",
       toward: "Generating", away: "Generating", idle: "No generation",
       icon: "M5.5 9a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M9 1v2M9 15v2M1 9h2M15 9h2M3.3 3.3l1.4 1.4M13.3 13.3l1.4 1.4M3.3 14.7l1.4-1.4M13.3 4.7l1.4-1.4",
     },
     grid: {
-      label: "Grid", field: "active_power_total", sign: GRID_POSITIVE_MEANS_EXPORT ? -1 : 1, color: "--flow-grid",
+      label: "Grid", field: "active_power_total", sign: GRID_POSITIVE_MEANS_EXPORT ? -1 : 1, minW: FLOW_MIN_W, color: "--flow-grid",
       toward: "Importing", away: "Exporting", idle: "Idle",
       icon: "M9 1L4 17M9 1l5 16M3 6h12M4.8 11h8.4M5.5 12l7 5M12.5 12l-7 5",
     },
     battery: {
-      label: "Battery", field: "pbattery1", sign: 1, color: "--flow-battery",
+      label: "Battery", field: "pbattery1", sign: 1, minW: FLOW_MIN_W, color: "--flow-battery",
       toward: "Discharging", away: "Charging", idle: "Idle",
       icon: "M2 5h13v8H2zM17 8v2M5 9h4M7 7v4",
     },
     load: {
-      label: "House", field: "load_ptotal", sign: -1, color: "--flow-load",
+      label: "House", field: "load_ptotal", sign: -1, minW: FLOW_MIN_W, color: "--flow-load",
       toward: "Using power", away: "Using power", idle: "Idle",
       icon: "M2 9l7-7 7 7M4 7.5V16h10V7.5M7.5 16v-5h3v5",
     },
@@ -861,7 +886,7 @@
   function flowPaths() {
     const side = (names, sign) => names
       .map((name) => ({ name, left: sign * (flowWatts(FLOWS[name]) ?? 0) }))
-      .filter((node) => node.left >= FLOW_MIN_W);
+      .filter((node) => node.left >= FLOWS[node.name].minW);
     const total = (nodes) => nodes.reduce((sum, node) => sum + node.left, 0);
     const sources = side(["solar", "battery", "grid"], 1);
     const destinations = side(["load", "battery", "grid"], -1);
@@ -876,7 +901,7 @@
         const amount = Math.min(source.left, destination.left);
         source.left -= amount;
         destination.left -= amount;
-        if (amount >= FLOW_MIN_W) paths[`${source.name}-${destination.name}`] = amount;
+        if (amount >= FLOWS[source.name].minW) paths[`${source.name}-${destination.name}`] = amount;
       }
     }
     return paths;
@@ -887,7 +912,7 @@
     for (const flow of Object.values(FLOWS)) {
       const toward = flowWatts(flow);
       const known = toward !== null;
-      const active = known && Math.abs(toward) >= FLOW_MIN_W;
+      const active = known && Math.abs(toward) >= flow.minW;
       const outward = known && toward < 0;
       flow.node.classList.toggle("active", active);
       flow.value_.textContent = known ? watts(Math.abs(toward)) : "—";
@@ -1529,6 +1554,7 @@
     { name: "Grid to house", ppv: 0, load_ptotal: 1200, pbattery1: 0, active_power_total: -1200, battery_soc: 15, expect: ["grid-load"] },
     { name: "Grid to house and battery", ppv: 0, load_ptotal: 500, pbattery1: -3000, active_power_total: -3600, battery_soc: 25, expect: ["grid-load", "grid-battery"] },
     { name: "Losses and noise: small readings draw nothing", ppv: 3000, load_ptotal: 500, pbattery1: -2300, active_power_total: 20, battery_soc: 50, expect: ["solar-load", "solar-battery"] },
+    { name: "Dusk: a little solar still reaches the house", ppv: 44, load_ptotal: 2331, pbattery1: 2368, active_power_total: 0, battery_soc: 65, expect: ["solar-load", "battery-load"] },
     { name: "Nothing flowing", ppv: 0, load_ptotal: 30, pbattery1: 0, active_power_total: 0, battery_soc: 50, expect: [] },
   ];
 
@@ -1603,41 +1629,69 @@
   */
   const CHART_REFRESH_MS = 60000;
   const DAILY_DAYS = 14;
-  const CHART_LEFT = 52;
   const CHART_RIGHT = 12;
   const CHART_TOP = 8;
   const X_AXIS_HEIGHT = 24;
   const MIN_TICK_SPACING_PX = 72;
+  const CHART_FONT_PX = 13;
+  // Wider than this, each line is also named where it ends. Narrower, the legend alone does it.
+  const END_LABELS_MIN_WIDTH = 560;
+  // Longer than this, time-of-use periods are too thin to tell apart, so they aren't shaded.
+  const TOU_SHADE_MAX_SECONDS = 8 * 86400;
+  const MIN_ZOOM_SECONDS = 900;
   const GRID_ABOVE_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "exporting" : "importing";
   const GRID_BELOW_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "importing" : "exporting";
 
   const HISTORY_CHARTS = [
-    { title: "Solar and house (W)", height: 190, series: [
+    { title: "Solar and house", unit: "W", height: 190, series: [
       { key: "pv_w", label: "Solar", unit: "W", color: "--flow-solar" },
       { key: "load_w", label: "House", unit: "W", color: "--flow-load" },
     ] },
-    { title: "Battery and grid (W)", height: 190, signed: true, series: [
+    { title: "Battery and grid", unit: "W", height: 190, series: [
       { key: "battery_w", label: "Battery", unit: "W", color: "--flow-battery", above: "discharging", below: "charging" },
       { key: "grid_w", label: "Grid", unit: "W", color: "--flow-grid", above: GRID_ABOVE_ZERO, below: GRID_BELOW_ZERO },
-    ], note: `Above zero: battery discharging, grid ${GRID_ABOVE_ZERO}. Below zero: battery charging, grid ${GRID_BELOW_ZERO}.` },
-    { title: "Battery charge (%)", height: 130, domain: [0, 100], series: [
+    ], inside: {
+      above: `Battery out · Grid ${GRID_POSITIVE_MEANS_EXPORT ? "export" : "import"} ↑`,
+      below: `Battery in · Grid ${GRID_POSITIVE_MEANS_EXPORT ? "import" : "export"} ↓`,
+    } },
+    { title: "Battery charge", unit: "%", height: 130, domain: [0, 100], series: [
       { key: "battery_soc", label: "Battery charge", unit: "%", color: "--flow-battery" },
     ] },
   ];
 
   /* Same layout as history: above the line is energy out of the battery or to the grid. */
   const DAILY_CHARTS = [
-    { title: "Solar and house (kWh)", height: 170, columns: [
+    { title: "Solar and house", unit: "kWh", height: 170, columns: [
       { above: "pv", aboveLabel: "Solar", label: "Solar", color: "--flow-solar" },
       { above: "load", aboveLabel: "House", label: "House", color: "--flow-load" },
     ] },
-    { title: "Battery and grid (kWh)", height: 210, columns: [
+    { title: "Battery and grid", unit: "kWh", height: 210, columns: [
       { above: "battery_discharge", aboveLabel: "Battery discharged", below: "battery_charge", belowLabel: "Battery charged", label: "Battery", color: "--flow-battery" },
       { above: "grid_export", aboveLabel: "Grid export", below: "grid_import", belowLabel: "Grid import", label: "Grid", color: "--flow-grid" },
-    ], note: "Above the line: battery discharged, grid export. Below the line: battery charged, grid import." },
+    ], inside: { above: "Battery out · Grid export ↑", below: "Battery in · Grid import ↓" } },
   ];
 
+  /* Where each day's energy went, split reading by reading on the server. Stacked from the zero line up. */
+  const FLOW_CHARTS = [
+    { title: "Where solar went", unit: "kWh", height: 170, stack: [
+      { key: "solar_home", label: "House", tip: "Solar to house", color: "--flow-load" },
+      { key: "solar_battery", label: "Battery", tip: "Solar to battery", color: "--flow-battery" },
+      { key: "solar_export", label: "Grid export", tip: "Solar to grid", color: "--flow-grid" },
+    ] },
+    { title: "Where the house's power came from", unit: "kWh", height: 170, stack: [
+      { key: "solar_home", label: "Solar", tip: "House from solar", color: "--flow-solar" },
+      { key: "battery_home", label: "Battery", tip: "House from battery", color: "--flow-battery" },
+      { key: "grid_home", label: "Grid", tip: "House from grid", color: "--flow-grid" },
+    ] },
+  ];
+
+  const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const TOU_NAMES = { charge: "Charging from the grid", discharge: "Battery discharging", hold: "Battery holding" };
+  const TOU_SHORT = { charge: "Grid charge", discharge: "Discharge", hold: "Hold" };
+
   let range = { hours: 24 };
+  let rangeBeforeZoom = null;
   let history = null;
   let daily = null;
   let historyRequest = 0;
@@ -1646,6 +1700,7 @@
   const isoDay = (when) => `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}-${String(when.getDate()).padStart(2, "0")}`;
   const clockTime = (when) => when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   const shortDate = (when) => when.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const power = (w) => (Math.abs(w) >= 1000 ? `${number(w / 1000, 2)} kW` : `${number(w, 0)} W`);
 
   /* Round tick values that span low to high, always including both. */
   function niceTicks(low, high) {
@@ -1657,38 +1712,71 @@
     return Array.from({ length: count + 1 }, (_, i) => (first + i) * step);
   }
 
-  function yScale(low, high, top, bottom) {
+  /* Ticks switch to kW once they reach 1000 W. Only the top tick carries the unit. */
+  function yScale(low, high, top, bottom, unit) {
     const ticks = niceTicks(low, high);
     const [min, max] = [ticks[0], ticks.at(-1)];
-    return { ticks, digits: ticks[1] - ticks[0] < 1 ? 1 : 0, y: (v) => bottom - ((v - min) / (max - min)) * (bottom - top) };
+    const kilo = unit === "W" && Math.max(-min, max) >= 1000;
+    const divisor = kilo ? 1000 : 1;
+    const shownUnit = kilo ? "kW" : unit;
+    const digits = Math.max(0, -Math.floor(Math.log10((ticks[1] - ticks[0]) / divisor) + 1e-9));
+    const label = (tick) => {
+      const text = tick === 0 ? "0" : number(tick / divisor, digits);
+      if (tick !== max) return text;
+      return shownUnit === "%" ? `${text}%` : `${text} ${shownUnit}`;
+    };
+    return { ticks, label, y: (v) => bottom - ((v - min) / (max - min)) * (bottom - top) };
+  }
+
+  let measurer = null;
+  function textWidth(text) {
+    measurer ??= document.createElement("canvas").getContext("2d");
+    measurer.font = `${CHART_FONT_PX}px ${getComputedStyle(document.body).getPropertyValue("--body")}`;
+    return measurer.measureText(text).width;
+  }
+
+  /* Room for the widest tick label of any chart in a set, so the set's plots line up under one crosshair. */
+  function leftMargin(scales) {
+    return Math.ceil(Math.max(...scales.flatMap((scale) => scale.ticks.map((tick) => textWidth(scale.label(tick)))))) + 14;
   }
 
   /* Times to label on the x axis, on round local hours or days. */
   function timeTicks(start, end, room) {
     const hours = (end - start) / 3600;
-    const step = [1, 2, 3, 6, 12, 24, 48, 96, 168, 336, 672].find((h) => hours / h <= room) ?? 672;
+    const step = [0.25, 0.5, 1, 2, 3, 6, 12, 24, 48, 96, 168, 336, 672].find((h) => hours / h <= room) ?? 672;
     const tick = new Date(start * 1000);
-    tick.setHours(step < 24 ? tick.getHours() - (tick.getHours() % step) : 0, 0, 0, 0);
+    if (step < 1) tick.setMinutes(tick.getMinutes() - (tick.getMinutes() % (step * 60)), 0, 0);
+    else tick.setHours(step < 24 ? tick.getHours() - (tick.getHours() % step) : 0, 0, 0, 0);
     const ticks = [];
     while (tick / 1000 < end) {
       if (tick / 1000 >= start) {
-        const showDate = step >= 24 || (hours > 24 && tick.getHours() === 0);
+        const showDate = step >= 24 || (hours > 24 && tick.getHours() === 0 && tick.getMinutes() === 0);
         ticks.push({ ts: tick / 1000, label: showDate ? shortDate(tick) : clockTime(tick) });
       }
-      if (step < 24) tick.setHours(tick.getHours() + step);
+      if (step < 1) tick.setMinutes(tick.getMinutes() + step * 60);
+      else if (step < 24) tick.setHours(tick.getHours() + step);
       else tick.setDate(tick.getDate() + step / 24);
     }
     return ticks;
   }
 
-  function drawYAxis(svg, width, scale) {
+  function drawYAxis(svg, frame, scale) {
     for (const tick of scale.ticks) {
       const y = Math.round(scale.y(tick)) + 0.5;
       svg.append(
-        svgEl("line", { x1: CHART_LEFT, x2: width - CHART_RIGHT, y1: y, y2: y, class: tick === 0 ? "chart-zero" : "chart-grid" }),
-        svgEl("text", { x: CHART_LEFT - 8, y: y + 4, class: "chart-tick chart-y" }, number(tick, scale.digits)),
+        svgEl("line", { x1: frame.left, x2: frame.width - frame.right, y1: y, y2: y, class: tick === 0 ? "chart-zero" : "chart-grid" }),
+        svgEl("text", { x: frame.left - 8, y: y + 4, class: "chart-tick chart-y" }, scale.label(tick)),
       );
     }
+  }
+
+  /* Says inside the plot which way is which, where there's room above or below zero for it. */
+  function drawInsideLabels(svg, frame, scale, bottom, labels) {
+    if (!labels) return;
+    const zero = scale.y(0);
+    const x = frame.left + 6;
+    if (zero - CHART_TOP > 26) svg.append(svgEl("text", { x, y: CHART_TOP + 15, class: "chart-words" }, labels.above));
+    if (bottom - zero > 26) svg.append(svgEl("text", { x, y: bottom - 7, class: "chart-words" }, labels.below));
   }
 
   /* A titled chart with its legend. Identity is never left to colour alone. */
@@ -1713,15 +1801,17 @@
   }
 
   /* The one tooltip. It enhances the charts: every value is also in a table. */
-  function showTip(x, y, title, rows) {
+  function showTip(x, y, title, rows, note) {
     const tip = $("chart-tip");
     tip.replaceChildren(el("div", "tip-title", title), ...rows.map((row) => {
       const node = el("div", "tip-row");
       const key = el("i");
-      key.style.background = `var(${row.color})`;
+      if (row.color) key.style.background = `var(${row.color})`;
       node.append(el("strong", "", row.value), key, el("span", "", row.label));
+      if (row.detail) node.append(el("small", "", row.detail));
       return node;
     }));
+    if (note) tip.append(el("div", "tip-note", note));
     tip.hidden = false;
     const box = tip.getBoundingClientRect();
     tip.style.left = `${x + 16 + box.width > innerWidth ? Math.max(x - 16 - box.width, 8) : x + 16}px`;
@@ -1759,12 +1849,50 @@
     let previous = null;
     for (const point of points) {
       const value = point[key];
-      if (value === null) { previous = null; continue; }
+      if (!isNum(value)) { previous = null; continue; }
       const isBreak = previous === null || point.ts - previous > maxGap;
       path += `${isBreak ? "M" : "L"}${x(point.ts).toFixed(1)} ${y(value).toFixed(1)}${isBreak ? "h0" : ""}`;
       previous = point.ts;
     }
     return path;
+  }
+
+  /* The lowest to highest reading in each period, as an area that breaks where its line does. */
+  function spreadPath(points, key, x, y, maxGap) {
+    const [lowKey, highKey] = [`${key}_min`, `${key}_max`];
+    const at = (point, edge) => `${x(point.ts).toFixed(1)} ${y(point[edge]).toFixed(1)}`;
+    let path = "";
+    let run = [];
+    const finish = () => {
+      if (run.length === 1) {
+        const [point] = run;
+        path += `M${(x(point.ts) - 1.5).toFixed(1)} ${y(point[highKey]).toFixed(1)}h3V${y(point[lowKey]).toFixed(1)}h-3Z`;
+      } else if (run.length) {
+        path += `M${run.map((point) => at(point, highKey)).join("L")}L${run.toReversed().map((point) => at(point, lowKey)).join("L")}Z`;
+      }
+      run = [];
+    };
+    for (const point of points) {
+      if (!isNum(point[lowKey]) || !isNum(point[highKey])) { finish(); continue; }
+      if (run.length && point.ts - run.at(-1).ts > maxGap) finish();
+      run.push(point);
+    }
+    finish();
+    return path;
+  }
+
+  /* Names each line where it ends, nudged apart so the names don't overlap. */
+  function drawEndLabels(svg, chart, points, x, y, bottom) {
+    if (chart.series.length < 2) return;
+    const ends = chart.series.map((series) => {
+      const last = points.findLast((point) => isNum(point[series.key]));
+      return last && { label: series.label, x: x(last.ts) + 8, y: y(last[series.key]) + 4 };
+    }).filter(Boolean).sort((a, b) => a.y - b.y);
+    const gap = CHART_FONT_PX + 2;
+    for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + gap);
+    if (ends.length) ends.at(-1).y = Math.min(ends.at(-1).y, bottom);
+    for (let i = ends.length - 2; i >= 0; i--) ends[i].y = Math.min(ends[i].y, ends[i + 1].y - gap);
+    for (const end of ends) svg.append(svgEl("text", { x: end.x, y: end.y, class: "chart-words" }, end.label));
   }
 
   function duration(seconds) {
@@ -1774,20 +1902,69 @@
 
   function formatPoint(point, series) {
     const value = point[series.key];
-    if (value === null) return null;
+    if (!isNum(value)) return null;
+    const format = series.unit === "W" ? power : (v) => `${number(v, 0)}${series.unit === "%" ? "" : " "}${series.unit}`;
     const word = series.above && Math.abs(value) >= FLOW_MIN_W ? (value > 0 ? series.above : series.below) : "";
-    return { value: `${number(value, 0)} ${series.unit}`, label: word ? `${series.label}, ${word}` : series.label, color: series.color };
+    const [low, high] = [point[`${series.key}_min`], point[`${series.key}_max`]];
+    return {
+      value: format(value), label: word ? `${series.label}, ${word}` : series.label, color: series.color,
+      detail: isNum(low) && isNum(high) && low !== high ? `${format(low)} to ${format(high)}` : undefined,
+    };
   }
+
+  /* Which of `names` a schedule's "Mon, Tue" or "Jan,Feb" covers, by index. Null when it can't tell. */
+  function scheduleSet(text, names, everything) {
+    if (typeof text !== "string") return null;
+    if (everything.includes(text)) return new Set(names.keys());
+    const picked = text.split(/,\s*/).map((name) => names.indexOf(name));
+    return picked.includes(-1) ? null : new Set(picked);
+  }
+
+  /*
+    The time-of-use periods as they're set on the inverter now, laid over a span of time. The
+    inverter doesn't say what they were set to in the past, so the note under the charts says so.
+  */
+  function touIntervals(start, end) {
+    const schedule = latest?.schedule;
+    if (!schedule?.tou_on || !Array.isArray(schedule.periods) || end - start > TOU_SHADE_MAX_SECONDS) return [];
+    const intervals = [];
+    for (const period of schedule.periods) {
+      const days = scheduleSet(period.days, WEEKDAYS, ["Every day", "Mon-Sun"]);
+      const months = scheduleSet(period.months, MONTHS, ["All year"]);
+      const clock = /^(\d\d):(\d\d)$/;
+      if (period.state !== "on" || !days || !months || !clock.test(period.start) || !clock.test(period.end)) continue;
+      const [startHour, startMinute] = period.start.split(":").map(Number);
+      const [endHour, endMinute] = period.end.split(":").map(Number);
+      const day = new Date(start * 1000);
+      day.setHours(0, 0, 0, 0);
+      day.setDate(day.getDate() - 1); // A period from the day before can run past midnight into the span.
+      for (; day / 1000 < end; day.setDate(day.getDate() + 1)) {
+        if (!days.has(day.getDay()) || !months.has(day.getMonth())) continue;
+        const from = new Date(day.getFullYear(), day.getMonth(), day.getDate(), startHour, startMinute) / 1000;
+        const to = new Date(day.getFullYear(), day.getMonth(), day.getDate() + (period.next_day ? 1 : 0), endHour, endMinute) / 1000;
+        if (to > start && from < end) intervals.push({ start: Math.max(from, start), end: Math.min(to, end), period });
+      }
+    }
+    return intervals;
+  }
+
+  const touText = (period) => `Time-of-use: ${TOU_NAMES[period.action] ?? period.action}${period.action === "hold" ? "" : ` at ${period.power_pct}%`}`;
 
   function renderHistory() {
     const box = $("history-charts");
     $("chart-tip").hidden = true;
     if (!history || $("view-statistics").hidden) return; // Charts need a width, and a hidden box has none.
     const { points, start, end, bucket_seconds: bucket } = history;
-    $("history-note").textContent = points.length
-      ? `Each point averages ${duration(bucket)}, so short spikes look smaller, and a charge and a discharge in the same period partly cancel out. ` +
-        "A break in a line means the app wasn't running or the inverter didn't answer."
-      : "";
+    const hasSpread = points.some((point) => point.pv_w_min !== undefined);
+    const tou = touIntervals(start, end);
+    $("history-note").textContent = points.length ? [
+      hasSpread
+        ? `Each line averages ${duration(bucket)}, and the lighter area around it runs from the lowest to the highest reading in that time, so short spikes still show.`
+        : `Each point averages ${duration(bucket)}, so short spikes look smaller, and a charge and a discharge in the same period partly cancel out.`,
+      "A break in a line means the app wasn't running or the inverter didn't answer.",
+      tou.length ? "Grey columns are the time-of-use periods as they're set on the inverter now. They may have been set differently on past days." : "",
+      matchMedia("(pointer: fine)").matches ? "Drag across a chart to zoom in." : "",
+    ].filter(Boolean).join(" ") : "";
     renderHistoryTable();
     if (!points.length) {
       box.replaceChildren(el("p", "no-value", "No readings in this range. Readings are only logged while the app is running."));
@@ -1796,36 +1973,55 @@
 
     box.replaceChildren();
     const width = box.clientWidth;
-    const innerWidth_ = width - CHART_LEFT - CHART_RIGHT;
-    const x = (ts) => CHART_LEFT + (clamp(ts + bucket / 2, start, end) - start) / (end - start) * innerWidth_;
-    const xTicks = timeTicks(start, end, Math.max(2, Math.floor(innerWidth_ / MIN_TICK_SPACING_PX)));
-
-    const drawn = HISTORY_CHARTS.map((chart, i) => {
+    const planned = HISTORY_CHARTS.map((chart, i) => {
       const lastChart = i === HISTORY_CHARTS.length - 1;
       const bottom = chart.height - (lastChart ? X_AXIS_HEIGHT : 10);
-      const known = points.flatMap((p) => chart.series.map((s) => p[s.key])).filter(isNum);
+      const keys = chart.series.flatMap((s) => [s.key, `${s.key}_min`, `${s.key}_max`]);
+      const known = points.flatMap((p) => keys.map((key) => p[key])).filter(isNum);
       let [low, high] = chart.domain ?? [Math.min(0, ...known), Math.max(0, ...known)];
       if (high - low < 100 && !chart.domain) high = low + 100; // A flat night stays readable.
-      const scale = yScale(low, high, CHART_TOP, bottom);
+      return { chart, lastChart, bottom, scale: yScale(low, high, CHART_TOP, bottom, chart.unit) };
+    });
+    const endLabels = width > END_LABELS_MIN_WIDTH;
+    const named = HISTORY_CHARTS.filter((chart) => chart.series.length > 1).flatMap((chart) => chart.series.map((s) => textWidth(s.label)));
+    const frame = { left: leftMargin(planned.map((p) => p.scale)), right: endLabels ? Math.ceil(Math.max(...named)) + 12 : CHART_RIGHT, width };
+    const plotWidth = width - frame.left - frame.right;
+    const atTime = (ts) => frame.left + (clamp(ts, start, end) - start) / (end - start) * plotWidth;
+    const x = (ts) => atTime(ts + bucket / 2); // A point is drawn at the middle of the period it averages.
+    const timeAt = (px) => start + clamp(px - frame.left, 0, plotWidth) / plotWidth * (end - start);
+    const xTicks = timeTicks(start, end, Math.max(2, Math.floor(plotWidth / MIN_TICK_SPACING_PX)));
 
+    const drawn = planned.map(({ chart, lastChart, bottom, scale }, i) => {
       const node = chartShell(chart, chart.series, "lines");
       const svg = svgEl("svg", { width, height: chart.height });
-      drawYAxis(svg, width, scale);
+      for (const interval of tou) {
+        const [left, right] = [atTime(interval.start), atTime(interval.end)];
+        svg.append(svgEl("rect", { x: left, width: right - left, y: CHART_TOP, height: bottom - CHART_TOP, class: "chart-tou" }));
+        const name = TOU_SHORT[interval.period.action];
+        if (i === 0 && name && right - left > textWidth(name) + 8) {
+          svg.append(svgEl("text", { x: (left + right) / 2, y: CHART_TOP + 15, class: "chart-words middle" }, name));
+        }
+      }
+      drawYAxis(svg, frame, scale);
       for (const tick of xTicks) {
-        const tx = Math.round(CHART_LEFT + (tick.ts - start) / (end - start) * innerWidth_) + 0.5;
+        const tx = Math.round(atTime(tick.ts)) + 0.5;
         svg.append(svgEl("line", { x1: tx, x2: tx, y1: CHART_TOP, y2: bottom, class: "chart-grid" }));
-        if (lastChart && tx < width - 20) svg.append(svgEl("text", { x: tx, y: bottom + 16, class: "chart-tick chart-x" }, tick.label));
+        if (lastChart && tx < width - 20) svg.append(svgEl("text", { x: tx, y: bottom + 17, class: "chart-tick chart-x" }, tick.label));
       }
       for (const series of chart.series) {
-        svg.append(svgEl("path", {
-          d: linePath(points, series.key, x, scale.y, bucket * 2), class: "chart-line", style: `stroke: var(${series.color})`,
-        }));
+        svg.append(svgEl("path", { d: spreadPath(points, series.key, x, scale.y, bucket * 2), class: "chart-spread", style: `fill: var(${series.color})` }));
       }
+      for (const series of chart.series) {
+        svg.append(svgEl("path", { d: linePath(points, series.key, x, scale.y, bucket * 2), class: "chart-line", style: `stroke: var(${series.color})` }));
+      }
+      if (endLabels) drawEndLabels(svg, chart, points, x, scale.y, bottom);
+      drawInsideLabels(svg, frame, scale, bottom, chart.inside);
       const overlay = svgEl("g", {});
-      svg.append(overlay);
+      const zoom = svgEl("rect", { y: CHART_TOP, height: bottom - CHART_TOP, width: 0, class: "chart-zoom" });
+      svg.append(overlay, zoom);
       node.append(svg);
       box.append(node);
-      return { chart, svg, overlay, scale, bottom };
+      return { chart, svg, overlay, zoom, scale, bottom };
     });
 
     const hide = () => {
@@ -1838,36 +2034,70 @@
       for (const { chart, overlay, scale, bottom } of drawn) {
         overlay.replaceChildren(
           svgEl("line", { x1: px, x2: px, y1: CHART_TOP, y2: bottom, class: "chart-cross" }),
-          ...chart.series.filter((s) => point[s.key] !== null).map((s) => svgEl("circle", {
+          ...chart.series.filter((s) => isNum(point[s.key])).map((s) => svgEl("circle", {
             cx: px, cy: scale.y(point[s.key]), r: 4, class: "chart-dot", style: `fill: var(${s.color})`,
           })),
         );
       }
       const when = new Date(point.ts * 1000);
       const rows = HISTORY_CHARTS.flatMap((chart) => chart.series.map((s) => formatPoint(point, s))).filter(Boolean);
-      showTip(clientX, clientY, `${shortDate(when)}, ${clockTime(when)}`, rows);
+      const middle = point.ts + bucket / 2;
+      const period = tou.find((interval) => middle >= interval.start && middle < interval.end)?.period;
+      showTip(clientX, clientY, `${shortDate(when)}, ${clockTime(when)}`, rows, period && touText(period));
     };
     const pick = (px) => {
-      const ts = start + (px - CHART_LEFT) / innerWidth_ * (end - start) - bucket / 2;
+      const ts = timeAt(px) - bucket / 2;
       let best = 0;
       for (let i = 1; i < points.length; i++) if (Math.abs(points[i].ts - ts) < Math.abs(points[best].ts - ts)) best = i;
       return Math.abs(points[best].ts - ts) <= bucket * 2 ? best : null; // Nothing to read in a gap.
     };
+
+    /* Drag with a mouse to zoom in. Touch keeps scrolling the page, and the range buttons zoom out. */
+    let drag = null;
+    const markZoom = (from, to) => {
+      const [left, right] = [clamp(Math.min(from, to), frame.left, frame.left + plotWidth), clamp(Math.max(from, to), frame.left, frame.left + plotWidth)];
+      for (const { zoom } of drawn) { zoom.setAttribute("x", left); zoom.setAttribute("width", right - left); }
+    };
     for (const { chart, svg } of drawn) {
-      makeScrubbable(svg, chart.title, { count: points.length, pick, xOf: (i) => x(points[i].ts), show, hide });
+      makeScrubbable(svg, `${chart.title} (${chart.unit})`, { count: points.length, pick, xOf: (i) => x(points[i].ts), show, hide });
+      const offset = (event) => event.clientX - svg.getBoundingClientRect().left;
+      svg.addEventListener("pointerdown", (event) => {
+        if (event.pointerType !== "mouse" || event.button !== 0) return;
+        drag = { from: offset(event) };
+        svg.setPointerCapture(event.pointerId);
+      });
+      svg.addEventListener("pointermove", (event) => { if (drag) markZoom(drag.from, offset(event)); });
+      svg.addEventListener("pointerup", (event) => {
+        if (!drag) return;
+        const [from, to] = [drag.from, offset(event)];
+        drag = null;
+        markZoom(0, 0);
+        if (Math.abs(to - from) < 6) return; // A click, not a drag.
+        let [first, last] = [timeAt(Math.min(from, to)), timeAt(Math.max(from, to))];
+        if (last - first < MIN_ZOOM_SECONDS) [first, last] = [(first + last - MIN_ZOOM_SECONDS) / 2, (first + last + MIN_ZOOM_SECONDS) / 2];
+        zoomTo(Math.floor(first), Math.ceil(last));
+      });
+      svg.addEventListener("pointercancel", () => { drag = null; markZoom(0, 0); });
     }
   }
 
   function renderHistoryTable() {
     const open = $("history-details").open;
     if (!open || !history) return $("history-table").replaceChildren();
-    const cell = (value) => el("td", "num", value === null ? "—" : number(value, 0));
+    const hasSpread = history.points.some((point) => point.pv_w_min !== undefined);
+    $("history-table-note").textContent = hasSpread ? "Under each power average are the lowest and highest readings in that period." : "";
+    const cell = (point, key) => {
+      const node = el("td", "num", isNum(point[key]) ? number(point[key], 0) : "—");
+      const [low, high] = [point[`${key}_min`], point[`${key}_max`]];
+      if (isNum(low) && isNum(high) && low !== high) node.append(el("small", "spread", `${number(low, 0)} to ${number(high, 0)}`));
+      return node;
+    };
     $("history-table").replaceChildren(...history.points.toReversed().map((point) => {
       const row = el("tr");
       const when = new Date(point.ts * 1000);
       row.append(
         el("td", "", `${shortDate(when)}, ${clockTime(when)}`),
-        cell(point.pv_w), cell(point.load_w), cell(point.battery_w), cell(point.grid_w), cell(point.battery_soc),
+        cell(point, "pv_w"), cell(point, "load_w"), cell(point, "battery_w"), cell(point, "grid_w"), cell(point, "battery_soc"),
       );
       return row;
     }));
@@ -1881,96 +2111,149 @@
     return `M${left} ${base}V${tip + direction * r}Q${left} ${tip} ${left + r} ${tip}H${right - r}Q${right} ${tip} ${right} ${tip + direction * r}V${base}Z`;
   }
 
+  /* The share of the house's power that came from solar or the battery rather than the grid. */
+  function selfSufficiency(days) {
+    const counted = days.filter((day) => day.solar_home !== undefined);
+    const own = counted.reduce((sum, day) => sum + (day.solar_home ?? 0) + (day.battery_home ?? 0), 0);
+    const all = own + counted.reduce((sum, day) => sum + (day.grid_home ?? 0), 0);
+    return all >= 0.05 ? own / all : null;
+  }
+
+  function dailyRows(day, charts) {
+    const rows = charts.flatMap((chart) => chart.stack
+      ? chart.stack.map((part) => day[part.key] !== undefined && { value: kwh(day[part.key]), label: part.tip, color: part.color })
+      : chart.columns.flatMap((c) => [
+        day[c.above] !== undefined && { value: kwh(day[c.above]), label: c.aboveLabel, color: c.color },
+        c.below && day[c.below] !== undefined && { value: kwh(day[c.below]), label: c.belowLabel, color: c.color },
+      ])).filter(Boolean);
+    const share = charts.some((chart) => chart.stack) ? selfSufficiency([day]) : null;
+    if (share !== null) rows.push({ value: percent(share), label: "Self-sufficiency" });
+    return rows;
+  }
+
   function renderDaily() {
     const box = $("daily-charts");
     if (!daily || $("view-statistics").hidden) return;
     const days = daily.days;
     const anyData = days.some((day) => Object.keys(day).length > 1);
+    const hasFlows = days.some((day) => day.solar_home !== undefined);
     $("daily-note").textContent = anyData
       ? "From the inverter's lifetime counters. Today's figures can be up to 5 minutes behind. The first day logged starts from its first reading, " +
         "and energy from days the app wasn't running counts toward the next day it ran."
       : "";
     renderDailyTable();
+    $("flow-section").hidden = !anyData || !hasFlows;
     if (!anyData) {
       box.replaceChildren(el("p", "no-value", "No daily totals yet. The first ones appear within 5 minutes of the app starting."));
       return;
     }
+    const share = selfSufficiency(days);
+    const counted = days.filter((day) => day.solar_home !== undefined).length;
+    $("self-sufficiency").replaceChildren(...(share === null ? [] : [
+      el("strong", "", percent(share)),
+      `of the house's power came from solar or the battery rather than the grid, over the last ${counted} day${counted === 1 ? "" : "s"} logged.`,
+    ]));
+    $("flow-note").textContent = "Worked out from the readings logged every 15 seconds rather than from the counters, so these totals can differ a little from the ones above. " +
+      "Solar is counted as going to the house first, then the battery, then the grid. The battery counts as the house's own power, even when it was charged from the grid.";
 
-    box.replaceChildren();
+    const sets = [{ box, charts: DAILY_CHARTS }, ...(hasFlows ? [{ box: $("flow-charts"), charts: FLOW_CHARTS }] : [])];
     const width = box.clientWidth;
-    const band = (width - CHART_LEFT - CHART_RIGHT) / days.length;
+    const planned = sets.flatMap((set) => set.charts.map((chart, i) => {
+      const lastChart = i === set.charts.length - 1;
+      const bottom = chart.height - (lastChart ? X_AXIS_HEIGHT : 10);
+      const high = Math.max(0.5, ...days.map((day) => chart.stack
+        ? chart.stack.reduce((sum, part) => sum + (day[part.key] ?? 0), 0)
+        : Math.max(...chart.columns.map((c) => day[c.above] ?? 0))));
+      const low = chart.stack ? 0 : -Math.max(0, ...days.flatMap((day) => chart.columns.map((c) => day[c.below] ?? 0)));
+      return { set, chart, lastChart, bottom, scale: yScale(low, high, CHART_TOP, bottom, chart.unit) };
+    }));
+    const frame = { left: leftMargin(planned.map((p) => p.scale)), right: CHART_RIGHT, width };
+    const band = (width - frame.left - frame.right) / days.length;
     const labelEvery = Math.ceil(MIN_TICK_SPACING_PX * 0.7 / band);
-    const center = (i) => CHART_LEFT + band * (i + 0.5);
+    const center = (i) => frame.left + band * (i + 0.5);
     const dayDate = (day) => new Date(`${day.day}T12:00`);
 
-    const drawn = DAILY_CHARTS.map((chart, chartIndex) => {
-      const lastChart = chartIndex === DAILY_CHARTS.length - 1;
-      const bottom = chart.height - (lastChart ? X_AXIS_HEIGHT : 10);
-      const high = Math.max(0.5, ...days.flatMap((day) => chart.columns.map((c) => day[c.above] ?? 0)));
-      const low = -Math.max(0, ...days.flatMap((day) => chart.columns.map((c) => day[c.below] ?? 0)));
-      const scale = yScale(low, high, CHART_TOP, bottom);
-
-      const node = chartShell(chart, chart.columns, "bars");
+    for (const set of sets) set.box.replaceChildren();
+    const drawn = planned.map(({ set, chart, lastChart, bottom, scale }) => {
+      const node = chartShell(chart, chart.stack ?? chart.columns, "bars");
       const svg = svgEl("svg", { width, height: chart.height });
       const under = svgEl("g", {});
       svg.append(under);
-      drawYAxis(svg, width, scale);
-      const columnWidth = Math.min(24, Math.max(3, (band * 0.7 - 2) / chart.columns.length));
+      drawYAxis(svg, frame, scale);
       days.forEach((day, i) => {
-        const groupWidth = columnWidth * chart.columns.length + 2 * (chart.columns.length - 1);
-        chart.columns.forEach((column, c) => {
-          const left = center(i) - groupWidth / 2 + c * (columnWidth + 2);
-          const base = scale.y(0);
-          for (const [value, sign] of [[day[column.above], 1], [day[column.below], -1]]) {
-            if (!value) continue;
-            svg.append(svgEl("path", { d: columnPath(left, columnWidth, base, scale.y(sign * value)), style: `fill: var(${column.color})` }));
-          }
-        });
+        if (chart.stack) {
+          const columnWidth = Math.min(24, Math.max(3, band * 0.6));
+          const left = center(i) - columnWidth / 2;
+          const parts = chart.stack.filter((part) => day[part.key] > 0);
+          let total = 0;
+          parts.forEach((part, p) => {
+            // A 2px gap in the surface colour between stacked parts.
+            const base = scale.y(total) - (p ? 1 : 0);
+            total += day[part.key];
+            const tip = scale.y(total) + (p < parts.length - 1 ? 1 : 0);
+            if (base - tip < 0.5) return;
+            const d = p === parts.length - 1 ? columnPath(left, columnWidth, base, tip) : `M${left} ${base}V${tip}H${left + columnWidth}V${base}Z`;
+            svg.append(svgEl("path", { d, style: `fill: var(${part.color})` }));
+          });
+        } else {
+          const columnWidth = Math.min(24, Math.max(3, (band * 0.7 - 2) / chart.columns.length));
+          const groupWidth = columnWidth * chart.columns.length + 2 * (chart.columns.length - 1);
+          chart.columns.forEach((column, c) => {
+            const left = center(i) - groupWidth / 2 + c * (columnWidth + 2);
+            const base = scale.y(0);
+            for (const [value, sign] of [[day[column.above], 1], [day[column.below], -1]]) {
+              if (!value) continue;
+              svg.append(svgEl("path", { d: columnPath(left, columnWidth, base, scale.y(sign * value)), style: `fill: var(${column.color})` }));
+            }
+          });
+        }
         if (lastChart && i % labelEvery === 0) {
-          svg.append(svgEl("text", { x: center(i), y: bottom + 16, class: "chart-tick chart-x" }, shortDate(dayDate(day))));
+          svg.append(svgEl("text", { x: center(i), y: bottom + 17, class: "chart-tick chart-x" }, shortDate(dayDate(day))));
         }
       });
+      drawInsideLabels(svg, frame, scale, bottom, chart.inside);
       node.append(svg);
-      box.append(node);
-      return { chart, svg, under, bottom };
+      set.box.append(node);
+      return { set, chart, svg, under, bottom };
     });
 
     const hide = () => {
       $("chart-tip").hidden = true;
       for (const { under } of drawn) under.replaceChildren();
     };
-    const show = (index, clientX, clientY) => {
+    /* Each set of charts has its own tooltip, so the counters and the reading-by-reading split stay apart. */
+    const showFor = (charts) => (index, clientX, clientY) => {
       const day = days[index];
       for (const { under, bottom } of drawn) {
         under.replaceChildren(svgEl("rect", { x: center(index) - band / 2, width: band, y: CHART_TOP, height: bottom - CHART_TOP, class: "chart-band" }));
       }
-      const rows = DAILY_CHARTS.flatMap((chart) => chart.columns.flatMap((c) => [
-        day[c.above] !== undefined && { value: kwh(day[c.above]), label: c.aboveLabel, color: c.color },
-        c.below && day[c.below] !== undefined && { value: kwh(day[c.below]), label: c.belowLabel, color: c.color },
-      ])).filter(Boolean);
+      const rows = dailyRows(day, charts);
       showTip(clientX, clientY, rows.length ? shortDate(dayDate(day)) : `${shortDate(dayDate(day))}: no readings`, rows);
     };
-    for (const { chart, svg } of drawn) {
-      makeScrubbable(svg, chart.title, {
+    for (const { set, chart, svg } of drawn) {
+      makeScrubbable(svg, `${chart.title} (${chart.unit})`, {
         count: days.length,
-        pick: (px) => { const i = Math.floor((px - CHART_LEFT) / band); return i >= 0 && i < days.length ? i : null; },
-        xOf: center, show, hide,
+        pick: (px) => { const i = Math.floor((px - frame.left) / band); return i >= 0 && i < days.length ? i : null; },
+        xOf: center, show: showFor(set.charts), hide,
       });
     }
   }
 
   function renderDailyTable() {
-    const keys = ["pv", "load", "battery_charge", "battery_discharge", "grid_import", "grid_export"];
+    const keys = ["pv", "load", "battery_charge", "battery_discharge", "grid_import", "grid_export", "solar_home", "solar_battery", "solar_export", "battery_home", "grid_home"];
     const recorded = daily.days.filter((day) => Object.keys(day).length > 1).toReversed();
     $("daily-table").replaceChildren(...recorded.map((day) => {
       const row = el("tr");
       row.append(el("td", "pin", new Date(`${day.day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })));
       for (const key of keys) row.append(el("td", "num", kwh(day[key])));
+      const share = selfSufficiency([day]);
+      row.append(el("td", "num", share === null ? "—" : percent(share)));
       return row;
     }));
   }
 
   function rangeBounds() {
+    if (range.start) return [range.start, range.end];
     if (range.day) {
       const [year, month, day] = range.day.split("-").map(Number);
       return [new Date(year, month - 1, day) / 1000, new Date(year, month - 1, day + 1) / 1000];
@@ -2011,20 +2294,28 @@
 
   function selectRange(next) {
     range = next;
-    for (const button of document.querySelectorAll(".range button")) {
+    for (const button of document.querySelectorAll("#range button")) {
       button.setAttribute("aria-pressed", String(Number(button.dataset.hours) === range.hours));
     }
     $("history-day").value = range.day ?? "";
+    $("zoom-reset").hidden = !range.start;
     $("history-charts").classList.add("loading");
     refreshHistory();
   }
 
-  for (const button of document.querySelectorAll(".range button")) {
+  /* Zooming remembers the range it started from, so zooming out goes back there. */
+  function zoomTo(start, end) {
+    if (!range.start) rangeBeforeZoom = range;
+    selectRange({ start, end });
+  }
+
+  for (const button of document.querySelectorAll("#range button")) {
     button.addEventListener("click", () => selectRange({ hours: Number(button.dataset.hours) }));
   }
   $("history-day").addEventListener("change", (event) => {
     selectRange(event.target.value ? { day: event.target.value } : { hours: 24 });
   });
+  $("zoom-reset").addEventListener("click", () => selectRange(rangeBeforeZoom ?? { hours: 24 }));
   $("history-details").addEventListener("toggle", renderHistoryTable);
   /* The two sets of charts sit side by side on a wide screen, so each has its own width. */
   function redrawOnWidthChange(box, draw) {
@@ -2038,6 +2329,8 @@
   }
   redrawOnWidthChange($("history-charts"), renderHistory);
   redrawOnWidthChange($("daily-charts"), renderDaily);
+  // Margins are measured from the tick labels, so measure again once the web font is in.
+  document.fonts.ready.then(() => { renderHistory(); renderDaily(); });
 
   /*
     Appliances. The list and the choices live in the app's database, and the server answers
@@ -2555,8 +2848,8 @@
   refreshDaily();
   setInterval(() => {
     // Redrawing would drop the tooltip and keyboard focus from under someone reading a chart.
-    if ($("view-statistics").hidden || !$("chart-tip").hidden || document.activeElement?.closest("#history-charts, #daily-charts")) return;
-    if (!range.day || range.day === isoDay(new Date())) refreshHistory();
+    if ($("view-statistics").hidden || !$("chart-tip").hidden || document.activeElement?.closest("#history-charts, #daily-charts, #flow-charts")) return;
+    if (!range.start && (!range.day || range.day === isoDay(new Date()))) refreshHistory();
     refreshDaily();
   }, CHART_REFRESH_MS);
 </script>

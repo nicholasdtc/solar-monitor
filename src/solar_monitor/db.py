@@ -86,6 +86,13 @@ READINGS = {
 # A chart can't usefully show more points than this, so longer ranges are averaged more.
 MAX_HISTORY_POINTS = 800
 BUCKET_SECONDS = (60, 120, 300, 900, 1800, 3600, 7200, 21600, 86400)
+# Power readings whose lowest and highest in each period come with the average, so a chart
+# can show the spikes that averaging flattens. Charge is slow enough not to need it.
+SPREAD_READINGS = ("pv_w", "load_w", "battery_w", "grid_w")
+
+# A reading stands for the power until the next one, but never for longer than this, so a
+# dropout of the inverter's Wi-Fi isn't filled with the last power it reported.
+MAX_READING_SECONDS = 60
 
 # Planning choices the inverter can't report. An unset one isn't stored, and reads as None.
 SETTINGS = (
@@ -206,27 +213,91 @@ def history(
 
     `pending` is readings not saved yet, so the curve reaches the present. A bucket with
     no readings returns no point, so a gap in logging stays a gap. Averaging signed power
-    means a charge and a discharge within one bucket partly cancel out.
+    means a charge and a discharge within one bucket partly cancel out, which is why the
+    power readings also come with their lowest and highest, as "<name>_min" and "<name>_max".
     """
     bucket = bucket_seconds(end - start)
-    waiting = [_columns(s) for s in pending if start <= s.ts < end]
-    averages = ", ".join(f"ROUND(AVG({column}), 1)" for column in READINGS)
-    columns = ", ".join(READINGS)
-    from_json = ", ".join(f"json_extract(value, '$[{i}]')" for i in range(len(READINGS) + 1))
+    names = [*READINGS, *(f"{column}_{edge}" for column in SPREAD_READINGS for edge in ("min", "max"))]
+    figures = ", ".join([
+        *(f"ROUND(AVG({column}), 1)" for column in READINGS),
+        *(f"{edge.upper()}({column})" for column in SPREAD_READINGS for edge in ("min", "max")),
+    ])
     rows = conn.execute(
         f"""
-        SELECT ts / :bucket * :bucket AS bucket_start, {averages}
-        FROM (
-            SELECT ts, {columns} FROM samples WHERE ts >= :start AND ts < :end
-            UNION ALL
-            SELECT {from_json} FROM json_each(:waiting)
-        )
+        SELECT ts / :bucket * :bucket AS bucket_start, {figures}
+        FROM ({_readings_with_pending()})
         GROUP BY bucket_start
         ORDER BY bucket_start
         """,
-        {"bucket": bucket, "start": start, "end": end, "waiting": json.dumps(waiting)},
+        {"bucket": bucket, "start": start, "end": end, "waiting": _waiting(pending, start, end)},
     ).fetchall()
-    return bucket, [dict(zip(("ts", *READINGS), row)) for row in rows]
+    return bucket, [dict(zip(("ts", *names), row)) for row in rows]
+
+
+def _waiting(pending: Iterable[Sample], start: int, end: int) -> str:
+    return json.dumps([_columns(s) for s in pending if start <= s.ts < end])
+
+
+def _readings_with_pending() -> str:
+    """Saved readings from :start to before :end, and the unsaved ones passed as :waiting."""
+    columns = ", ".join(READINGS)
+    from_json = ", ".join(f"json_extract(value, '$[{i}]')" for i in range(len(READINGS) + 1))
+    return f"""
+        SELECT ts, {columns} FROM samples WHERE ts >= :start AND ts < :end
+        UNION ALL
+        SELECT {from_json} FROM json_each(:waiting)
+    """
+
+
+# Where each day's solar went and where the house's power came from, in kWh.
+FLOWS = ("solar_home", "solar_battery", "solar_export", "battery_home", "grid_home")
+
+
+def daily_flows(
+    conn: sqlite3.Connection, start: int, end: int, pending: Iterable[Sample] = ()
+) -> dict[str, dict[str, float]]:
+    """{local day: {flow: kWh}} worked out reading by reading, for start <= ts < end.
+
+    The inverter only counts totals, so this splits them: solar goes to the house first,
+    then to charging the battery, then to the grid, and the house takes what solar can't
+    give from the battery first, then from the grid. Each part is capped by what was
+    actually charged, discharged, exported or imported, so conversion losses aren't
+    counted as anything. Battery and grid signs are as stored: positive battery is
+    discharging, positive grid is exporting.
+    """
+    rows = conn.execute(
+        f"""
+        WITH readings AS (
+            SELECT ts,
+                MAX(COALESCE(pv_w, 0), 0) AS pv,
+                MAX(COALESCE(load_w, 0), 0) AS load,
+                MAX(COALESCE(-battery_w, 0), 0) AS charge,
+                MAX(COALESCE(battery_w, 0), 0) AS discharge,
+                MAX(COALESCE(grid_w, 0), 0) AS export,
+                MAX(COALESCE(-grid_w, 0), 0) AS import,
+                MIN(COALESCE(LEAD(ts) OVER (ORDER BY ts) - ts, 0), :longest) AS seconds
+            FROM ({_readings_with_pending()})
+        ),
+        home AS (SELECT *, MIN(pv, load) AS solar_home FROM readings),
+        split AS (
+            SELECT *,
+                MIN(pv - solar_home, charge) AS solar_battery,
+                MIN(discharge, load - solar_home) AS battery_home
+            FROM home
+        )
+        SELECT date(ts, 'unixepoch', 'localtime') AS day,
+            SUM(solar_home * seconds),
+            SUM(solar_battery * seconds),
+            SUM(MIN(pv - solar_home - solar_battery, export) * seconds),
+            SUM(battery_home * seconds),
+            SUM(MIN(load - solar_home - battery_home, import) * seconds)
+        FROM split
+        GROUP BY day
+        """,
+        {"start": start, "end": end, "waiting": _waiting(pending, start, end), "longest": MAX_READING_SECONDS},
+    ).fetchall()
+    joules_per_kwh = 3_600_000
+    return {day: {name: round(joules / joules_per_kwh, 3) for name, joules in zip(FLOWS, sums)} for day, *sums in rows}
 
 
 def battery_samples(

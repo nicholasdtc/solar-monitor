@@ -1,0 +1,11 @@
+# Installed to /etc/caddy/Caddyfile by the steps in deploy/pi-setup.md.
+# Serves the dashboard at http://solar.local, with no port, by passing requests on to the app.
+
+# The http:// matters. Without it Caddy makes its own certificate for the name, and browsers warn about it.
+http://solar.local {
+	reverse_proxy 127.0.0.1:8000 {
+		# Caddy already keeps the visitor's Host. This says so, because the app checks it to tell
+		# requests from the Pi itself apart from the network's.
+		header_up Host {host}
+	}
+}

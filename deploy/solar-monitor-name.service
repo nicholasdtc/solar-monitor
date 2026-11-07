@@ -1,0 +1,23 @@
+# Installed to /etc/systemd/system/ by the steps in deploy/pi-setup.md.
+[Unit]
+Description=Announce solar.local on the home network
+Requires=avahi-daemon.service
+After=avahi-daemon.service network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/bin/sh /opt/solar-monitor/deploy/announce-name.sh
+# The app's user, which avahi accepts. (DynamicUser doesn't work: avahi refuses its D-Bus connection.)
+User=solar-monitor
+# The address is read once, at start. If the Pi's address changes, a restart picks up the new one.
+Restart=always
+RestartSec=10
+
+# It only needs to ask avahi, over D-Bus, to announce the name.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
