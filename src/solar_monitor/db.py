@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import time
 import zlib
@@ -97,6 +98,8 @@ READINGS = {
 # A chart can't usefully show more points than this, so longer ranges are averaged more.
 MAX_HISTORY_POINTS = 800
 BUCKET_SECONDS = (60, 120, 300, 900, 1800, 3600, 7200, 21600, 86400)
+# The most a chart that asks for its own bucket can fetch at once, which is a few screens' worth.
+MAX_BUCKETS_PER_REQUEST = 2000
 # Power readings whose lowest and highest in each period come with the average, so a chart
 # can show the spikes that averaging flattens. Charge is slow enough not to need it.
 SPREAD_READINGS = ("pv_w", "load_w", "battery_w", "grid_w")
@@ -222,32 +225,101 @@ def bucket_seconds(span_seconds: int) -> int:
     return next((b for b in BUCKET_SECONDS if span_seconds / b <= MAX_HISTORY_POINTS), BUCKET_SECONDS[-1])
 
 
+def _utc_offset(ts: int) -> int:
+    return time.localtime(ts).tm_gmtoff
+
+
+def bucket_start(ts: int, bucket: int) -> int:
+    """The start of the averaging period that holds `ts`.
+
+    Periods follow this machine's clock, so an hour starts on the hour and a day at midnight,
+    including on the days the clocks change.
+    """
+    local = (ts + _utc_offset(ts)) // bucket * bucket
+    # The offset at the period's start, which on the day the clocks change isn't the one at `ts`.
+    return local - _utc_offset(local - _utc_offset(ts))
+
+
+def bucket_end(ts: int, bucket: int) -> int:
+    """The start of the period after the one that holds `ts`. Half a period past the end of this
+    one is always in the next, even when the clocks change during it."""
+    return bucket_start(bucket_start(ts, bucket) + bucket * 3 // 2, bucket)
+
+
+def whole_buckets(start: int, end: int, bucket: int) -> tuple[int, int]:
+    """The range widened to whole periods, so none at its edges averages only part of its readings."""
+    return bucket_start(start, bucket), bucket_end(end - 1, bucket)
+
+
+def first_reading(conn: sqlite3.Connection, pending: Iterable[Sample] = ()) -> int | None:
+    """When the oldest reading was taken, saved or not, or None before the first."""
+    saved = conn.execute("SELECT MIN(ts) FROM samples").fetchone()[0]
+    return min((ts for ts in (saved, *(s.ts for s in pending)) if ts is not None), default=None)
+
+
 def history(
-    conn: sqlite3.Connection, start: int, end: int, pending: Iterable[Sample] = ()
+    conn: sqlite3.Connection, start: int, end: int, pending: Iterable[Sample] = (), bucket: int | None = None
 ) -> tuple[int, list[dict[str, object]]]:
     """(bucket seconds, averaged points) for start <= ts < end, oldest first.
 
-    `pending` is readings not saved yet, so the curve reaches the present. A bucket with
-    no readings returns no point, so a gap in logging stays a gap. Averaging signed power
-    means a charge and a discharge within one bucket partly cancel out, which is why the
-    power readings also come with their lowest and highest, as "<name>_min" and "<name>_max".
+    The bucket is chosen to suit the range unless given. Each point's "ts" is the start of
+    its period, see bucket_start(). `pending` is readings not saved yet, so the curve reaches
+    the present. A bucket with no readings returns no point, so a gap in logging stays a gap.
+    Averaging signed power means a charge and a discharge within one bucket partly cancel out,
+    which is why the power readings also come with their lowest and highest, as "<name>_min"
+    and "<name>_max".
     """
-    bucket = bucket_seconds(end - start)
-    names = [*READINGS, *(f"{column}_{edge}" for column in SPREAD_READINGS for edge in ("min", "max"))]
+    bucket = bucket or bucket_seconds(end - start)
+    # SQLite adds up the readings in steps of UTC time, which can't cross the start of a
+    # period because clocks only ever differ by whole quarter hours. Then each period adds
+    # up its steps here, since only Python knows when the local clock changed.
+    step = math.gcd(bucket, 900)
     figures = ", ".join([
-        *(f"ROUND(AVG({column}), 1)" for column in READINGS),
-        *(f"{edge.upper()}({column})" for column in SPREAD_READINGS for edge in ("min", "max")),
+        *(f"SUM({column}), COUNT({column})" for column in READINGS),
+        *(f"MIN({column}), MAX({column})" for column in SPREAD_READINGS),
     ])
     rows = conn.execute(
         f"""
-        SELECT ts / :bucket * :bucket AS bucket_start, {figures}
+        SELECT ts / :step * :step AS step_start, {figures}
         FROM ({_readings_with_pending()})
-        GROUP BY bucket_start
-        ORDER BY bucket_start
+        GROUP BY step_start
+        ORDER BY step_start
         """,
-        {"bucket": bucket, "start": start, "end": end, "waiting": _waiting(pending, start, end)},
+        {"step": step, "start": start, "end": end, "waiting": _waiting(pending, start, end)},
     ).fetchall()
-    return bucket, [dict(zip(("ts", *names), row)) for row in rows]
+    periods: dict[int, list[object]] = {}
+    following = None
+    for step_start, *figures in rows:
+        if following is None or step_start >= following:
+            begins, following = bucket_start(step_start, bucket), bucket_end(step_start, bucket)
+            periods[begins] = figures
+        else:
+            periods[begins] = _add_steps(periods[begins], figures)
+    return bucket, [_point(begins, figures) for begins, figures in periods.items()]
+
+
+_SUMS = 2 * len(READINGS)  # Each reading's sum and count come first, then each spread's lowest and highest.
+
+
+def _add_steps(totals: list[object], step: list[object]) -> list[object]:
+    # SQLite's SUM is NULL when every reading was missing, while its COUNT is 0.
+    sums = [(a or 0) + (b or 0) for a, b in zip(totals[:_SUMS], step[:_SUMS])]
+    edges = []
+    for i, pair in enumerate(zip(totals[_SUMS:], step[_SUMS:])):
+        known = [value for value in pair if value is not None]
+        edges.append((max if i % 2 else min)(known) if known else None)
+    return [*sums, *edges]
+
+
+def _point(begins: int, figures: list[object]) -> dict[str, object]:
+    sums = figures[:_SUMS]
+    point: dict[str, object] = {"ts": begins}
+    for i, name in enumerate(READINGS):
+        total, count = sums[2 * i], sums[2 * i + 1]
+        point[name] = round(total / count, 1) if count else None
+    for i, name in enumerate(SPREAD_READINGS):
+        point[f"{name}_min"], point[f"{name}_max"] = figures[_SUMS + 2 * i], figures[_SUMS + 2 * i + 1]
+    return point
 
 
 def _waiting(pending: Iterable[Sample], start: int, end: int) -> str:

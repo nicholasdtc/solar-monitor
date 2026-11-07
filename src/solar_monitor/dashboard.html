@@ -78,7 +78,7 @@
   h2 { font-size: 24px; line-height: 1.15; }
   h3 { font-size: 14px; font-weight: 600; }
   code { font: 12px var(--mono); }
-  button, input, textarea { font: inherit; color: inherit; }
+  button, input, textarea, select { font: inherit; color: inherit; }
   :focus-visible { outline: 2px solid var(--flow-grid); outline-offset: -2px; }
 
   .seg { display: inline-flex; }
@@ -89,6 +89,7 @@
   .seg button:first-child { margin-left: 0; }
   .seg button:hover { background: var(--page); }
   .seg button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); font-weight: 600; position: relative; }
+  .seg button:disabled { color: var(--muted); background: var(--surface); cursor: default; }
 
   /* Header: identity and the slow-changing facts. It scrolls away; the tab row doesn't. */
   .top { background: var(--surface); }
@@ -211,10 +212,13 @@
   }
   .range { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
   .range label { display: inline-flex; gap: 8px; align-items: center; color: var(--ink-2); }
-  .range input { min-height: 36px; padding: 4px 8px; background: var(--surface); border: 1px solid var(--rule-strong); }
+  .range input, .range select { min-height: 36px; padding: 4px 8px; background: var(--surface); border: 1px solid var(--rule-strong); }
+  .range-shown { margin-top: 8px; }
   .charts { display: flex; flex-direction: column; gap: 16px; }
   #history-charts { transition: opacity .15s; }
   #history-charts.loading { opacity: .5; }
+  #history-charts.panning svg { cursor: grabbing; }
+  #history-charts.panning .chart-end { display: none; }
   .chart-head { display: flex; flex-wrap: wrap; gap: 2px 16px; align-items: baseline; justify-content: space-between; }
   .legend { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); font-size: 13px; }
   .legend i { display: inline-block; width: 14px; height: 2px; margin-right: 5px; vertical-align: middle; }
@@ -230,15 +234,12 @@
   .chart-dot { stroke: var(--surface); stroke-width: 2; }
   .chart-band { fill: var(--rule); opacity: .6; }
   .chart-tou { fill: var(--ink); opacity: .06; }
-  .chart-zoom { fill: var(--flow-grid); opacity: .15; }
   .chart-tick { fill: var(--muted); font-size: 13px; font-family: var(--body); font-variant-numeric: tabular-nums; }
   .chart-y { text-anchor: end; }
   .chart-x { text-anchor: middle; }
   /* Words drawn over the plot get a halo in the surface colour, so lines under them don't cut through. */
   .chart-words { fill: var(--ink-2); font-size: 13px; font-family: var(--body); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
   .chart-words.middle { text-anchor: middle; fill: var(--muted); }
-  .zoom-reset { min-height: 36px; padding: 4px 12px; cursor: pointer; background: var(--surface); border: 1px solid var(--rule-strong); }
-  .zoom-reset:hover { background: var(--page); }
   .flows { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
   .headline { color: var(--ink-2); max-width: 68ch; }
   .headline strong { color: var(--ink); font-size: 24px; font-weight: 600; margin-right: 4px; font-variant-numeric: tabular-nums; }
@@ -429,12 +430,13 @@
     <div class="pane">
       <h2>History</h2>
       <div class="range">
-        <div class="seg" id="range" role="group" aria-label="History range">
-          <button type="button" data-hours="6">6 hours</button><button type="button" data-hours="24">24 hours</button><button type="button" data-hours="168">7 days</button><button type="button" data-hours="720">30 days</button>
+        <label>Interval <select id="history-bucket"></select></label>
+        <div class="seg" role="group" aria-label="Move and zoom">
+          <button type="button" id="history-earlier">◀ Earlier</button><button type="button" id="history-out" aria-label="Show more time" title="Show more time">−</button><button type="button" id="history-in" aria-label="Show less time" title="Show less time">+</button><button type="button" id="history-later">Later ▶</button><button type="button" id="history-now">Now</button>
         </div>
         <label>Day <input type="date" id="history-day"></label>
-        <button type="button" class="zoom-reset" id="zoom-reset" hidden>Zoom out</button>
       </div>
+      <p class="meta range-shown" id="history-shown"></p>
       <div class="charts" id="history-charts"></div>
       <p class="meta" id="history-note"></p>
       <details id="history-details">
@@ -1781,7 +1783,16 @@
   const END_LABELS_MIN_WIDTH = 560;
   // Longer than this, time-of-use periods are too thin to tell apart, so they aren't shaded.
   const TOU_SHADE_MAX_SECONDS = 8 * 86400;
-  const MIN_ZOOM_SECONDS = 900;
+  // The intervals the server can average over, the same list as BUCKET_SECONDS in db.py.
+  const HISTORY_BUCKETS = [60, 120, 300, 900, 1800, 3600, 7200, 21600, 86400];
+  const DEFAULT_BUCKET = 300;
+  const DEFAULT_VIEW_SECONDS = 86400;
+  // The fewest and most periods on screen at once. Twice the most stays under the server's limit
+  // of 2000 at a time, so the history either side of the view can load with it.
+  const MIN_BARS = 12;
+  const MAX_BARS = 720;
+  const PAN_START_PX = 6;
+  const LOAD_DELAY_MS = 150;
   const GRID_ABOVE_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "exporting" : "importing";
   const GRID_BELOW_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "importing" : "exporting";
 
@@ -1834,11 +1845,20 @@
   const TOU_NAMES = { charge: "Charging from the grid", discharge: "Battery discharging", hold: "Battery holding" };
   const TOU_SHORT = { charge: "Grid charge", discharge: "Discharge", hold: "Hold" };
 
-  let range = { hours: 24 };
-  let rangeBeforeZoom = null;
-  let history = null;
+  /*
+    The history works like a trading chart: pick how long each period is, then move along the
+    whole history at that interval. `view` is the stretch of time on screen. `loaded` is what the
+    server sent, the view and some way either side, so moving a little needs no new request.
+    `following` means the view's right edge is now, so it keeps moving with time.
+  */
+  let view = { bucket: DEFAULT_BUCKET, start: 0, end: 0, following: true, day: null };
+  let loaded = null;
+  let firstReading = null;
+  let historyFrame = null;
   let daily = null;
   let historyRequest = 0;
+  let pendingLoad = null;
+  let pan = null; // A drag along the charts while the pointer is down.
 
   const clamp = (x, low, high) => Math.min(Math.max(x, low), high);
   const isoDay = (when) => `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}-${String(when.getDate()).padStart(2, "0")}`;
@@ -1890,17 +1910,27 @@
     return Math.ceil(Math.max(...scales.flatMap((scale) => scale.ticks.map((tick) => textWidth(scale.label(tick)))))) + 14;
   }
 
-  /* Times to label on the x axis, on round local hours or days. */
-  function timeTicks(start, end, room) {
-    const hours = (end - start) / 3600;
-    const step = [0.25, 0.5, 1, 2, 3, 6, 12, 24, 48, 96, 168, 336, 672].find((h) => hours / h <= room) ?? 672;
+  /*
+    Times to label on the x axis between start and end, spaced so that `room` of them fit in
+    `shown` seconds, the part on screen. They sit on round local times that don't depend on where
+    the range starts, so the labels stay put as the chart moves. Midnight is labelled with its date.
+  */
+  function timeTicks(start, end, room, shown) {
+    const hours = shown / 3600;
+    const step = [0.25, 0.5, 1, 2, 3, 6, 12, 24, 48, 96, 168, 336, 672, 1344, 2688].find((h) => hours / h <= room) ?? 2688;
     const tick = new Date(start * 1000);
     if (step < 1) tick.setMinutes(tick.getMinutes() - (tick.getMinutes() % (step * 60)), 0, 0);
     else tick.setHours(step < 24 ? tick.getHours() - (tick.getHours() % step) : 0, 0, 0, 0);
+    if (step > 24) {
+      // Days counted from a Monday, so weekly labels fall on Mondays.
+      const days = step / 24;
+      const dayNumber = Math.round(Date.UTC(tick.getFullYear(), tick.getMonth(), tick.getDate()) / 86400000) + 3;
+      tick.setDate(tick.getDate() - (((dayNumber % days) + days) % days));
+    }
     const ticks = [];
     while (tick / 1000 < end) {
       if (tick / 1000 >= start) {
-        const showDate = step >= 24 || (hours > 24 && tick.getHours() === 0 && tick.getMinutes() === 0);
+        const showDate = step >= 24 || (tick.getHours() === 0 && tick.getMinutes() === 0);
         ticks.push({ ts: tick / 1000, label: showDate ? shortDate(tick) : clockTime(tick) });
       }
       if (step < 1) tick.setMinutes(tick.getMinutes() + step * 60);
@@ -2042,11 +2072,11 @@
     for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + gap);
     if (ends.length) ends.at(-1).y = Math.min(ends.at(-1).y, bottom);
     for (let i = ends.length - 2; i >= 0; i--) ends[i].y = Math.min(ends[i].y, ends[i + 1].y - gap);
-    for (const end of ends) svg.append(svgEl("text", { x: end.x, y: end.y, class: "chart-words" }, end.label));
+    for (const end of ends) svg.append(svgEl("text", { x: end.x, y: end.y, class: "chart-words chart-end" }, end.label));
   }
 
   function duration(seconds) {
-    const [size, unit] = seconds < 3600 ? [seconds / 60, "minute"] : [seconds / 3600, "hour"];
+    const [size, unit] = seconds < 3600 ? [seconds / 60, "minute"] : seconds < 86400 ? [seconds / 3600, "hour"] : [seconds / 86400, "day"];
     return `${size} ${unit}${size === 1 ? "" : "s"}`;
   }
 
@@ -2076,7 +2106,7 @@
   */
   function touIntervals(start, end) {
     const schedule = latest?.schedule;
-    if (!schedule?.tou_on || !Array.isArray(schedule.periods) || end - start > TOU_SHADE_MAX_SECONDS) return [];
+    if (!schedule?.tou_on || !Array.isArray(schedule.periods)) return [];
     const intervals = [];
     for (const period of schedule.periods) {
       const days = scheduleSet(period.days, WEEKDAYS, ["Every day", "Mon-Sun"]);
@@ -2100,26 +2130,45 @@
 
   const touText = (period) => `Time-of-use: ${TOU_NAMES[period.action] ?? period.action}${period.action === "hold" ? "" : ` at ${period.power_pct}%`}`;
 
+  /* The loaded points whose middle is on screen. They set the y axes, the tooltip and the table. */
+  function visiblePoints() {
+    if (!loaded) return [];
+    const half = loaded.bucket / 2;
+    return loaded.points.filter((point) => point.ts + half >= view.start && point.ts + half <= view.end);
+  }
+
   function renderHistory() {
     const box = $("history-charts");
     $("chart-tip").hidden = true;
-    if (!history || $("view-statistics").hidden) return; // Charts need a width, and a hidden box has none.
-    const { points, start, end, bucket_seconds: bucket } = history;
+    showHistoryControls(view);
+    if (!loaded || $("view-statistics").hidden) return; // Charts need a width, and a hidden box has none.
+    // Until a new interval loads, the old one's points stay up, dimmed, in the new view.
+    const { bucket, points } = loaded;
+    const { start, end } = view;
+    const span = end - start;
+    const visible = visiblePoints();
     const hasSpread = points.some((point) => point.pv_w_min !== undefined);
-    const tou = touIntervals(start, end);
-    $("history-note").textContent = points.length ? [
+    // Everything is drawn a view's width either side as well, so it's there to slide in when dragged.
+    const tou = span <= TOU_SHADE_MAX_SECONDS ? touIntervals(start - span, end + span) : [];
+    const touShown = tou.some((interval) => interval.end > start && interval.start < end);
+    if (firstReading === null && !points.length) {
+      $("history-note").textContent = "";
+      renderHistoryTable();
+      box.replaceChildren(el("p", "no-value", "No readings yet. Readings are only logged while the app is running."));
+      return;
+    }
+    $("history-note").textContent = [
+      visible.length ? "" : "No readings in this stretch of time. Readings are only logged while the app is running.",
       hasSpread
         ? `Each line averages ${duration(bucket)}, and the lighter area around it runs from the lowest to the highest reading in that time, so short spikes still show.`
         : `Each point averages ${duration(bucket)}, so short spikes look smaller, and a charge and a discharge in the same period partly cancel out.`,
       "A break in a line means the app wasn't running or the inverter didn't answer.",
-      tou.length ? "Grey columns are the time-of-use periods as they're set on the inverter now. They may have been set differently on past days." : "",
-      matchMedia("(pointer: fine)").matches ? "Drag across a chart to zoom in." : "",
-    ].filter(Boolean).join(" ") : "";
+      touShown ? "Grey columns are the time-of-use periods as they're set on the inverter now. They may have been set differently on past days." : "",
+      matchMedia("(pointer: fine)").matches
+        ? "Drag a chart to move through time, and hold Ctrl while scrolling over it to zoom."
+        : "Swipe a chart sideways to move through time.",
+    ].filter(Boolean).join(" ");
     renderHistoryTable();
-    if (!points.length) {
-      box.replaceChildren(el("p", "no-value", "No readings in this range. Readings are only logged while the app is running."));
-      return;
-    }
 
     box.replaceChildren();
     const width = box.clientWidth;
@@ -2127,7 +2176,7 @@
       const lastChart = i === HISTORY_CHARTS.length - 1;
       const bottom = chart.height - (lastChart ? X_AXIS_HEIGHT : 10);
       const keys = chart.series.flatMap((s) => [s.key, `${s.key}_min`, `${s.key}_max`]);
-      const known = points.flatMap((p) => keys.map((key) => p[key])).filter(isNum);
+      const known = visible.flatMap((p) => keys.map((key) => p[key])).filter(isNum);
       let [low, high] = chart.domain ?? [Math.max(chart.floor ?? -Infinity, Math.min(0, ...known)), Math.max(0, ...known)];
       if (high - low < 100 && !chart.domain) high = low + 100; // A flat night stays readable.
       return { chart, lastChart, bottom, scale: yScale(low, high, CHART_TOP, bottom, chart.unit) };
@@ -2136,48 +2185,75 @@
     const named = HISTORY_CHARTS.filter((chart) => chart.series.length > 1).flatMap((chart) => chart.series.map((s) => textWidth(s.label)));
     const frame = { left: leftMargin(planned.map((p) => p.scale)), right: endLabels ? Math.ceil(Math.max(...named)) + 12 : CHART_RIGHT, width };
     const plotWidth = width - frame.left - frame.right;
-    const atTime = (ts) => frame.left + (clamp(ts, start, end) - start) / (end - start) * plotWidth;
+    historyFrame = { left: frame.left, plotWidth };
+    const atTime = (ts) => frame.left + (ts - start) / span * plotWidth;
     const x = (ts) => atTime(ts + bucket / 2); // A point is drawn at the middle of the period it averages.
-    const timeAt = (px) => start + clamp(px - frame.left, 0, plotWidth) / plotWidth * (end - start);
-    const xTicks = timeTicks(start, end, Math.max(2, Math.floor(plotWidth / MIN_TICK_SPACING_PX)));
+    const timeAt = (px) => start + clamp(px - frame.left, 0, plotWidth) / plotWidth * span;
+    const xTicks = timeTicks(start - span, end + span, Math.max(2, Math.floor(plotWidth / MIN_TICK_SPACING_PX)), span);
+    const [bandLeft, bandRight] = [frame.left - 24, frame.left + plotWidth + 24];
 
     const drawn = planned.map(({ chart, lastChart, bottom, scale }, i) => {
       const node = chartShell(chart, chart.series, "lines");
       const svg = svgEl("svg", { width, height: chart.height });
+      // Anything past the axes is cut off at their edges. The tooltip and table still give the true value.
+      const clips = svgEl("defs", {});
+      const clip = (id, attrs) => {
+        const path = svgEl("clipPath", { id });
+        path.append(svgEl("rect", attrs));
+        clips.append(path);
+        return id;
+      };
+      const plot = clip(`history-plot-${i}`, { x: frame.left - 2, y: CHART_TOP - 2, width: plotWidth + 4, height: bottom - CHART_TOP + 4 });
+      const band = clip(`history-band-${i}`, { x: bandLeft, y: bottom, width: bandRight - bandLeft, height: chart.height - bottom });
+      svg.append(clips);
+      /* A layer that slides when the chart is dragged: an inner group that moves, in an outer one that clips. */
+      const sliding = (clipId) => {
+        const inner = svgEl("g", { class: "pan" });
+        const outer = svgEl("g", { "clip-path": `url(#${clipId})` });
+        outer.append(inner);
+        svg.append(outer);
+        return inner;
+      };
+
+      const shade = sliding(plot);
       for (const interval of tou) {
         const [left, right] = [atTime(interval.start), atTime(interval.end)];
-        svg.append(svgEl("rect", { x: left, width: right - left, y: CHART_TOP, height: bottom - CHART_TOP, class: "chart-tou" }));
+        shade.append(svgEl("rect", { x: left, width: right - left, y: CHART_TOP, height: bottom - CHART_TOP, class: "chart-tou" }));
         const name = TOU_SHORT[interval.period.action];
         if (i === 0 && name && right - left > textWidth(name) + 8) {
-          svg.append(svgEl("text", { x: (left + right) / 2, y: CHART_TOP + 15, class: "chart-words middle" }, name));
+          shade.append(svgEl("text", { x: (left + right) / 2, y: CHART_TOP + 15, class: "chart-words middle" }, name));
         }
       }
       drawYAxis(svg, frame, scale);
+      const grid = sliding(plot);
       for (const tick of xTicks) {
         const tx = Math.round(atTime(tick.ts)) + 0.5;
-        svg.append(svgEl("line", { x1: tx, x2: tx, y1: CHART_TOP, y2: bottom, class: "chart-grid" }));
-        if (lastChart && tx < width - 20) svg.append(svgEl("text", { x: tx, y: bottom + 17, class: "chart-tick chart-x" }, tick.label));
+        grid.append(svgEl("line", { x1: tx, x2: tx, y1: CHART_TOP, y2: bottom, class: "chart-grid" }));
       }
-      // Anything past the axis is cut off at its edge. The tooltip and table still give the true value.
-      const clipId = `history-clip-${i}`;
-      const clip = svgEl("clipPath", { id: clipId });
-      clip.append(svgEl("rect", { x: frame.left - 2, y: CHART_TOP - 2, width: plotWidth + 4, height: bottom - CHART_TOP + 4 }));
-      const lines = svgEl("g", { "clip-path": `url(#${clipId})` });
-      svg.append(clip, lines);
+      if (lastChart) {
+        const labels = sliding(band);
+        for (const tick of xTicks) {
+          const tx = Math.round(atTime(tick.ts)) + 0.5;
+          const half = textWidth(tick.label) / 2;
+          // Leave out a label the edge would cut in two. Those wholly past it still slide in.
+          if ((tx - half < bandLeft && tx + half > bandLeft) || (tx - half < bandRight && tx + half > bandRight)) continue;
+          labels.append(svgEl("text", { x: tx, y: bottom + 17, class: "chart-tick chart-x" }, tick.label));
+        }
+      }
+      const lines = sliding(plot);
       for (const series of chart.series) {
         lines.append(svgEl("path", { d: spreadPath(points, series.key, x, scale.y, bucket * 2), class: "chart-spread", style: `fill: var(${series.color})` }));
       }
       for (const series of chart.series) {
         lines.append(svgEl("path", { d: linePath(points, series.key, x, scale.y, bucket * 2), class: "chart-line", style: `stroke: var(${series.color})` }));
       }
-      if (endLabels) drawEndLabels(svg, chart, points, x, scale.y, bottom);
+      if (endLabels) drawEndLabels(svg, chart, visible, x, scale.y, bottom);
       drawInsideLabels(svg, frame, scale, bottom, chart.inside);
-      const overlay = svgEl("g", {});
-      const zoom = svgEl("rect", { y: CHART_TOP, height: bottom - CHART_TOP, width: 0, class: "chart-zoom" });
-      svg.append(overlay, zoom);
+      const overlay = svgEl("g", { class: "history-overlay" });
+      svg.append(overlay);
       node.append(svg);
       box.append(node);
-      return { chart, svg, overlay, zoom, scale, bottom };
+      return { chart, svg, overlay, scale, bottom };
     });
 
     const hide = () => {
@@ -2185,7 +2261,8 @@
       for (const { overlay } of drawn) overlay.replaceChildren();
     };
     const show = (index, clientX, clientY) => {
-      const point = points[index];
+      const point = visible[index];
+      if (!point || pan?.moving) return hide();
       const px = x(point.ts);
       for (const { chart, overlay, scale, bottom } of drawn) {
         overlay.replaceChildren(
@@ -2202,45 +2279,24 @@
       showTip(clientX, clientY, `${shortDate(when)}, ${clockTime(when)}`, rows, period && touText(period));
     };
     const pick = (px) => {
+      if (!visible.length) return null;
       const ts = timeAt(px) - bucket / 2;
       let best = 0;
-      for (let i = 1; i < points.length; i++) if (Math.abs(points[i].ts - ts) < Math.abs(points[best].ts - ts)) best = i;
-      return Math.abs(points[best].ts - ts) <= bucket * 2 ? best : null; // Nothing to read in a gap.
-    };
-
-    /* Drag with a mouse to zoom in. Touch keeps scrolling the page, and the range buttons zoom out. */
-    let drag = null;
-    const markZoom = (from, to) => {
-      const [left, right] = [clamp(Math.min(from, to), frame.left, frame.left + plotWidth), clamp(Math.max(from, to), frame.left, frame.left + plotWidth)];
-      for (const { zoom } of drawn) { zoom.setAttribute("x", left); zoom.setAttribute("width", right - left); }
+      for (let i = 1; i < visible.length; i++) if (Math.abs(visible[i].ts - ts) < Math.abs(visible[best].ts - ts)) best = i;
+      return Math.abs(visible[best].ts - ts) <= bucket * 2 ? best : null; // Nothing to read in a gap.
     };
     for (const { chart, svg } of drawn) {
-      makeScrubbable(svg, `${chart.title} (${chart.unit})`, { count: points.length, pick, xOf: (i) => x(points[i].ts), show, hide });
-      const offset = (event) => event.clientX - svg.getBoundingClientRect().left;
-      svg.addEventListener("pointerdown", (event) => {
-        if (event.pointerType !== "mouse" || event.button !== 0) return;
-        drag = { from: offset(event) };
-        svg.setPointerCapture(event.pointerId);
+      makeScrubbable(svg, `${chart.title} (${chart.unit})`, {
+        count: visible.length, pick, xOf: (i) => (visible[i] ? x(visible[i].ts) : 0), show, hide,
       });
-      svg.addEventListener("pointermove", (event) => { if (drag) markZoom(drag.from, offset(event)); });
-      svg.addEventListener("pointerup", (event) => {
-        if (!drag) return;
-        const [from, to] = [drag.from, offset(event)];
-        drag = null;
-        markZoom(0, 0);
-        if (Math.abs(to - from) < 6) return; // A click, not a drag.
-        let [first, last] = [timeAt(Math.min(from, to)), timeAt(Math.max(from, to))];
-        if (last - first < MIN_ZOOM_SECONDS) [first, last] = [(first + last - MIN_ZOOM_SECONDS) / 2, (first + last + MIN_ZOOM_SECONDS) / 2];
-        zoomTo(Math.floor(first), Math.ceil(last));
-      });
-      svg.addEventListener("pointercancel", () => { drag = null; markZoom(0, 0); });
     }
   }
 
   function renderHistoryTable() {
     const open = $("history-details").open;
-    if (!open || !history) return $("history-table").replaceChildren();
-    const hasSpread = history.points.some((point) => point.pv_w_min !== undefined);
+    if (!open || !loaded) return $("history-table").replaceChildren();
+    const visible = visiblePoints();
+    const hasSpread = visible.some((point) => point.pv_w_min !== undefined);
     $("history-table-note").textContent = hasSpread ? "Under each power average are the lowest and highest readings in that period." : "";
     const cell = (point, key) => {
       const node = el("td", "num", isNum(point[key]) ? number(point[key], 0) : "—");
@@ -2248,7 +2304,7 @@
       if (isNum(low) && isNum(high) && low !== high) node.append(el("small", "spread", `${number(low, 0)} to ${number(high, 0)}`));
       return node;
     };
-    $("history-table").replaceChildren(...history.points.toReversed().map((point) => {
+    $("history-table").replaceChildren(...visible.toReversed().map((point) => {
       const row = el("tr");
       const when = new Date(point.ts * 1000);
       row.append(
@@ -2408,14 +2464,65 @@
     }));
   }
 
-  function rangeBounds() {
-    if (range.start) return [range.start, range.end];
-    if (range.day) {
-      const [year, month, day] = range.day.split("-").map(Number);
-      return [new Date(year, month - 1, day) / 1000, new Date(year, month - 1, day + 1) / 1000];
-    }
-    const end = Math.floor(Date.now() / 1000);
-    return [end - range.hours * 3600, end];
+  /* The same period edges as bucket_start in db.py: on the local clock, so a day's periods start
+     at midnight whatever the season. */
+  const utcOffset = (ts) => -new Date(ts * 1000).getTimezoneOffset() * 60;
+  function bucketStart(ts, bucket) {
+    const local = Math.floor((ts + utcOffset(ts)) / bucket) * bucket;
+    return local - utcOffset(local - utcOffset(ts));
+  }
+  const bucketEnd = (ts, bucket) => bucketStart(bucketStart(ts, bucket) + bucket * 1.5, bucket);
+
+  /* How far the view can go: from the period of the first reading to the end of the current one. */
+  function limits(bucket) {
+    const latest = bucketEnd(Date.now() / 1000, bucket);
+    const earliest = firstReading === null ? -Infinity : bucketStart(firstReading, bucket);
+    return { earliest, latest };
+  }
+
+  /* The shortest and longest view at an interval. No longer than the whole history, unless that's under the shortest. */
+  function spanLimits(bucket) {
+    const { earliest, latest } = limits(bucket);
+    const least = MIN_BARS * bucket;
+    return { least, most: Math.max(least, Math.min(MAX_BARS * bucket, latest - earliest)) };
+  }
+
+  /* A view kept within the history. One that's following ends at the current period. */
+  function settle(next) {
+    const { bucket } = next;
+    const { earliest, latest } = limits(bucket);
+    const { least, most } = spanLimits(bucket);
+    const span = clamp(next.end - next.start, least, most);
+    let end = next.following ? latest : Math.min(next.end, latest);
+    if (end - span < earliest) end = Math.min(earliest + span, latest);
+    return { bucket, start: end - span, end, following: end >= latest, day: next.day ?? null };
+  }
+
+  /* A view `span` long at `bucket`. It keeps to now when following, and otherwise keeps time `at`
+     where it is on screen, the middle unless said otherwise. */
+  function zoomView(bucket, span, at = (view.start + view.end) / 2) {
+    const { least, most } = spanLimits(bucket);
+    const next = clamp(span, least, most);
+    if (view.following) return settle({ bucket, start: view.end - next, end: view.end, following: true });
+    const share = (at - view.start) / (view.end - view.start);
+    return settle({ bucket, start: at - share * next, end: at + (1 - share) * next, following: false });
+  }
+
+  /* The view moved along by `dt` seconds. */
+  const moveView = (from, dt) => settle({ ...from, start: from.start + dt, end: from.end + dt, following: false, day: null });
+
+  /* What to ask the server for: the view and half a view either side, so a short move needs no new request. */
+  function wanted(v) {
+    const { earliest, latest } = limits(v.bucket);
+    const span = v.end - v.start;
+    return [Math.floor(Math.max(v.start - span / 2, earliest)), Math.ceil(Math.min(v.end + span / 2, latest))];
+  }
+
+  /* Whether `data` has the view's interval and reaches `margin` seconds past both its edges, or to the end of the history. */
+  function covers(data, v, margin) {
+    if (!data || data.bucket !== v.bucket) return false;
+    const { earliest, latest } = limits(v.bucket);
+    return Math.max(v.start - margin, earliest) >= data.start && Math.min(v.end + margin, latest) <= data.end;
   }
 
   async function getJson(url) {
@@ -2424,19 +2531,33 @@
     return response.json();
   }
 
-  /* A slow answer for an old range must not replace a newer one, hence the request number. */
-  async function refreshHistory() {
+  /* Loads the history around a view, unless enough of it is loaded already. A slow answer for an
+     old view must not replace a newer one, hence the request number. */
+  async function loadAround(v, force = false) {
+    const box = $("history-charts");
+    if (!force && covers(loaded, v, (v.end - v.start) / 4)) return;
+    // Dimmed while what's on screen is out of date. Not for the regular refresh, which would flicker.
+    if (!loaded || loaded.bucket !== v.bucket || (!force && !covers(loaded, v, 0))) box.classList.add("loading");
     const request = ++historyRequest;
-    const [start, end] = rangeBounds();
+    const [start, end] = wanted(v);
     try {
-      const next = await getJson(`/api/history?start=${start}&end=${end}`);
+      const next = await getJson(`/api/history?start=${start}&end=${end}&bucket=${v.bucket}`);
       if (request !== historyRequest) return;
-      history = next;
-      renderHistory();
+      loaded = { bucket: next.bucket_seconds, start: next.start, end: next.end, points: next.points };
+      firstReading = next.first_ts ?? null;
+      view = settle(view);
+      if (!pan?.moving) renderHistory(); // A drag draws when it's let go.
     } catch {
       if (request === historyRequest) $("history-note").textContent = "Couldn't load the history. Showing the last one loaded.";
     }
-    if (request === historyRequest) $("history-charts").classList.remove("loading");
+    if (request === historyRequest) box.classList.remove("loading");
+  }
+
+  /* Brings the history up to date. A view that's following now moves along with it. */
+  function refreshHistory() {
+    if (!view.end) return; // Not set up yet.
+    if (view.following) view = settle(view);
+    return loadAround(view, view.following);
   }
 
   async function refreshDaily() {
@@ -2448,31 +2569,129 @@
     }
   }
 
-  function selectRange(next) {
-    range = next;
-    for (const button of document.querySelectorAll("#range button")) {
-      button.setAttribute("aria-pressed", String(Number(button.dataset.hours) === range.hours));
-    }
-    $("history-day").value = range.day ?? "";
-    $("zoom-reset").hidden = !range.start;
-    $("history-charts").classList.add("loading");
-    refreshHistory();
+  /* The controls and the "from … to …" line, for view `v`. */
+  function showHistoryControls(v) {
+    const { earliest } = limits(v.bucket);
+    const { least, most } = spanLimits(v.bucket);
+    const span = v.end - v.start;
+    $("history-bucket").value = String(v.bucket);
+    $("history-earlier").disabled = v.start <= earliest + 1;
+    $("history-later").disabled = v.following;
+    $("history-now").disabled = v.following;
+    $("history-out").disabled = span >= most - 1;
+    $("history-in").disabled = span <= least + 1;
+    const day = $("history-day");
+    day.value = v.day ?? "";
+    day.max = isoDay(new Date());
+    if (firstReading !== null) day.min = isoDay(new Date(firstReading * 1000));
+    const [from, to] = [new Date(v.start * 1000), new Date(v.end * 1000)];
+    const text = `${shortDate(from)}, ${clockTime(from)} to ${v.following ? "now" : `${shortDate(to)}, ${clockTime(to)}`}`;
+    if ($("history-shown").textContent !== text) $("history-shown").textContent = text;
   }
 
-  /* Zooming remembers the range it started from, so zooming out goes back there. */
-  function zoomTo(start, end) {
-    if (!range.start) rangeBeforeZoom = range;
-    selectRange({ start, end });
+  function showView(next) {
+    view = next;
+    renderHistory();
+    loadAround(view);
   }
 
-  for (const button of document.querySelectorAll("#range button")) {
-    button.addEventListener("click", () => selectRange({ hours: Number(button.dataset.hours) }));
+  function hideHistoryTip() {
+    $("chart-tip").hidden = true;
+    for (const overlay of document.querySelectorAll("#history-charts .history-overlay")) overlay.replaceChildren();
   }
+
+  $("history-bucket").replaceChildren(...HISTORY_BUCKETS.map((bucket) => {
+    const option = el("option", "", duration(bucket));
+    option.value = String(bucket);
+    return option;
+  }));
+  $("history-bucket").addEventListener("change", (event) => showView(zoomView(Number(event.target.value), view.end - view.start)));
+  $("history-earlier").addEventListener("click", () => showView(moveView(view, -(view.end - view.start) / 2)));
+  $("history-later").addEventListener("click", () => showView(moveView(view, (view.end - view.start) / 2)));
+  $("history-out").addEventListener("click", () => showView(zoomView(view.bucket, (view.end - view.start) * 2)));
+  $("history-in").addEventListener("click", () => showView(zoomView(view.bucket, (view.end - view.start) / 2)));
+  $("history-now").addEventListener("click", () => showView(settle({ ...view, following: true, day: null })));
+  /* A day picked is shown whole, or as much of it as has readings, at the nearest interval that fits a day on screen. */
   $("history-day").addEventListener("change", (event) => {
-    selectRange(event.target.value ? { day: event.target.value } : { hours: 24 });
+    const picked = event.target.value;
+    if (!picked) return showView(settle({ bucket: view.bucket, start: 0, end: DEFAULT_VIEW_SECONDS, following: true }));
+    const [year, month, date] = picked.split("-").map(Number);
+    const start = new Date(year, month - 1, date) / 1000;
+    const end = new Date(year, month - 1, date + 1) / 1000;
+    const fits = (bucket) => (end - start) / bucket >= MIN_BARS && (end - start) / bucket <= MAX_BARS;
+    const distance = (bucket) => Math.abs(Math.log(bucket / view.bucket));
+    const bucket = HISTORY_BUCKETS.filter(fits).reduce((best, b) => (distance(b) < distance(best) ? b : best));
+    const { earliest, latest } = limits(bucket);
+    showView(settle({ bucket, start: Math.max(start, earliest), end: Math.min(end, latest), following: false, day: picked }));
   });
-  $("zoom-reset").addEventListener("click", () => selectRange(rangeBeforeZoom ?? { hours: 24 }));
   $("history-details").addEventListener("toggle", renderHistoryTable);
+
+  /*
+    Dragging a chart moves through time, like a trading chart. While the pointer is down the drawn
+    layers only slide, and the charts are redrawn with their new axes once it's let go. A vertical
+    swipe on a touch screen still scrolls the page.
+  */
+  {
+    const box = $("history-charts");
+    box.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || !event.target.closest("svg") || !historyFrame || !loaded) return;
+      pan = { id: event.pointerId, x: event.clientX, moving: false, from: view, to: view };
+    });
+    box.addEventListener("pointermove", (event) => {
+      if (!pan || event.pointerId !== pan.id) return;
+      const dx = event.clientX - pan.x;
+      if (!pan.moving) {
+        if (Math.abs(dx) < PAN_START_PX) return;
+        pan.moving = true;
+        box.setPointerCapture(event.pointerId);
+        box.classList.add("panning");
+        hideHistoryTip();
+      }
+      const span = pan.from.end - pan.from.start;
+      pan.to = moveView(pan.from, clamp(-dx / historyFrame.plotWidth * span, -span, span));
+      const shift = (pan.from.start - pan.to.start) / span * historyFrame.plotWidth;
+      for (const layer of box.querySelectorAll(".pan")) layer.setAttribute("transform", `translate(${shift.toFixed(1)} 0)`);
+      showHistoryControls(pan.to);
+    });
+    const letGo = (event, keep) => {
+      if (!pan || event.pointerId !== pan.id) return;
+      const { moving, to } = pan;
+      pan = null;
+      box.classList.remove("panning");
+      if (!moving) return;
+      if (keep) showView(to);
+      else renderHistory();
+    };
+    box.addEventListener("pointerup", (event) => letGo(event, true));
+    box.addEventListener("pointercancel", (event) => letGo(event, false));
+
+    /* Ctrl and the scroll wheel, or a pinch, zoom. Scrolling sideways moves. Plain scrolling still scrolls the page. */
+    let drawQueued = false;
+    box.addEventListener("wheel", (event) => {
+      const svg = event.target.closest("svg");
+      if (!svg || !historyFrame || !loaded || pan) return;
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerHeight : 1;
+      const span = view.end - view.start;
+      let next;
+      if (event.ctrlKey || event.metaKey) {
+        const px = clamp(event.clientX - svg.getBoundingClientRect().left - historyFrame.left, 0, historyFrame.plotWidth);
+        next = zoomView(view.bucket, span * Math.exp(event.deltaY * unit * 0.002), view.start + px / historyFrame.plotWidth * span);
+      } else if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+        const delta = (event.deltaX || event.deltaY) * unit;
+        next = moveView(view, delta / historyFrame.plotWidth * span);
+      } else {
+        return;
+      }
+      event.preventDefault();
+      view = next;
+      if (!drawQueued) {
+        drawQueued = true;
+        requestAnimationFrame(() => { drawQueued = false; renderHistory(); });
+      }
+      clearTimeout(pendingLoad);
+      pendingLoad = setTimeout(() => loadAround(view), LOAD_DELAY_MS);
+    }, { passive: false });
+  }
   /* The two sets of charts sit side by side on a wide screen, so each has its own width. */
   function redrawOnWidthChange(box, draw) {
     let drawnWidth = 0;
@@ -4045,13 +4264,14 @@
     setInterval(refresh, REFRESH_MS);
   }
   setInterval(renderConnection, 1000);
-  $("history-day").max = isoDay(new Date());
-  selectRange(range);
+  view = settle({ bucket: DEFAULT_BUCKET, start: 0, end: DEFAULT_VIEW_SECONDS, following: true });
+  showHistoryControls(view);
+  loadAround(view, true);
   refreshDaily();
   setInterval(() => {
     // Redrawing would drop the tooltip and keyboard focus from under someone reading a chart.
-    if ($("view-statistics").hidden || !$("chart-tip").hidden || document.activeElement?.closest("#history-charts, #daily-charts, #flow-charts")) return;
-    if (!range.start && (!range.day || range.day === isoDay(new Date()))) refreshHistory();
+    if ($("view-statistics").hidden || pan || !$("chart-tip").hidden || document.activeElement?.closest("#history-charts, #daily-charts, #flow-charts")) return;
+    refreshHistory();
     refreshDaily();
   }, CHART_REFRESH_MS);
 </script>

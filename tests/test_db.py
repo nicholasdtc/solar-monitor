@@ -185,6 +185,54 @@ def test_history_leaves_the_spread_of_a_missing_reading_empty(conn):
     assert (point["grid_w_min"], point["grid_w_max"]) == (None, None)
 
 
+def test_history_uses_the_bucket_it_is_given(conn):
+    db.save_samples(conn, [power(at(2026, 11, 6, 12, minute), minute) for minute in (0, 10, 20, 40)])
+    bucket, points = db.history(conn, at(2026, 11, 6, 12), at(2026, 11, 6, 13), bucket=1800)
+    assert bucket == 1800
+    assert [(p["ts"], p["pv_w"]) for p in points] == [(at(2026, 11, 6, 12), 10), (at(2026, 11, 6, 12, 30), 40)]
+
+
+def test_daily_buckets_start_at_local_midnight(conn):
+    db.save_samples(conn, [
+        db.Sample(at(2026, 11, 6, 0, 30), {"pbattery1": -100, "ppv": 0}),
+        db.Sample(at(2026, 11, 6, 23, 30), {"pbattery1": 300, "ppv": 4}),
+        db.Sample(at(2026, 11, 7, 0, 30), {"ppv": 8}),
+    ])
+    _, points = db.history(conn, at(2026, 11, 6), at(2026, 11, 8), bucket=86400)
+    assert [(p["ts"], p["pv_w"], p["battery_w_min"], p["battery_w_max"]) for p in points] == [
+        (at(2026, 11, 6), 2, -100, 300),
+        (at(2026, 11, 7), 8, None, None),
+    ]
+
+
+def test_a_day_when_the_clocks_change_is_still_one_bucket(conn):
+    # Where the clocks go back on 25 October, that day runs for 25 hours, and the next starts at midnight.
+    db.save_samples(conn, [power(at(2026, 10, 25, 0, 30), 1), power(at(2026, 10, 25, 23, 30), 3), power(at(2026, 10, 26, 0, 30), 5)])
+    _, points = db.history(conn, at(2026, 10, 24), at(2026, 10, 27), bucket=86400)
+    assert [(p["ts"], p["pv_w"]) for p in points] == [(at(2026, 10, 25), 2), (at(2026, 10, 26), 5)]
+
+
+def test_unsaved_readings_join_the_bucket_of_saved_ones(conn):
+    db.save_samples(conn, [power(at(2026, 11, 6, 12), 10)])
+    _, [point] = db.history(conn, at(2026, 11, 6), at(2026, 11, 7), [power(at(2026, 11, 6, 20), 30)], bucket=86400)
+    assert (point["pv_w"], point["pv_w_min"], point["pv_w_max"]) == (20, 10, 30)
+
+
+def test_whole_buckets_widens_a_range_to_the_periods_it_touches():
+    assert db.whole_buckets(at(2026, 11, 6, 12, 10), at(2026, 11, 6, 13, 10), 1800) == (
+        at(2026, 11, 6, 12), at(2026, 11, 6, 13, 30)
+    )
+    assert db.whole_buckets(at(2026, 11, 6), at(2026, 11, 7), 86400) == (at(2026, 11, 6), at(2026, 11, 7))
+    assert db.whole_buckets(at(2026, 10, 25, 12), at(2026, 10, 25, 13), 86400) == (at(2026, 10, 25), at(2026, 10, 26))
+
+
+def test_first_reading_is_the_oldest_saved_or_unsaved(conn):
+    assert db.first_reading(conn) is None
+    assert db.first_reading(conn, [power(900, 1)]) == 900
+    db.save_samples(conn, [power(600, 1), power(1200, 1)])
+    assert db.first_reading(conn, [power(900, 1)]) == 600
+
+
 def flow(ts, pv=0, load=0, battery=0, grid=0):
     return db.Sample(ts, {"ppv": pv, "load_ptotal": load, "pbattery1": battery, "active_power_total": grid})
 
