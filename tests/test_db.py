@@ -169,6 +169,64 @@ def test_history_keeps_a_missing_unsaved_reading_empty_rather_than_zero(conn):
     assert points[0]["pv_w"] is None
 
 
+def test_history_gives_each_power_reading_its_lowest_and_highest(conn):
+    db.save_samples(conn, [
+        db.Sample(600, {"pbattery1": -100, "ppv": 10, "battery_soc": 50}),
+        db.Sample(615, {"pbattery1": 300, "ppv": 20, "battery_soc": 51}),
+    ])
+    _, [point] = db.history(conn, 0, 3600, [db.Sample(630, {"pbattery1": 50, "ppv": 5})])
+    assert (point["battery_w_min"], point["battery_w_max"]) == (-100, 300)
+    assert (point["pv_w_min"], point["pv_w_max"]) == (5, 20)
+    assert "battery_soc_min" not in point
+
+
+def test_history_leaves_the_spread_of_a_missing_reading_empty(conn):
+    _, [point] = db.history(conn, 0, 3600, [db.Sample(600, {"ppv": 10})])
+    assert (point["grid_w_min"], point["grid_w_max"]) == (None, None)
+
+
+def flow(ts, pv=0, load=0, battery=0, grid=0):
+    return db.Sample(ts, {"ppv": pv, "load_ptotal": load, "pbattery1": battery, "active_power_total": grid})
+
+
+def test_daily_flows_send_solar_to_the_house_then_the_battery_then_the_grid(conn):
+    start = at(2026, 11, 6, 12)
+    # 3 kW of solar, 1 kW to the house, 1.5 kW charging, 0.4 kW exported: 0.1 kW is lost in conversion.
+    db.save_samples(conn, [flow(start + 60 * i, pv=3000, load=1000, battery=-1500, grid=400) for i in range(61)])
+    assert db.daily_flows(conn, start, start + 7200) == {"2026-11-06": {
+        "solar_home": 1.0, "solar_battery": 1.5, "solar_export": 0.4, "battery_home": 0.0, "grid_home": 0.0,
+    }}
+
+
+def test_daily_flows_take_the_house_from_solar_then_the_battery_then_the_grid(conn):
+    start = at(2026, 11, 6, 18)
+    db.save_samples(conn, [flow(start + 60 * i, pv=200, load=2000, battery=1000, grid=-900) for i in range(61)])
+    assert db.daily_flows(conn, start, start + 7200)["2026-11-06"] == {
+        "solar_home": 0.2, "solar_battery": 0.0, "solar_export": 0.0, "battery_home": 1.0, "grid_home": 0.8,
+    }
+
+
+def test_daily_flows_count_no_more_than_a_minute_per_reading_across_a_dropout(conn):
+    start = at(2026, 11, 6, 12)
+    db.save_samples(conn, [flow(start, load=1200, grid=-1200), flow(start + 3600, load=1200, grid=-1200)])
+    # The first reading counts for a minute, not the hour until the next. The last has nothing after it.
+    assert db.daily_flows(conn, start, start + 7200)["2026-11-06"]["grid_home"] == 0.02
+
+
+def test_daily_flows_split_at_local_midnight(conn):
+    midnight = at(2026, 11, 7)
+    db.save_samples(conn, [flow(midnight + 60 * i, load=3600, grid=-3600) for i in range(-2, 3)])
+    days = db.daily_flows(conn, midnight - 3600, midnight + 3600)
+    assert {day: kwh["grid_home"] for day, kwh in days.items()} == {"2026-11-06": 0.12, "2026-11-07": 0.12}
+
+
+def test_daily_flows_include_unsaved_readings(conn):
+    start = at(2026, 11, 6, 12)
+    db.save_samples(conn, [flow(start, pv=3600, load=3600)])
+    days = db.daily_flows(conn, start, start + 3600, [flow(start + 60, pv=3600, load=3600)])
+    assert days["2026-11-06"]["solar_home"] == 0.06
+
+
 def test_daily_series_fills_the_calendar_and_shows_days_with_no_readings(conn):
     db.save_samples(conn, [
         db.Sample(at(2026, 11, 4, 8), {"e_total": 10.0}),
