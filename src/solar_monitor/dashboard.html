@@ -94,48 +94,70 @@
   .seg button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); font-weight: 600; position: relative; }
   .seg button:disabled { color: var(--muted); background: var(--surface); cursor: default; }
 
-  /* Header: the app's name. It scrolls away; the bar with the menu doesn't. */
-  .top { background: var(--surface); }
-  .top-in { max-width: var(--board-max); margin: 0 auto; padding: 12px var(--gutter); }
   .alert, #error { padding: 10px var(--gutter); background: #b02a2a; color: #fff; font-weight: 500; }
   #error:empty, .alert:empty { display: none; }
 
   /*
-    Sticky bar: the menu button, named after the open section, and the connection state.
-    The menu opens below the bar, over the page, so the bar keeps its height and the table
-    header rows and tooltips placed under it stay put.
+    Sticky bar: the app's name, the sections and the connection state. Where there's room the
+    sections are a row of tabs. Narrower, they're a menu opened from a button named after the open
+    section. The menu drops below the bar, over the page, so the bar keeps its height and the table
+    header rows and tooltips placed under it stay put. TAB_ROW in the script has the same width.
   */
   .tabs { position: sticky; top: 0; z-index: 5; flex: none; background: var(--surface); border-block: 1px solid var(--rule-strong); }
   .tabs-in { max-width: var(--board-max); margin: 0 auto; display: flex; height: var(--tabs-h); }
-  .menu-button {
-    flex: 0 1 auto; margin-right: auto; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0 16px 0 var(--gutter);
-    cursor: pointer; background: none; border: 0; color: var(--ink); font-weight: 600; text-align: left;
-  }
-  .menu-button:hover, .menu-button[aria-expanded="true"] { background: var(--page); }
-  .menu-button .bars { flex: none; width: 18px; height: 12px; border-block: 2px solid currentColor; position: relative; }
-  .menu-button .bars::after { content: ""; position: absolute; inset: 3px 0 auto; border-top: 2px solid currentColor; }
-  .menu-button .current { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .menu-button .caret { flex: none; color: var(--muted); font-size: 12px; transition: transform 0.15s; }
-  .menu-button[aria-expanded="true"] .caret { transform: rotate(180deg); }
-  .menu {
-    position: absolute; top: 100%; left: max(0px, (100% - var(--board-max)) / 2); width: min(100%, 320px);
-    max-height: calc(100dvh - var(--tabs-h) - 16px); overflow-y: auto; margin-top: 1px;
-    background: var(--surface); border: 1px solid var(--rule-strong); border-top: 0;
-    box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
-  }
+  .tabs h1 { flex: none; align-self: center; padding: 0 20px 0 var(--gutter); white-space: nowrap; }
+  .sections { flex: 1; min-width: 0; display: flex; }
   .menu ul { list-style: none; margin: 0; padding: 0; }
-  .menu a, .menu form button {
-    display: flex; align-items: center; width: 100%; min-height: 48px; padding: 0 var(--gutter);
-    color: var(--ink-2); font-weight: 500; text-decoration: none; border-bottom: 1px solid var(--rule);
-  }
+  .menu a, .menu form button { display: flex; align-items: center; color: var(--ink-2); font-weight: 500; text-decoration: none; }
   .menu a:hover, .menu form button:hover { background: var(--page); color: var(--ink); }
   .menu a[aria-current="page"] { background: var(--ink); color: var(--surface); font-weight: 600; }
   .menu form { margin: 0; }
-  .menu form button { cursor: pointer; background: none; border: 0; border-bottom: 1px solid var(--rule); text-align: left; }
-  @media (max-width: 640px) { .menu { width: 100%; border-inline: 0; } }
+  .menu form button { cursor: pointer; background: none; border: 0; text-align: left; }
+  @media (max-width: 1339px) {
+    .menu-button {
+      flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0 16px;
+      cursor: pointer; background: none; border: 0; border-left: 1px solid var(--rule); color: var(--ink); font-weight: 600; text-align: left;
+    }
+    .menu-button:hover, .menu-button[aria-expanded="true"] { background: var(--page); }
+    .menu-button .bars { flex: none; width: 18px; height: 12px; border-block: 2px solid currentColor; position: relative; }
+    .menu-button .bars::after { content: ""; position: absolute; inset: 3px 0 auto; border-top: 2px solid currentColor; }
+    .menu-button .current { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .menu-button .caret { flex: none; color: var(--muted); font-size: 12px; transition: transform 0.15s; }
+    .menu-button[aria-expanded="true"] .caret { transform: rotate(180deg); }
+    .menu-button[aria-expanded="false"] + .menu { display: none; }
+    /* Under the button, or across the whole screen on a phone. */
+    .sections { position: relative; }
+    .menu {
+      position: absolute; top: 100%; left: 0; width: 320px;
+      max-height: calc(100dvh - var(--tabs-h) - 16px); overflow-y: auto; margin-top: 1px;
+      background: var(--surface); border: 1px solid var(--rule-strong); border-top: 0;
+      box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
+    }
+    .menu a, .menu form button { width: 100%; min-height: 48px; padding: 0 var(--gutter); border-bottom: 1px solid var(--rule); }
+  }
+  /* On a phone the open section's name can take two lines beside the app's name. */
+  @media (max-width: 640px) {
+    .tabs h1 { font-size: 20px; padding-right: 12px; }
+    .menu-button { padding-inline: 12px; }
+    .menu-button .current { white-space: normal; line-height: 1.2; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .sections { position: static; }
+    .menu { width: 100%; border-inline: 0; }
+  }
+  @media (max-width: 400px) { .menu-button .bars { display: none; } }
+  @media (min-width: 1340px) {
+    .menu-button { display: none; }
+    .menu, .menu ul { flex: 1; min-width: 0; display: flex; }
+    .menu ul { overflow-x: auto; scrollbar-width: none; }
+    .menu ul::-webkit-scrollbar { display: none; }
+    .menu li, .menu form { flex: none; display: flex; }
+    .menu a, .menu form button { padding: 0 16px; white-space: nowrap; border-left: 1px solid var(--rule); }
+    /* Log out stands apart from the sections, at the far end. */
+    .menu li:last-child { margin-left: auto; }
+  }
   .conn { flex: none; display: flex; align-items: center; padding: 0 var(--gutter) 0 12px; border-left: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); }
   .conn .long { display: none; }
-  @media (min-width: 1280px) { .conn .long { display: inline; } .conn .short { display: none; } }
+  /* Wide enough for the tab row and the whole label. */
+  @media (min-width: 1500px) { .conn .long { display: inline; } .conn .short { display: none; } }
 
   .status { display: inline-flex; gap: 6px; align-items: baseline; white-space: nowrap; }
   .icon {
@@ -432,36 +454,33 @@
 </head>
 <body>
 
-<header class="top">
-  <div class="top-in">
+<div id="tabs-top"></div>
+<header class="tabs">
+  <div class="tabs-in">
     <h1>Solar monitor</h1>
+    <nav class="sections" id="sections" aria-label="Sections">
+      <button type="button" class="menu-button" id="menu-button" aria-expanded="false" aria-controls="menu">
+        <span class="bars" aria-hidden="true"></span><span class="current" id="menu-current">Dashboard</span><span class="caret" aria-hidden="true">▼</span>
+      </button>
+      <div class="menu" id="menu">
+        <ul id="tab-links">
+          <li><a href="#dashboard" aria-current="page">Dashboard</a></li>
+          <li><a href="#statistics">Statistics</a></li>
+          <li><a href="#grid-meter">Grid meter</a></li>
+          <li><a href="#counters">Counters &amp; checks</a></li>
+          <li><a href="#appliances">Appliances &amp; tariffs</a></li>
+          <li><a href="#schedule">Battery schedule</a></li>
+          <li><a href="#fields">All fields</a></li>
+          <li><a href="#app-data">App Data</a></li>
+          <li><form id="logout" method="post" action="/logout" hidden><button>Log out</button></form></li>
+        </ul>
+      </div>
+    </nav>
+    <div class="conn" id="conn" tabindex="0" data-tip=""></div>
   </div>
 </header>
 <p id="error" role="alert"></p>
 <p class="alert" id="storage-error" role="alert"></p>
-
-<div id="tabs-top"></div>
-<nav class="tabs" aria-label="Sections">
-  <div class="tabs-in">
-    <button type="button" class="menu-button" id="menu-button" aria-expanded="false" aria-controls="menu">
-      <span class="bars" aria-hidden="true"></span><span class="current" id="menu-current">Dashboard</span><span class="caret" aria-hidden="true">▼</span>
-    </button>
-    <div class="conn" id="conn" tabindex="0" data-tip=""></div>
-  </div>
-  <div class="menu" id="menu" hidden>
-    <ul id="tab-links">
-      <li><a href="#dashboard" aria-current="page">Dashboard</a></li>
-      <li><a href="#statistics">Statistics</a></li>
-      <li><a href="#grid-meter">Grid meter</a></li>
-      <li><a href="#counters">Counters &amp; checks</a></li>
-      <li><a href="#appliances">Appliances &amp; tariffs</a></li>
-      <li><a href="#schedule">Battery schedule</a></li>
-      <li><a href="#fields">All fields</a></li>
-      <li><a href="#app-data">App Data</a></li>
-      <li><form id="logout" method="post" action="/logout" hidden><button>Log out</button></form></li>
-    </ul>
-  </div>
-</nav>
 
 <main>
   <section class="view dash" id="view-dashboard" aria-label="Dashboard">
@@ -1846,7 +1865,7 @@
     });
     play.addEventListener("click", () => (timer ? pause() : resume()));
 
-    $("menu-button").style.visibility = "hidden";
+    $("sections").style.visibility = "hidden";
     $("flow-test").hidden = false;
     buildFlow();
     show(0);
@@ -4720,22 +4739,27 @@
     "#app-data": "view-app-data",
   };
 
-  /* The sections are listed in a menu under the bar, which closes once one is chosen. */
+  /*
+    Where they fit, the sections are a row of tabs in the bar. Narrower, they're listed in a menu
+    under the bar, which closes once one is chosen. The width is the CSS's.
+  */
+  const TAB_ROW = matchMedia("(min-width: 1340px)");
+  const menuOpen = () => $("menu-button").getAttribute("aria-expanded") === "true";
   function setMenu(open) {
-    $("menu").hidden = !open;
     $("menu-button").setAttribute("aria-expanded", String(open));
   }
-  $("menu-button").addEventListener("click", () => setMenu($("menu").hidden));
+  $("menu-button").addEventListener("click", () => setMenu(!menuOpen()));
   // The open section's own link changes no hash, so it would leave the menu open.
   $("tab-links").addEventListener("click", (event) => { if (event.target.closest("a")) setMenu(false); });
   document.addEventListener("click", (event) => {
-    if (!$("menu").hidden && !event.target.closest("#menu, #menu-button")) setMenu(false);
+    if (menuOpen() && !event.target.closest("#menu, #menu-button")) setMenu(false);
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || $("menu").hidden) return;
+    if (event.key !== "Escape" || !menuOpen()) return;
     setMenu(false);
     $("menu-button").focus();
   });
+  TAB_ROW.addEventListener("change", () => setMenu(false));
 
   function showTab() {
     // Links saved when the first tab was called Live still open it.
@@ -4878,7 +4902,7 @@
 
     main.addEventListener("pointerdown", (event) => {
       if (swipe || settling || FLOW_TEST || !event.isPrimary || event.button !== 0 || zoomed()) return;
-      if (!$("menu").hidden || event.target.closest(NOT_SWIPED) || scrollsSideways(event.target)) return;
+      if (menuOpen() || event.target.closest(NOT_SWIPED) || scrollsSideways(event.target)) return;
       const tab = Object.keys(TABS).find((hash) => !$(TABS[hash]).hidden);
       if (tab) swipe = { id: event.pointerId, x: event.clientX, y: event.clientY, tab, moving: false, dx: 0, samples: [] };
     });
