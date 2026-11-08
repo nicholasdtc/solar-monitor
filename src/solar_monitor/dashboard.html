@@ -148,7 +148,17 @@
   .waiting .icon { background: var(--rule); color: var(--ink-2); }
 
   /* The board */
-  main { flex: 1; display: flex; flex-direction: column; }
+  main { flex: 1; display: flex; flex-direction: column; position: relative; overflow-x: clip; }
+  /*
+    A sideways swipe outside the charts and controls turns to the next or previous section, like a
+    carousel. Vertical scrolling and pinching stay the browser's, and a zoomed-in page pans as usual.
+  */
+  body:not(.zoomed) main { touch-action: pan-y pinch-zoom; }
+  .swiping { user-select: none; -webkit-user-select: none; cursor: grabbing; }
+  .swiping .head-pin { visibility: hidden; }
+  .view.swipe-next { position: absolute; left: 0; right: 0; }
+  .view.swipe-move { will-change: transform; }
+  .view.swipe-settle { transition: transform var(--swipe-ms, 280ms) cubic-bezier(0.2, 0.75, 0.25, 1); }
   .view { flex: 1; width: 100%; max-width: var(--board-max); margin: 0 auto; display: grid; gap: 1px; background: var(--rule); align-content: stretch; border-inline: 0 solid var(--rule); }
   @media (min-width: 1841px) { .view { border-inline-width: 1px; } }
   .pane { min-width: 0; background: var(--surface); padding: 16px var(--gutter) 24px; display: flex; flex-direction: column; gap: 12px; }
@@ -4751,12 +4761,171 @@
       refreshDaily();
     }
   }
+  let afterTabChange = null; // Set by a swipe, to drop its sliding once the new section shows.
   window.addEventListener("hashchange", () => {
     showTab();
     // Each tab starts at its top, just under the bar, wherever the last one was scrolled to.
     const top = $("tabs-top").getBoundingClientRect().top + scrollY;
     if (scrollY > top) scrollTo(0, top);
+    afterTabChange?.();
+    afterTabChange = null;
   });
+
+  /*
+    Dragging sideways anywhere that isn't a chart or a control slides the section along, like a
+    carousel: the next one in the menu comes in from the right and the previous one from the left.
+    Let go past a quarter of the way, or with a flick, and it turns; otherwise it slides back. The
+    section coming in is lined up where it will sit once turned, just under the bar.
+  */
+  {
+    // Functions here are consts: a function declared in a block would replace the history chart's settle().
+    const SWIPE_START_PX = 10;
+    const TURN_SHARE = 0.25; // Of the width, dragged before letting go turns the section.
+    const FLICK_PX_PER_MS = 0.4;
+    const NOT_SWIPED =
+      "svg, canvas, .stage, input, select, textarea, button, a, label, summary, [role=slider], [contenteditable], [tabindex], [data-tip], [data-no-swipe]";
+    const order = Object.keys(TABS);
+    const main = document.querySelector("main");
+    const still = matchMedia("(prefers-reduced-motion: reduce)");
+    let swipe = null;
+    let settling = false;
+
+    // A zoomed-in page needs sideways dragging to pan, so swiping waits until it's zoomed back out.
+    const zoomed = () => (window.visualViewport?.scale ?? 1) > 1.01;
+    window.visualViewport?.addEventListener("resize", () => document.body.classList.toggle("zoomed", zoomed()));
+
+    // Anything inside that scrolls sideways, such as a wide table, keeps its own dragging.
+    const scrollsSideways = function (node) {
+      for (; node && node !== main; node = node.parentElement) {
+        if (node.scrollWidth > node.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(node).overflowX)) return true;
+      }
+      return false;
+    };
+
+    // Measured before any section is lined up, as one that's taller than the page lengthens it.
+    const measurePage = function () {
+      const mainTop = main.getBoundingClientRect().top + scrollY;
+      return {
+        mainTop,
+        barTop: $("tabs-top").getBoundingClientRect().top + scrollY,
+        below: document.documentElement.scrollHeight - (mainTop + main.offsetHeight),
+        screen: document.documentElement.clientHeight,
+      };
+    };
+
+    const lineUp = function (hash, { mainTop, barTop, below, screen }) {
+      const view = $(TABS[hash]);
+      view.hidden = false;
+      view.classList.add("swipe-next", "swipe-move");
+      // Where the page will be scrolled once it's showing: brought up to the bar by the hash
+      // change, and no further than a short section leaves room for.
+      const height = view.offsetHeight; // Its own, before it's stretched.
+      const room = Math.max(0, mainTop + height + below - screen);
+      const top = scrollY - Math.min(scrollY > barTop ? barTop : scrollY, room);
+      view.style.top = `${top}px`;
+      // As tall as it will stretch once it's the one showing, so the page behind doesn't show.
+      view.style.minHeight = `${main.clientHeight - top}px`;
+      return { hash, view };
+    };
+
+    const slide = function () {
+      const { dx, width, current, after, before } = swipe;
+      // With no section further that way, it gives a little and no more.
+      const shift = (dx < 0 ? after : before) ? dx : dx / 3;
+      current.style.transform = `translateX(${shift}px)`;
+      if (after) after.view.style.transform = `translateX(${shift + width}px)`;
+      if (before) before.view.style.transform = `translateX(${shift - width}px)`;
+    };
+
+    const settle = function (turnTo) {
+      const { dx, width, current, after, before } = swipe;
+      swipe = null;
+      settling = true;
+      const end = turnTo === after ? -width : turnTo === before ? width : 0;
+      const placed = [[current, end], [after?.view, end + width], [before?.view, end - width]].filter(([view]) => view);
+      const ms = still.matches ? 0 : Math.round(140 + 160 * Math.min(1, Math.abs(end - dx) / width));
+      const done = () => {
+        for (const [view] of placed) {
+          view.classList.remove("swipe-next", "swipe-move", "swipe-settle");
+          view.style.transform = view.style.top = view.style.minHeight = "";
+          view.style.removeProperty("--swipe-ms");
+          if (view !== current && view !== turnTo?.view) view.hidden = true;
+        }
+        document.body.classList.remove("swiping");
+        settling = false;
+      };
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        if (!turnTo) return done();
+        // The hash change shows the new section and hides this one, then the sliding is dropped.
+        afterTabChange = done;
+        location.hash = turnTo.hash;
+      };
+      for (const [view, x] of placed) {
+        view.style.setProperty("--swipe-ms", `${ms}ms`);
+        view.classList.add("swipe-settle");
+        view.style.transform = `translateX(${x}px)`;
+      }
+      if (!ms) return finish();
+      current.addEventListener("transitionend", (event) => { if (event.target === current) finish(); });
+      setTimeout(finish, ms + 80); // As no transition runs when nothing has to move.
+    };
+
+    main.addEventListener("pointerdown", (event) => {
+      if (swipe || settling || FLOW_TEST || !event.isPrimary || event.button !== 0 || zoomed()) return;
+      if (!$("menu").hidden || event.target.closest(NOT_SWIPED) || scrollsSideways(event.target)) return;
+      const tab = Object.keys(TABS).find((hash) => !$(TABS[hash]).hidden);
+      if (tab) swipe = { id: event.pointerId, x: event.clientX, y: event.clientY, tab, moving: false, dx: 0, samples: [] };
+    });
+
+    main.addEventListener("pointermove", (event) => {
+      if (!swipe || event.pointerId !== swipe.id) return;
+      const dx = event.clientX - swipe.x;
+      const dy = event.clientY - swipe.y;
+      if (!swipe.moving) {
+        // Up or down first is scrolling, or choosing text with a mouse.
+        if (Math.abs(dy) >= SWIPE_START_PX && Math.abs(dy) >= Math.abs(dx)) { swipe = null; return; }
+        if (Math.abs(dx) < SWIPE_START_PX || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+        swipe.moving = true;
+        try { main.setPointerCapture(event.pointerId); } catch { /* Already let go. */ }
+        document.body.classList.add("swiping");
+        getSelection()?.removeAllRanges();
+        if (!$("chart-tip").hidden) dropTip();
+        const at = order.indexOf(swipe.tab);
+        swipe.current = $(TABS[swipe.tab]);
+        swipe.current.classList.add("swipe-move");
+        swipe.width = main.clientWidth;
+        const page = measurePage();
+        if (order[at + 1]) swipe.after = lineUp(order[at + 1], page);
+        if (order[at - 1]) swipe.before = lineUp(order[at - 1], page);
+      }
+      swipe.dx = dx;
+      swipe.samples.push([event.timeStamp, event.clientX]);
+      if (swipe.samples.length > 5) swipe.samples.shift();
+      slide();
+    });
+
+    const letGo = function (event, cancelled) {
+      if (!swipe || event.pointerId !== swipe.id) return;
+      if (!swipe.moving) { swipe = null; return; }
+      const [t0, x0] = swipe.samples[0];
+      const [t1, x1] = swipe.samples.at(-1);
+      const speed = t1 > t0 ? (x1 - x0) / (t1 - t0) : 0;
+      const { dx, width } = swipe;
+      // Far enough or flicked that way, and not flicked back the other way at the end.
+      const forward = dx < 0 && (dx < -width * TURN_SHARE || speed < -FLICK_PX_PER_MS) && speed <= FLICK_PX_PER_MS;
+      const back = dx > 0 && (dx > width * TURN_SHARE || speed > FLICK_PX_PER_MS) && speed >= -FLICK_PX_PER_MS;
+      // A mouse lets go with a click on whatever it's over, which shouldn't count after a drag.
+      const swallow = (click) => { click.stopPropagation(); click.preventDefault(); };
+      document.addEventListener("click", swallow, { capture: true, once: true });
+      setTimeout(() => document.removeEventListener("click", swallow, true), 0);
+      settle(cancelled ? null : (forward && swipe.after) || (back && swipe.before) || null);
+    };
+    main.addEventListener("pointerup", (event) => letGo(event, false));
+    main.addEventListener("pointercancel", (event) => letGo(event, true));
+  }
   setInterval(() => { if (!$("view-appliances").hidden) refreshOverview(); }, APPLIANCES_REFRESH_MS);
 
   /*
