@@ -542,7 +542,7 @@
 
     <div class="pane span-all gm-data">
       <div class="chart-head">
-        <div class="head-text"><h2>Every half-hour</h2><p class="meta">Each column is a day and each row a half-hour, coloured by the average kW. Click a day to open it above.</p></div>
+        <div class="head-text"><h2>Every half-hour</h2><p class="meta">Each column is a day and each row a half-hour, coloured by the average kW. <span id="gm-carpet-hint">Click a day to open it above.</span></p></div>
       </div>
       <div class="legend bars" id="gm-heat-legend"></div>
       <div class="carpet" id="gm-carpet">
@@ -1998,29 +1998,111 @@
     tip.style.top = `${clamp(y - box.height / 2, 8, innerHeight - box.height - 8)}px`;
   }
 
+  /*
+    On a touch screen a tapped chart's tooltip stays up to be read, until a tap anywhere else. A
+    finger lifting off fires pointerleave, so the charts only hide their tooltip on leaving for a
+    mouse or a pen. tipOwner is the chart that put the tooltip up, with the hide() that also clears
+    its crosshair or highlight. The tap is caught on its way down, so a tap on a button still
+    works, and a tap on another chart puts its own tooltip up straight after.
+  */
+  let tipOwner = null;
+  const ownTip = (node, hide) => { tipOwner = { node, hide }; };
+  // Whether a chart losing focus should hide the tooltip: not when another chart has put it up since.
+  const ownsTip = (node) => !tipOwner || tipOwner.node === node;
+  function dropTip() {
+    const owner = tipOwner;
+    tipOwner = null;
+    $("chart-tip").hidden = true;
+    owner?.hide();
+  }
+  document.addEventListener("pointerdown", (event) => {
+    if (tipOwner && !$("chart-tip").hidden && !tipOwner.node.contains(event.target)) dropTip();
+  }, true);
+  // Charts don't refresh under a tooltip, so one left up doesn't stop them refreshing for good.
+  document.addEventListener("visibilitychange", () => { if (document.hidden) dropTip(); });
+  const FINGER_PX = 16; // How far apart two taps can land and still be on the same thing.
+
   /* Pointer and arrow-key access to a chart's points. pick() maps an x offset to an index. */
   function makeScrubbable(svg, label, { count, pick, xOf, show, hide }) {
     let index = null;
+    const showAt = (i, x, y) => {
+      ownTip(svg, hide);
+      show(i, x, y);
+    };
     const fromPointer = (event) => {
       index = pick(event.clientX - svg.getBoundingClientRect().left);
       if (index === null) hide();
-      else show(index, event.clientX, event.clientY);
+      else showAt(index, event.clientX, event.clientY);
     };
     svg.setAttribute("tabindex", "0");
     svg.setAttribute("role", "group");
     svg.setAttribute("aria-label", `${label}. Use the left and right arrow keys to read values.`);
     svg.addEventListener("pointermove", fromPointer);
     svg.addEventListener("pointerdown", fromPointer);
-    svg.addEventListener("pointerleave", hide);
-    svg.addEventListener("blur", hide);
+    svg.addEventListener("pointerleave", (event) => { if (event.pointerType !== "touch") hide(); });
+    // The browser took the touch to scroll the page, so the chart is about to move from under the tooltip.
+    svg.addEventListener("pointercancel", hide);
+    svg.addEventListener("blur", () => { if (ownsTip(svg)) hide(); });
     svg.addEventListener("keydown", (event) => {
       const move = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
       if (!move) return;
       event.preventDefault();
       index = clamp((index ?? count) + move, 0, count - 1);
       const box = svg.getBoundingClientRect();
-      show(index, box.left + xOf(index), box.top + box.height / 2);
+      showAt(index, box.left + xOf(index), box.top + box.height / 2);
     });
+  }
+
+  /*
+    For a chart whose items open on a click. With a mouse, pointing at an item reads it and a click
+    opens it. On a touch screen a tap reads it and leaves its tooltip up, and a second tap on it, or
+    within a fingertip of the first, opens it. at(event) is the item under the pointer or null,
+    same(a, b) whether two items are one, and open(item) opens it. read(item, event, hint) shows the
+    tooltip, where `hint` says how the item would open: "click", "tap" again, or null mid-swipe.
+  */
+  function readThenOpen(node, { at, same, read, open, hide }) {
+    let pointer = "mouse"; // From pointerdown, as a click doesn't always say what made it.
+    let held = null; // { item, x, y }: what a tap is reading, and where the tap landed.
+    let heldAtDown = null; // `held` as the latest press began, before any move could change it.
+    const drop = () => {
+      held = null;
+      hide();
+    };
+    const show = (item, event, hint) => {
+      ownTip(node, drop);
+      read(item, event, hint);
+    };
+    node.addEventListener("pointerdown", (event) => {
+      pointer = event.pointerType;
+      heldAtDown = held && tipOwner?.node === node && !$("chart-tip").hidden ? held : null;
+    });
+    node.addEventListener("pointermove", (event) => {
+      const item = at(event);
+      if (held && !(item && same(item, held.item))) held = null;
+      if (item) show(item, event, event.pointerType === "touch" ? null : "click");
+      else drop();
+    });
+    node.addEventListener("pointerleave", (event) => { if (event.pointerType !== "touch") drop(); });
+    node.addEventListener("pointercancel", drop);
+    node.addEventListener("click", (event) => {
+      const item = at(event);
+      if (pointer === "touch") {
+        const again = heldAtDown && ((item && same(item, heldAtDown.item))
+          || Math.hypot(event.clientX - heldAtDown.x, event.clientY - heldAtDown.y) <= FINGER_PX);
+        if (again) {
+          drop();
+          open(heldAtDown.item);
+        } else if (item) {
+          show(item, event, "tap");
+          held = { item, x: event.clientX, y: event.clientY };
+        }
+        return;
+      }
+      if (!item) return;
+      drop();
+      open(item);
+    });
+    return { own: () => ownTip(node, drop) };
   }
 
   /* Line path that breaks across gaps. "h0" makes a lone point draw as a dot. */
@@ -3389,7 +3471,10 @@
       barFocus = Math.min(barFocus, bars.length - 1);
       const monthly = bars[0].kind === "month";
       $("gm-bars-sub").textContent = zoom ? `${monthLabel(zoom)}: kWh imported each day` : `kWh imported each ${monthly ? "month" : "day"}`;
-      $("gm-bars-hint").textContent = monthly ? "Click a month to see its days." : "Click a day to see its half-hours.";
+      const below = monthly ? ["month", "days"] : ["day", "half-hours"];
+      $("gm-bars-hint").textContent = matchMedia("(pointer: fine)").matches
+        ? `Click a ${below[0]} to see its ${below[1]}.`
+        : `Tap a ${below[0]} to read it, and tap it again to see its ${below[1]}.`;
       $("gm-zoom-out").hidden = !zoom;
       $("gm-bars-col").textContent = monthly ? "Month" : "Day";
       $("gm-bars-table").replaceChildren(...bars.toReversed().map((bar) => {
@@ -3467,7 +3552,7 @@
       else barsFocus.setAttribute("visibility", "hidden");
     }
 
-    function barTip(i, x, y) {
+    function barTip(i, x, y, extra = []) {
       const bar = bars[i];
       const rows = [
         { label: "Total", value: `${number(bar.total, 1)} kWh` },
@@ -3475,7 +3560,7 @@
       ];
       const cost = costOf(bar.kwh);
       if (cost !== null) rows.push({ label: "Cost", value: money(cost) });
-      showTip(x, y, bar.label, rows, sentences(bar.notes));
+      showTip(x, y, bar.label, rows, sentences([...bar.notes, ...extra]));
     }
 
     function barAt(event) {
@@ -3489,6 +3574,7 @@
       const box = barsSvg.getBoundingClientRect();
       const place = { x: m.l + step * barFocus + 1, y: m.t - 4, width: Math.max(2, step - 2), height: plotHeight + 12, visibility: "visible" };
       for (const [name, value] of Object.entries(place)) barsFocus.setAttribute(name, value);
+      barTouch.own();
       barTip(barFocus, box.left + m.l + step * (barFocus + 1), box.top + m.t + 40);
     }
 
@@ -3510,17 +3596,16 @@
       renderBars(key);
     }
 
-    barsSvg.addEventListener("pointermove", (event) => {
-      const i = barAt(event);
-      if (i < 0) hideTip();
-      else barTip(i, event.clientX, event.clientY);
-    });
-    barsSvg.addEventListener("pointerleave", hideTip);
-    barsSvg.addEventListener("click", (event) => {
-      const i = barAt(event);
-      if (i < 0) return;
-      hideTip();
-      openBar(i, true);
+    const barTouch = readThenOpen(barsSvg, {
+      at: (event) => { const i = barAt(event); return i < 0 ? null : bars[i].key; },
+      same: (a, b) => a === b,
+      read: (key, event, hint) => {
+        const i = bars.findIndex((bar) => bar.key === key);
+        const how = hint === "tap" ? [`Tap again to see its ${bars[i].kind === "month" ? "days" : "half-hours"}`] : [];
+        barTip(i, event.clientX, event.clientY, how);
+      },
+      open: (key) => openBar(bars.findIndex((bar) => bar.key === key), true),
+      hide: hideTip,
     });
     barsSvg.addEventListener("focus", () => {
       if (!barsSvg.matches(":focus-visible") || !barsShape) return;
@@ -3529,7 +3614,7 @@
     });
     barsSvg.addEventListener("blur", () => {
       barsFocus.setAttribute("visibility", "hidden");
-      hideTip();
+      if (ownsTip(barsSvg)) hideTip();
     });
     barsSvg.addEventListener("keydown", (event) => {
       if (!barsShape) return;
@@ -3690,19 +3775,24 @@
       const box = daySvg.getBoundingClientRect();
       const place = { x: m.l + step * slotFocus, y: m.t - 4, width: step, height: plotHeight + 8, visibility: "visible" };
       for (const [name, value] of Object.entries(place)) dayFocus.setAttribute(name, value);
+      ownTip(daySvg, hideTip);
       slotTip(days[dayIndex.get(selected)], slotFocus, box.left + m.l + step * (slotFocus + 1), box.top + m.t + 40);
     }
 
-    daySvg.addEventListener("pointermove", (event) => {
+    const slotFromPointer = (event) => {
       const slot = slotAt(event);
-      if (slot < 0) hideTip();
-      else slotTip(days[dayIndex.get(selected)], slot, event.clientX, event.clientY);
-    });
-    daySvg.addEventListener("pointerleave", hideTip);
+      if (slot < 0) return hideTip();
+      ownTip(daySvg, hideTip);
+      slotTip(days[dayIndex.get(selected)], slot, event.clientX, event.clientY);
+    };
+    daySvg.addEventListener("pointermove", slotFromPointer);
+    daySvg.addEventListener("pointerdown", slotFromPointer);
+    daySvg.addEventListener("pointerleave", (event) => { if (event.pointerType !== "touch") hideTip(); });
+    daySvg.addEventListener("pointercancel", hideTip);
     daySvg.addEventListener("focus", () => { if (daySvg.matches(":focus-visible") && dayShape) focusSlot(); });
     daySvg.addEventListener("blur", () => {
       dayFocus.setAttribute("visibility", "hidden");
-      hideTip();
+      if (ownsTip(daySvg)) hideTip();
     });
     daySvg.addEventListener("keydown", (event) => {
       if (!dayShape) return;
@@ -3743,6 +3833,7 @@
 
     const canvas = $("gm-carpet-canvas");
     const cursor = $("gm-carpet-cursor");
+    if (!matchMedia("(pointer: fine)").matches) $("gm-carpet-hint").textContent = "Tap a day to read it, and tap it again to open it above.";
     let carpet = null;
     const token = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -3853,33 +3944,29 @@
       cursor.hidden = false;
     }
 
-    const cellTip = (cell, x, y) => slotTip(carpet.span[cell.i], cell.slot, x, y, ["Click to open this day"]);
+    const CELL_HINTS = { click: "Click to open this day", tap: "Tap again to open this day" };
+    const cellTip = (cell, x, y, hint = "click") => slotTip(carpet.span[cell.i], cell.slot, x, y, CELL_HINTS[hint] ? [CELL_HINTS[hint]] : []);
 
     function showCellFocus() {
       placeCursor(cellFocus);
+      cellTouch.own();
       const box = canvas.getBoundingClientRect();
       cellTip(cellFocus, box.left + carpet.m.l + (cellFocus.i + 1) * carpet.columnWidth, box.top + carpet.m.t + (cellFocus.slot + 1) * carpet.rowHeight);
     }
 
-    canvas.addEventListener("pointermove", (event) => {
-      const cell = cellAt(event);
-      if (!cell) {
+    // Cells are as small as a pixel or two, so a second tap within a fingertip of the first opens the day too.
+    const cellTouch = readThenOpen(canvas, {
+      at: (event) => { const cell = cellAt(event); return cell && { date: carpet.span[cell.i].date, ...cell }; },
+      same: (a, b) => a.date === b.date && a.slot === b.slot,
+      read: (cell, event, hint) => {
+        placeCursor(cell);
+        cellTip(cell, event.clientX, event.clientY, hint);
+      },
+      open: (cell) => selectDay(cell.date, true),
+      hide: () => {
         hideTip();
-        cursor.hidden = true;
-        return;
-      }
-      placeCursor(cell);
-      cellTip(cell, event.clientX, event.clientY);
-    });
-    canvas.addEventListener("pointerleave", () => {
-      hideTip();
-      if (document.activeElement !== canvas) cursor.hidden = true;
-    });
-    canvas.addEventListener("click", (event) => {
-      const cell = cellAt(event);
-      if (!cell) return;
-      hideTip();
-      selectDay(carpet.span[cell.i].date, true);
+        if (!canvas.matches(":focus-visible")) cursor.hidden = true;
+      },
     });
     canvas.addEventListener("focus", () => {
       if (!canvas.matches(":focus-visible") || !carpet) return;
@@ -3888,7 +3975,7 @@
     });
     canvas.addEventListener("blur", () => {
       cursor.hidden = true;
-      hideTip();
+      if (ownsTip(canvas)) hideTip();
     });
     canvas.addEventListener("keydown", (event) => {
       if (!carpet) return;
