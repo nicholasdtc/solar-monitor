@@ -241,8 +241,6 @@
   .chart-words { fill: var(--ink-2); font-size: 13px; font-family: var(--body); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
   .chart-words.middle { text-anchor: middle; fill: var(--muted); }
   .flows { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
-  .headline { color: var(--ink-2); max-width: 68ch; }
-  .headline strong { color: var(--ink); font-size: 24px; font-weight: 600; margin-right: 4px; font-variant-numeric: tabular-nums; }
   td small.spread { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; }
   #chart-tip {
     position: fixed; z-index: 6; padding: 8px 10px; pointer-events: none; font-size: 13px;
@@ -255,6 +253,27 @@
   .tip-row span { color: var(--ink-2); }
   .tip-row small { grid-column: 3; margin-top: -3px; color: var(--muted); font-size: 12px; }
   .tip-note { margin-top: 4px; color: var(--ink-2); }
+  /* Explanations live in the tooltip: on a "?" or on dotted words, shown on hover, keyboard focus or a tap. */
+  .help {
+    position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 18px; height: 18px; margin-left: 6px; padding: 0; vertical-align: middle;
+    border: 1px solid var(--rule-strong); border-radius: 50%; background: none; color: var(--muted);
+    font: 600 11px/1 var(--body); cursor: help;
+  }
+  .help::after { content: ""; position: absolute; inset: -10px; } /* A fingertip-sized target. */
+  .help:hover { color: var(--ink); border-color: var(--ink-2); }
+  [data-tip]:not(.help) { text-decoration: underline dotted var(--muted); text-underline-offset: 3px; cursor: help; }
+  #chart-tip.help-tip { max-width: min(42ch, calc(100vw - 16px)); color: var(--ink-2); }
+  .help-tip p + p { margin-top: 6px; }
+  .note:empty, .meta:empty { display: none; }
+  .flow-help { align-self: flex-end; }
+  .share { display: flex; flex-direction: column; gap: 6px; }
+  .share-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; }
+  .share-bar { display: flex; height: 14px; gap: 2px; }
+  .share-bar i { min-width: 2px; }
+  .about { display: block; } /* Folded away until wanted: the background, not the data. */
+  .about summary h2 { display: inline; color: var(--ink); }
+  .about[open] summary { margin-bottom: 12px; }
   summary { cursor: pointer; color: var(--ink-2); min-height: 28px; }
   details .scroll { max-height: 360px; margin-top: 8px; overflow-y: auto; }
 
@@ -299,8 +318,8 @@
   .edit input:not([type="checkbox"]), .edit textarea {
     min-height: 34px; padding: 4px 8px; background: var(--page); border: 1px solid var(--rule);
   }
-  .edit button { min-height: 34px; padding: 4px 12px; cursor: pointer; background: var(--surface); border: 1px solid var(--rule-strong); }
-  .edit button:hover { background: var(--page); }
+  .edit button:not(.help) { min-height: 34px; padding: 4px 12px; cursor: pointer; background: var(--surface); border: 1px solid var(--rule-strong); }
+  .edit button:not(.help):hover { background: var(--page); }
   .edit input[type="number"] { width: 84px; text-align: right; }
   .edit input[type="checkbox"] { width: 18px; height: 18px; margin: 7px 0 0; accent-color: var(--ink); }
   .edit input.name { width: 100%; min-width: 170px; }
@@ -325,7 +344,6 @@
   .export-formats:empty { display: none; }
   .export-formats label { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 2px 10px; cursor: pointer; }
   .export-formats input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--ink); }
-  .export-formats .meta { grid-column: 2; }
   .export button:disabled, .import button:disabled { color: var(--muted); cursor: default; background: var(--surface); }
 
   /* TOU */
@@ -421,14 +439,14 @@
       <div class="stage" id="stage">
         <svg id="flow-diagram" role="img" aria-label="Waiting for readings."></svg>
       </div>
-      <p class="meta">The inverter only measures each box's total, so how power splits between paths is an estimate: solar goes to the house first, then the battery, then the grid.</p>
+      <button type="button" class="help flow-help" aria-label="About the paths" data-tip="Each box's total is measured. The split between paths is estimated: solar feeds the house first, then the battery, then the grid.">?</button>
     </div>
     <div class="readings" id="readings" aria-label="Live values"></div>
   </section>
 
   <section class="view stats" id="view-statistics" aria-label="Statistics" hidden>
     <div class="pane">
-      <h2>History</h2>
+      <h2>History <button type="button" class="help" id="history-help" aria-label="About these charts" data-tip="">?</button></h2>
       <div class="range">
         <label>Interval <select id="history-bucket"></select></label>
         <div class="seg" role="group" aria-label="Move and zoom">
@@ -441,7 +459,6 @@
       <p class="meta" id="history-note"></p>
       <details id="history-details">
         <summary>Show as a table</summary>
-        <p class="meta" id="history-table-note"></p>
         <div class="scroll" tabindex="0" role="region" aria-label="History table">
           <table>
             <thead><tr><th>Time</th><th class="num">Solar (W)</th><th class="num">House (W)</th><th class="num">Battery (W)</th><th class="num">Grid (W)</th><th class="num">Battery charge (%)</th></tr></thead>
@@ -451,13 +468,12 @@
       </details>
     </div>
     <div class="pane">
-      <h2>Daily energy</h2>
+      <h2>Daily energy <button type="button" class="help" aria-label="About these totals" data-tip="From the inverter's lifetime counters. Today's can be up to 5 minutes behind.&#10;The first day counts from its first reading. Days the app wasn't running count toward the next day it ran.">?</button></h2>
       <div class="charts" id="daily-charts"></div>
       <p class="meta" id="daily-note"></p>
       <div class="flows" id="flow-section" hidden>
-        <p class="headline" id="self-sufficiency"></p>
+        <div class="share" id="self-sufficiency"></div>
         <div class="charts" id="flow-charts"></div>
-        <p class="meta" id="flow-note"></p>
       </div>
     </div>
     <div class="pane span-all">
@@ -473,8 +489,8 @@
 
   <section class="view stats" id="view-grid-meter" aria-label="Grid meter" hidden>
     <div class="pane span-all">
-      <h2>Grid meter</h2>
-      <p class="note" id="gm-intro"></p>
+      <h2>Grid meter <button type="button" class="help" aria-label="About this tab" data-tip="Half-hourly grid import from your smart meter, as downloaded from ESB Networks. Priced at your rates.">?</button></h2>
+      <p class="meta" id="gm-intro"></p>
       <div class="range gm-data">
         <div class="seg" id="gm-range" role="group" aria-label="Grid meter range">
           <button type="button" data-range="7">7 days</button><button type="button" data-range="30">30 days</button><button type="button" data-range="12m">12 months</button><button type="button" data-range="all">All</button>
@@ -483,7 +499,7 @@
       </div>
       <div class="tiles gm-data">
         <div class="tile"><span class="tile-label">Imported</span><span class="tile-value" id="gm-t-total"></span><span class="tile-sub" id="gm-t-total-sub"></span></div>
-        <div class="tile"><span class="tile-label">Cost at your rates</span><span class="tile-value" id="gm-t-cost"></span><span class="tile-sub" id="gm-t-cost-sub"></span></div>
+        <div class="tile"><span class="tile-label">Cost at your rates <button type="button" class="help" aria-label="About the cost" data-tip="In the same unit as your rates. No standing charge.">?</button></span><span class="tile-value" id="gm-t-cost"></span><span class="tile-sub" id="gm-t-cost-sub"></span></div>
         <div class="tile"><span class="tile-label">At the night rate</span><span class="tile-value" id="gm-t-night"></span><span class="tile-sub" id="gm-t-night-sub"></span></div>
         <div class="tile"><span class="tile-label">Highest half-hour</span><span class="tile-value" id="gm-t-max"></span><span class="tile-sub" id="gm-t-max-sub"></span></div>
       </div>
@@ -491,7 +507,7 @@
 
     <div class="pane gm-data">
       <div class="chart-head">
-        <div class="head-text"><h2>Import by rate band</h2><p class="meta" id="gm-bars-sub"></p></div>
+        <div class="head-text"><h2>Import by rate band <button type="button" class="help" id="gm-bars-help" aria-label="Using this chart" data-tip="">?</button></h2><p class="meta" id="gm-bars-sub"></p></div>
         <button type="button" class="btn" id="gm-zoom-out" hidden>Zoom out</button>
       </div>
       <div class="legend bars">
@@ -500,13 +516,11 @@
         <span><i style="background: var(--band-peak)"></i>Peak</span>
       </div>
       <div class="chart" id="gm-bars"></div>
-      <p class="meta" id="gm-bars-hint"></p>
       <details>
         <summary>Show as a table</summary>
-        <p class="meta">Energy in kWh. Cost in the same unit as your rates.</p>
         <div class="scroll" tabindex="0" role="region" aria-label="Import by rate band, as a table">
           <table>
-            <thead><tr><th id="gm-bars-col">Day</th><th class="num">Night</th><th class="num">Day</th><th class="num">Peak</th><th class="num">Total</th><th class="num">Cost</th><th>Notes</th></tr></thead>
+            <thead><tr><th id="gm-bars-col">Day</th><th class="num">Night kWh</th><th class="num">Day kWh</th><th class="num">Peak kWh</th><th class="num">Total kWh</th><th class="num"><span tabindex="0" data-tip="In the same unit as your rates. No standing charge.">Cost</span></th><th>Notes</th></tr></thead>
             <tbody id="gm-bars-table"></tbody>
           </table>
         </div>
@@ -514,7 +528,7 @@
     </div>
 
     <div class="pane gm-data" id="gm-day-pane">
-      <h2>One day</h2>
+      <h2>One day <button type="button" class="help" aria-label="About this chart" data-tip="Each bar is the average kW over a half-hour. Its kWh is half that.">?</button></h2>
       <div class="range">
         <button type="button" class="btn" id="gm-prev-day">Previous day</button>
         <label>Day <input type="date" id="gm-day-input"></label>
@@ -528,7 +542,6 @@
         <span><i style="background: var(--rule-strong)"></i>No reading</span>
       </div>
       <div class="chart" id="gm-day-chart"></div>
-      <p class="meta">Average kW over each half-hour. A half-hour's kWh is half its average kW.</p>
       <details>
         <summary>Show as a table</summary>
         <div class="scroll" tabindex="0" role="region" aria-label="One day, as a table">
@@ -542,7 +555,7 @@
 
     <div class="pane span-all gm-data">
       <div class="chart-head">
-        <div class="head-text"><h2>Every half-hour</h2><p class="meta">Each column is a day and each row a half-hour, coloured by the average kW. <span id="gm-carpet-hint">Click a day to open it above.</span></p></div>
+        <div class="head-text"><h2>Every half-hour <button type="button" class="help" id="gm-carpet-help" aria-label="About this chart" data-tip="A column for each day, a row for each half-hour, coloured by the average kW.&#10;Click a day to open it above.">?</button></h2></div>
       </div>
       <div class="legend bars" id="gm-heat-legend"></div>
       <div class="carpet" id="gm-carpet">
@@ -552,7 +565,7 @@
     </div>
 
     <div class="pane gm-data">
-      <h2>Cross-checks with the inverter</h2>
+      <h2>Cross-checks with the inverter <button type="button" class="help" aria-label="About the cross-checks" data-tip="This app's figure is the change in the inverter's lifetime grid import counter. It counts in 0.1 kWh steps, so a day can be out by that much.&#10;Only days the file has in full, and this app logged just before both midnights.">?</button></h2>
       <div class="empty" id="gm-compare-empty" hidden></div>
       <div id="gm-compare" hidden>
         <p class="note" id="gm-compare-summary"></p>
@@ -563,38 +576,34 @@
             <tbody id="gm-compare-table"></tbody>
           </table>
         </div>
-        <p class="meta">This app's figure is the change in the inverter's lifetime grid import counter, which counts in steps of 0.1 kWh, so a day can be out by that much on its own. Only days the file has every half-hour of, and this app logged just before both midnights, are compared.</p>
       </div>
       <div class="chart" id="gm-timeline"></div>
     </div>
 
-    <div class="pane gm-data">
-      <h2>About this data</h2>
+    <details class="pane gm-data about">
+      <summary><h2>About this data</h2></summary>
       <dl class="notes" id="gm-notes"></dl>
-    </div>
+    </details>
   </section>
 
   <section class="view counters" id="view-counters" aria-label="Counters and checks" hidden>
     <div class="pane">
-      <h2>Energy counters</h2>
-      <p class="note">Compare these with the GoodWe app and your electricity meter.</p>
+      <h2>Energy counters <button type="button" class="help" aria-label="About the counters" data-tip="Compare these with the GoodWe app and your electricity meter.">?</button></h2>
       <table>
         <thead><tr><th>Counter</th><th class="num">Today</th><th class="num">Lifetime</th></tr></thead>
         <tbody id="energy"></tbody>
       </table>
     </div>
     <div class="pane">
-      <h2>Inverter overhead</h2>
-      <p class="note">Battery power that doesn't reach the house, which the inverter uses or loses on the way. It can only be measured while the battery alone is supplying the house, and one reading can jump while a load switches on or off.</p>
+      <h2>Inverter overhead <button type="button" class="help" aria-label="About the overhead" data-tip="Battery power that never reaches the house: the inverter uses or loses it.&#10;Measured only while the battery alone supplies the house. A reading can jump as a load switches on or off.">?</button></h2>
       <table>
         <thead><tr><th class="num">House</th><th class="num">Battery</th><th class="num">Overhead</th><th class="num">% of battery</th></tr></thead>
         <tbody id="overhead"></tbody>
       </table>
-      <p class="meta" id="overhead-source"></p>
+      <p class="meta"><span id="overhead-source"></span><button type="button" class="help" id="overhead-help" aria-label="Where this comes from" data-tip="" hidden>?</button></p>
     </div>
     <div class="pane tall">
-      <h2>Checks</h2>
-      <p class="note">Do the readings agree with each other? A warning means a field needs a closer look, not that the equipment has a fault.</p>
+      <h2>Checks <button type="button" class="help" aria-label="About the checks" data-tip="Whether the readings agree with each other. A warning means a field needs a closer look, not that the equipment has a fault.">?</button></h2>
       <div class="tally" id="tally"></div>
       <table class="stacked checks">
         <thead><tr><th>Check</th><th>Values</th><th>Result</th></tr></thead>
@@ -605,17 +614,15 @@
 
   <section class="view appliances" id="view-appliances" aria-label="Appliances and tariffs" hidden>
     <div class="pane span-all">
-      <h2>Your appliances</h2>
-      <p class="note">Fill in your own. They're kept in this app's database, and changes save as you make them. Tick what you'd keep running in a power cut.</p>
+      <h2>Your appliances <button type="button" class="help" aria-label="About this table" data-tip="Saved as you type. Tick what you&#39;d keep running in a power cut.">?</button></h2>
       <p class="alert" id="appliances-error" role="alert"></p>
       <div class="scroll edit" tabindex="0" role="region" aria-label="Appliances table">
         <table>
-          <thead><tr><th>Power cut</th><th>Name</th><th class="num">Typical W</th><th class="num">Peak W</th><th class="num">Surge W</th><th class="num">Amps</th><th class="num">Of limit</th><th>Can add</th><th>Notes</th><th aria-label="Delete"></th></tr></thead>
+          <thead><tr><th><span tabindex="0" data-tip="Ticked: kept running in a power cut.">Power cut</span></th><th>Name</th><th class="num"><span tabindex="0" data-tip="What it usually draws.">Typical W</span></th><th class="num"><span tabindex="0" data-tip="The most it draws once running. Blank if the same as typical.">Peak W</span></th><th class="num"><span tabindex="0" data-tip="The brief kick when a motor starts.">Surge W</span></th><th class="num"><span tabindex="0" data-tip="At its peak.">Amps</span></th><th class="num"><span tabindex="0" data-tip="Its peak, as a share of your current limit.">Of limit</span></th><th><span tabindex="0" data-tip="Whether it fits on top of the ticked appliances at their peak.">Can add</span></th><th>Notes</th><th aria-label="Delete"></th></tr></thead>
           <tbody id="appliance-rows"></tbody>
         </table>
       </div>
       <p class="no-value" id="appliances-empty" hidden>No appliances yet. Add your first one below.</p>
-      <p class="meta">Typical is what it usually draws. Peak is the most it draws once running: leave it blank if that's the same. Surge is the brief kick when a motor starts. Amps and Of limit use the peak. Can add says whether it fits on top of the ticked appliances at their peak.</p>
       <form class="edit add" id="add-appliance">
         <label class="grow">Name <input name="name" required maxlength="100"></label>
         <label>Typical W <input name="typical_w" type="number" min="0" step="any" required></label>
@@ -628,8 +635,7 @@
     </div>
 
     <div class="pane span-all">
-      <h2>What it adds up to</h2>
-      <p class="note">The current each combination draws, what that leaves of your limit, and how long the battery could carry it with no sun or grid.</p>
+      <h2>What it adds up to <button type="button" class="help" aria-label="About this table" data-tip="The current each load draws, what&#39;s left of your limit, and how long the battery could carry it with no sun or grid.">?</button></h2>
       <div class="scroll" tabindex="0" role="region" aria-label="Load combinations table">
         <table>
           <thead><tr><th>Load</th><th class="num">Watts</th><th class="num">Amps</th><th class="num">Of limit</th><th class="num">Room left</th><th class="num">Runs for, from now</th><th class="num">Runs for, from full</th></tr></thead>
@@ -639,8 +645,7 @@
     </div>
 
     <div class="pane">
-      <h2>Plan for a power cut</h2>
-      <p class="note">The biggest steady load the battery could carry for a power cut this long, with no sun or grid, down to its reserve. Compared with the ticked appliances at their typical draw.</p>
+      <h2>Plan for a power cut <button type="button" class="help" aria-label="About this plan" data-tip="The biggest steady load the battery could carry this long, with no sun or grid, down to its reserve.&#10;Compared with the ticked appliances at their typical draw.">?</button></h2>
       <form class="edit settings" id="outage-settings">
         <label>Length of power cut (hours) <input name="outage_hours" type="number" min="0.1" max="8760" step="any"></label>
       </form>
@@ -653,8 +658,7 @@
     </div>
 
     <div class="pane">
-      <h2>How much can I run?</h2>
-      <p class="note">The average load that would bring the battery down to its minimum by a given time. It counts only what's in the battery now, so solar and the grid would stretch it further.</p>
+      <h2>How much can I run? <button type="button" class="help" aria-label="About this plan" data-tip="The average load that would take the battery to its minimum by then.&#10;Only what&#39;s in the battery now: solar or the grid would stretch it.">?</button></h2>
       <form class="edit settings" id="run-settings">
         <label>Run until <input name="run_until_minutes" type="time"></label>
       </form>
@@ -664,8 +668,7 @@
     </div>
 
     <div class="pane">
-      <h2>Motors starting</h2>
-      <p class="note">The worst moment: everything at its peak, and every motor starting at once.</p>
+      <h2>Motors starting <button type="button" class="help" aria-label="About this table" data-tip="The worst moment: everything at its peak, every motor starting at once.">?</button></h2>
       <div class="scroll" tabindex="0" role="region" aria-label="Motors starting table">
         <table>
           <thead><tr><th>Load</th><th class="num">Running</th><th class="num">Extra to start</th><th class="num">Total</th><th class="num">Of surge limit</th></tr></thead>
@@ -675,19 +678,17 @@
     </div>
 
     <div class="pane">
-      <h2>Your choices</h2>
-      <p class="note">All optional. Anything the inverter reports, or the log can measure, doesn't need entering.</p>
+      <h2>Your choices <button type="button" class="help" aria-label="About these" data-tip="All optional. Anything the inverter reports, or the log can measure, needn&#39;t be entered.">?</button></h2>
       <form class="edit settings" id="settings">
-        <label>Current limit (A) <input name="limit_amps" type="number" min="0" step="any"><span class="meta">What you want to stay under in a power cut, such as a breaker's rating. Of limit, Room left and Can add need this.</span></label>
-        <label>Surge limit (W) <input name="surge_limit_w" type="number" min="0" step="any"><span class="meta">The most your system can supply for a few seconds.</span></label>
-        <label>Starting battery capacity (kWh) <input name="capacity_kwh" type="number" min="0" step="any"><span class="meta" id="capacity-hint"></span></label>
+        <label for="limit-amps"><span>Current limit (A) <button type="button" class="help" aria-label="About the current limit" data-tip="What to stay under in a power cut, such as a breaker&#39;s rating. Of limit, Room left and Can add need it.">?</button></span><input id="limit-amps" name="limit_amps" type="number" min="0" step="any"></label>
+        <label for="surge-limit"><span>Surge limit (W) <button type="button" class="help" aria-label="About the surge limit" data-tip="The most your system can supply for a few seconds.">?</button></span><input id="surge-limit" name="surge_limit_w" type="number" min="0" step="any"></label>
+        <label for="capacity"><span>Starting battery capacity (kWh) <button type="button" class="help" id="capacity-help" aria-label="About the capacity" data-tip="">?</button></span><input id="capacity" name="capacity_kwh" type="number" min="0" step="any"></label>
       </form>
-      <p class="meta" id="appliance-sources"></p>
+      <p class="meta"><span id="appliance-sources"></span><button type="button" class="help" id="appliance-sources-help" aria-label="Where these come from" data-tip="">?</button></p>
     </div>
 
     <div class="pane span-all">
-      <h2>Tariffs</h2>
-      <p class="note">Your rates per kWh, in any money unit you like. The results below come out in the same unit.</p>
+      <h2>Tariffs <button type="button" class="help" id="tariff-help" aria-label="About the tariffs" data-tip="Your rates per kWh, in any money unit. The results come out in the same unit.">?</button></h2>
       <form class="edit settings" id="tariff-settings">
         <label>Day rate <input name="tariff_day" type="number" min="0" step="any"></label>
         <label>Peak rate <input name="tariff_peak" type="number" min="0" step="any"></label>
@@ -700,9 +701,7 @@
           <tbody id="tariff-values"></tbody>
         </table>
       </div>
-      <p class="meta" id="tariff-sources"></p>
-      <h3>When each rate applies</h3>
-      <p class="note">For the Grid meter tab. On the hour or half-hour. Blank means the usual hours: night 23:00 to 08:00 and peak 17:00 to 19:00, with the day rate the rest of the time.</p>
+      <h3>When each rate applies <button type="button" class="help" aria-label="About the rate times" data-tip="For the Grid meter tab. On the hour or half-hour.&#10;Blank: night 23:00 to 08:00, peak 17:00 to 19:00, day the rest.">?</button></h3>
       <form class="edit settings" id="band-settings">
         <label>Night starts <input name="band_night_start_minutes" type="time" step="1800"></label>
         <label>Night ends <input name="band_night_end_minutes" type="time" step="1800"></label>
@@ -714,21 +713,20 @@
 
   <section class="view schedule" id="view-schedule" aria-label="Battery schedule" hidden>
     <div class="pane">
-      <h2>TOU programmes</h2>
-      <p class="note">What's stored on the inverter now, in the same order as SEMS+. Only a programme's power can be changed here. Everything else on this tab is for SEMS+. SEMS+ can take a while to show a change made here. Until it does, saving that programme there may send its old power back.</p>
+      <h2>TOU programmes <button type="button" class="help" aria-label="About the programmes" data-tip="What's stored on the inverter now, in SEMS+ order. Only a programme's power can be changed here: the rest is for SEMS+.&#10;SEMS+ can take a while to show a change made here. Saving that programme there before it does may send its old power back.&#10;SEMS+ AI Mode isn't listed: no setting for it has been found on the inverter.&#10;Read again every 5 minutes and after a change.">?</button></h2>
       <div class="scroll edit" tabindex="0" role="region" aria-label="TOU programmes table">
         <table>
           <thead><tr><th>#</th><th>Time</th><th>Action</th><th class="num">Cut-off SOC</th><th>Power</th><th>Repeats</th><th>State</th><th></th></tr></thead>
           <tbody id="tou-periods"></tbody>
         </table>
       </div>
-      <p class="meta"><span id="tou-read-at"></span> SEMS+ AI Mode isn't listed because the app hasn't found a setting for it on the inverter.</p>
-      <p class="note" id="tou-restart" hidden>Restart the dashboard to be able to change programmes from here. It's still running a version from before that was possible.</p>
+      <p class="meta" id="tou-read-at"></p>
+      <p class="note" id="tou-restart" hidden>Restart the dashboard to change programmes from here.</p>
       <form class="edit tou-change" id="tou-change" hidden>
         <h3 id="tou-change-title"></h3>
         <p class="note" id="tou-change-now"></p>
         <label><span id="tou-percent-label"></span><input id="tou-percent" type="number" min="1" max="100" step="1" required></label>
-        <p class="note">This goes to the inverter as soon as you send it. The app reads the programme again first, changes only the power, and then reads it back to confirm.</p>
+        <p class="note">Goes to the inverter at once: read again first, power only, then read back to confirm. SEMS+ may show the old power for a while: saving the programme there then would put it back.</p>
         <div class="actions">
           <button id="tou-send" disabled>Send to inverter</button>
           <button id="tou-cancel" type="button">Cancel</button>
@@ -737,8 +735,7 @@
       <p id="tou-result" role="status"></p>
     </div>
     <div class="pane">
-      <h2>Changes made from this app</h2>
-      <p class="note">Every change sent to the inverter, latest first. Changes made in SEMS+ aren't listed.</p>
+      <h2>Changes made from this app <button type="button" class="help" aria-label="About this list" data-tip="Every change sent to the inverter, latest first. Changes made in SEMS+ aren't listed.">?</button></h2>
       <div class="scroll edit" tabindex="0" role="region" aria-label="Changes made from this app">
         <table>
           <thead><tr><th>When</th><th class="num">#</th><th>Power</th><th>Result</th><th></th></tr></thead>
@@ -764,18 +761,15 @@
 
   <section class="view" id="view-app-data" aria-label="App data" hidden>
     <div class="pane">
-      <h2>Export</h2>
-      <p class="note">Download a copy of what this app has saved. Nothing is removed from the app, and any readings in the download go right up to the latest.</p>
+      <h2>Export <button type="button" class="help" aria-label="About exporting" data-tip="A copy of what this app has saved, readings right up to the latest. Nothing is removed.&#10;The download starts once the file is ready: longer with more readings.">?</button></h2>
       <p class="meta" id="export-contents"></p>
       <form class="export" method="get" action="/api/export/download">
         <div class="export-formats" id="export-formats" role="radiogroup" aria-label="File format"></div>
         <div class="edit"><button id="export-button" disabled>Export</button></div>
       </form>
-      <p class="meta">The download starts once the file is ready, which takes longer the more readings there are.</p>
     </div>
     <div class="pane">
-      <h2>Import</h2>
-      <p class="note">Bring in a file exported from this app, in any of the formats above, or your smart meter's half-hourly readings in kW downloaded from ESB Networks. It only adds what's missing, so nothing already here is changed or removed. You'll see what it would add before anything is saved.</p>
+      <h2>Import <button type="button" class="help" aria-label="About importing" data-tip="A file exported from this app, in any format above, or your smart meter's half-hourly kW readings from ESB Networks.&#10;Only what's missing is added: nothing here is changed or removed. You see what it would add before anything is saved.">?</button></h2>
       <div class="import">
         <input type="file" id="import-file" accept=".zip,.db,.json,.csv" aria-label="File to import">
         <p class="alert" id="import-error" role="alert"></p>
@@ -1414,13 +1408,15 @@
     const { bands, now, source } = overhead;
     $("overhead").replaceChildren(
       overheadRowAcross("th", "", "Now"),
-      now ? overheadRow(now) : overheadRowAcross("td", "no-value", "Shows while the battery alone is supplying the house."),
-      ...(bands.length ? [overheadRowAcross("th", "", "From the log, at each level of load"), ...bands.map(overheadRow)] : []),
+      now ? overheadRow(now) : overheadRowAcross("td", "no-value", "Only while the battery alone supplies the house."),
+      ...(bands.length ? [overheadRowAcross("th", "", "From the log, by load"), ...bands.map(overheadRow)] : []),
     );
     const readings = bands.reduce((sum, band) => sum + band.samples, 0);
-    $("overhead-source").textContent = source === "measured"
-      ? `The planners allow for ${overheadFigures(overhead)}, fitted to ${number(readings, 0)} readings with the house using ${watts(bands[0].house_w)} to ${watts(bands.at(-1).house_w)}. The grid was connected for all of them, so a power cut may differ.`
-      : `The planners allow for ${overheadFigures(overhead)}, a typical figure, until the log has readings like these at more levels of load.`;
+    $("overhead-source").textContent = `Planners allow ${overheadFigures(overhead)}`;
+    $("overhead-help").hidden = false;
+    $("overhead-help").dataset.tip = source === "measured"
+      ? `Fitted to ${number(readings, 0)} readings, with the house using ${watts(bands[0].house_w)} to ${watts(bands.at(-1).house_w)}. The grid was connected for all of them, so a power cut may differ.`
+      : "A typical figure, until the log has readings like these at more levels of load.";
   }
 
   /* Wide screens read the long list in two columns instead of a very long, half-empty one. */
@@ -1584,7 +1580,7 @@
     // Added with changing programmes, so a dashboard still running the version before that doesn't send them.
     $("tou-restart").hidden = !periods.some((period) => period.power_pct !== undefined && period.raw === undefined);
     $("tou-read-at").textContent = schedule
-      ? `Read from the inverter at ${new Date(schedule.read_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}, and again every 5 minutes or after a change.`
+      ? `Read at ${new Date(schedule.read_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
       : "";
     renderTouWrites();
   }
@@ -2027,6 +2023,7 @@
   /* The one tooltip. It enhances the charts: every value is also in a table. */
   function showTip(x, y, title, rows, note) {
     const tip = $("chart-tip");
+    tip.classList.remove("help-tip");
     tip.replaceChildren(el("div", "tip-title", title), ...rows.map((row) => {
       const node = el("div", "tip-row");
       const key = el("i");
@@ -2065,6 +2062,78 @@
   // Charts don't refresh under a tooltip, so one left up doesn't stop them refreshing for good.
   document.addEventListener("visibilitychange", () => { if (document.hidden) dropTip(); });
   const FINGER_PX = 16; // How far apart two taps can land and still be on the same thing.
+
+  /*
+    Explanations sit in the tooltip rather than on the page, on a "?" mark or on the words they
+    explain (underlined with dots). Each line of data-tip is a paragraph. They show on hover and
+    on keyboard focus, and a tap on a touch screen leaves them up until a tap anywhere else.
+  */
+  function helpMark(text, label = "What's this?") {
+    const mark = el("button", "help", "?");
+    mark.type = "button";
+    mark.setAttribute("aria-label", label);
+    mark.dataset.tip = text;
+    return mark;
+  }
+  function tipped(node, text) {
+    node.dataset.tip = text;
+    node.tabIndex = 0;
+    return node;
+  }
+  function showHelp(node) {
+    if (!node.dataset.tip) return;
+    const tip = $("chart-tip");
+    tip.classList.add("help-tip");
+    tip.replaceChildren(...node.dataset.tip.split("\n").map((line) => el("p", "", line)));
+    tip.hidden = false;
+    const anchor = node.getBoundingClientRect();
+    const box = tip.getBoundingClientRect();
+    const below = anchor.bottom + 8 + box.height <= innerHeight - 8;
+    tip.style.left = `${clamp(anchor.left + anchor.width / 2 - box.width / 2, 8, innerWidth - box.width - 8)}px`;
+    tip.style.top = `${below ? anchor.bottom + 8 : Math.max(anchor.top - 8 - box.height, 8)}px`;
+    ownTip(node, () => {});
+    helpGone.observe(document.body, { childList: true, subtree: true });
+  }
+  // What a tooltip explains can be redrawn from under it, never seeing the pointer or focus leave.
+  const helpGone = new MutationObserver(() => {
+    if (tipOwner?.node.dataset?.tip === undefined) helpGone.disconnect();
+    else if (!tipOwner.node.isConnected) {
+      helpGone.disconnect();
+      dropTip();
+    }
+  });
+  const helpShown = (node) => tipOwner?.node === node && !$("chart-tip").hidden;
+  const hideHelp = (node) => { if (tipOwner?.node === node) dropTip(); };
+  const helpAt = (event) => event.target.closest?.("[data-tip]");
+  let helpPointer = "mouse";
+  document.addEventListener("pointerdown", (event) => { helpPointer = event.pointerType; });
+  document.addEventListener("pointerover", (event) => {
+    if (event.pointerType === "touch") return;
+    const node = helpAt(event);
+    if (node && !helpShown(node)) showHelp(node);
+  });
+  document.addEventListener("pointerout", (event) => {
+    const node = helpAt(event);
+    if (node && event.pointerType !== "touch" && !node.contains(event.relatedTarget)) hideHelp(node);
+  });
+  document.addEventListener("click", (event) => {
+    const node = helpAt(event);
+    if (!node) return;
+    if (helpPointer === "touch" && helpShown(node)) dropTip();
+    else showHelp(node);
+  });
+  // Only keyboard focus: a tap also focuses a button, and its click already shows the tooltip.
+  document.addEventListener("focusin", (event) => {
+    if (event.target.matches?.("[data-tip]:focus-visible")) showHelp(event.target);
+  });
+  document.addEventListener("focusout", (event) => { if (event.target.dataset?.tip !== undefined) hideHelp(event.target); });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && tipOwner?.node.dataset?.tip !== undefined) dropTip();
+  });
+  // A tooltip is placed once, so it goes when what it explains scrolls away from under it.
+  addEventListener("scroll", () => {
+    if (tipOwner?.node.dataset?.tip !== undefined && !$("chart-tip").hidden) dropTip();
+  }, { capture: true, passive: true });
 
   /* Pointer and arrow-key access to a chart's points. pick() maps an x offset to an index. */
   function makeScrubbable(svg, label, { count, pick, xOf, show, hide }) {
@@ -2280,20 +2349,18 @@
     if (firstReading === null && !points.length) {
       $("history-note").textContent = "";
       renderHistoryTable();
-      box.replaceChildren(el("p", "no-value", "No readings yet. Readings are only logged while the app is running."));
+      box.replaceChildren(el("p", "no-value", "No readings yet. They're logged only while the app runs."));
       return;
     }
-    $("history-note").textContent = [
-      visible.length ? "" : "No readings in this stretch of time. Readings are only logged while the app is running.",
+    $("history-note").textContent = visible.length ? "" : "No readings logged in this stretch.";
+    $("history-help").dataset.tip = [
       hasSpread
-        ? `Each line averages ${duration(bucket)}, and the lighter area around it runs from the lowest to the highest reading in that time, so short spikes still show.`
-        : `Each point averages ${duration(bucket)}, so short spikes look smaller, and a charge and a discharge in the same period partly cancel out.`,
-      "A break in a line means the app wasn't running or the inverter didn't answer.",
-      touShown ? "Grey columns are the time-of-use periods as they're set on the inverter now. They may have been set differently on past days." : "",
-      matchMedia("(pointer: fine)").matches
-        ? "Drag a chart to move through time, and hold Ctrl while scrolling over it to zoom."
-        : "Swipe a chart sideways to move through time.",
-    ].filter(Boolean).join(" ");
+        ? `Each line averages ${duration(bucket)}. The shading, and the small figures in the table, span the lowest to highest reading, so spikes still show.`
+        : `Each point averages ${duration(bucket)}, so spikes look smaller and charging and discharging partly cancel.`,
+      "A break: the app wasn't running or the inverter didn't answer.",
+      touShown ? "Grey columns: time-of-use periods as set on the inverter now." : "",
+      matchMedia("(pointer: fine)").matches ? "Drag to move through time. Ctrl + scroll to zoom." : "Swipe sideways to move through time.",
+    ].filter(Boolean).join("\n");
     renderHistoryTable();
 
     box.replaceChildren();
@@ -2422,8 +2489,6 @@
     const open = $("history-details").open;
     if (!open || !loaded) return $("history-table").replaceChildren();
     const visible = visiblePoints();
-    const hasSpread = visible.some((point) => point.pv_w_min !== undefined);
-    $("history-table-note").textContent = hasSpread ? "Under each power average are the lowest and highest readings in that period." : "";
     const cell = (point, key) => {
       const node = el("td", "num", isNum(point[key]) ? number(point[key], 0) : "—");
       const [low, high] = [point[`${key}_min`], point[`${key}_max`]];
@@ -2457,6 +2522,47 @@
     return all >= 0.05 ? own / all : null;
   }
 
+  const SHARE_PARTS = [
+    { key: "solar_home", label: "Solar", color: "--flow-solar" },
+    { key: "battery_home", label: "Battery", color: "--flow-battery" },
+    { key: "grid_home", label: "Grid", color: "--flow-grid" },
+  ];
+
+  /* Self-sufficiency as a figure, over a bar of where the house's power came from. */
+  function renderShare(days) {
+    const box = $("self-sufficiency");
+    const share = selfSufficiency(days);
+    if (share === null) return box.replaceChildren();
+    const counted = days.filter((day) => day.solar_home !== undefined);
+    const parts = SHARE_PARTS.map((part) => ({ ...part, kwh: counted.reduce((sum, day) => sum + (day[part.key] ?? 0), 0) }));
+    const all = parts.reduce((sum, part) => sum + part.kwh, 0);
+    const head = el("div", "share-head");
+    const label = el("span", "tile-label", `self-sufficient, last ${counted.length} day${counted.length === 1 ? "" : "s"}`);
+    label.append(helpMark(
+      "The house's power from solar or the battery rather than the grid. Battery power counts, even if it was charged from the grid.\n" +
+      "From the 15-second readings, not the counters, so it can differ a little from the totals above.\n" +
+      "Solar feeds the house first, then the battery, then the grid.",
+      "About self-sufficiency",
+    ));
+    head.append(el("span", "tile-value", percent(share)), label);
+    const bar = el("div", "share-bar");
+    bar.setAttribute("role", "img");
+    bar.setAttribute("aria-label", `The house's power: ${parts.map((part) => `${part.label.toLowerCase()} ${percent(part.kwh / all)}`).join(", ")}`);
+    const legend = el("div", "legend bars");
+    for (const part of parts) {
+      const piece = el("i");
+      piece.style.background = `var(${part.color})`;
+      piece.style.flexGrow = part.kwh;
+      if (part.kwh > 0) bar.append(piece);
+      const item = el("span");
+      const key = el("i");
+      key.style.background = `var(${part.color})`;
+      item.append(key, `${part.label} ${percent(part.kwh / all)}`);
+      legend.append(item);
+    }
+    box.replaceChildren(head, bar, legend);
+  }
+
   function dailyRows(day, charts) {
     const rows = charts.flatMap((chart) => chart.stack
       ? chart.stack.map((part) => day[part.key] !== undefined && { value: kwh(day[part.key]), label: part.tip, color: part.color })
@@ -2475,24 +2581,14 @@
     const days = daily.days;
     const anyData = days.some((day) => Object.keys(day).length > 1);
     const hasFlows = days.some((day) => day.solar_home !== undefined);
-    $("daily-note").textContent = anyData
-      ? "From the inverter's lifetime counters. Today's figures can be up to 5 minutes behind. The first day logged starts from its first reading, " +
-        "and energy from days the app wasn't running counts toward the next day it ran."
-      : "";
+    $("daily-note").textContent = "";
     renderDailyTable();
     $("flow-section").hidden = !anyData || !hasFlows;
     if (!anyData) {
-      box.replaceChildren(el("p", "no-value", "No daily totals yet. The first ones appear within 5 minutes of the app starting."));
+      box.replaceChildren(el("p", "no-value", "No daily totals yet. The first come within 5 minutes of the app starting."));
       return;
     }
-    const share = selfSufficiency(days);
-    const counted = days.filter((day) => day.solar_home !== undefined).length;
-    $("self-sufficiency").replaceChildren(...(share === null ? [] : [
-      el("strong", "", percent(share)),
-      `of the house's power came from solar or the battery rather than the grid, over the last ${counted} day${counted === 1 ? "" : "s"} logged.`,
-    ]));
-    $("flow-note").textContent = "Worked out from the readings logged every 15 seconds rather than from the counters, so these totals can differ a little from the ones above. " +
-      "Solar is counted as going to the house first, then the battery, then the grid. The battery counts as the house's own power, even when it was charged from the grid.";
+    renderShare(days);
 
     const sets = [{ box, charts: DAILY_CHARTS }, ...(hasFlows ? [{ box: $("flow-charts"), charts: FLOW_CHARTS }] : [])];
     const width = box.clientWidth;
@@ -2841,11 +2937,11 @@
   */
   const APPLIANCES_REFRESH_MS = 30000;
   const CASES = [
-    { key: "now", label: "Right now", why: "What the house is drawing at the moment" },
-    { key: "selected_typical", label: "Ticked, typical", why: "The ticked appliances at their typical draw" },
-    { key: "selected_worst", label: "Ticked, at peak", why: "The ticked appliances all at their peak" },
-    { key: "all_typical", label: "Everything, typical", why: "Every appliance at its typical draw" },
-    { key: "all_worst", label: "Everything, at peak", why: "Every appliance at its peak" },
+    { key: "now", label: "Right now", tip: "What the house is drawing at the moment" },
+    { key: "selected_typical", label: "Ticked, typical", tip: "The ticked appliances at their typical draw" },
+    { key: "selected_worst", label: "Ticked, at peak", tip: "The ticked appliances all at their peak" },
+    { key: "all_typical", label: "Everything, typical", tip: "Every appliance at its typical draw" },
+    { key: "all_worst", label: "Everything, at peak", tip: "Every appliance at its peak" },
   ];
   const COULD_NOT_SAVE = "Couldn't save that. Names can't be blank, watts and rates can't be negative, a power cut is at least 0.1 hours and rate times are on the hour or half-hour. Showing what's saved.";
 
@@ -2976,14 +3072,16 @@
     $("appliances-empty").hidden = overview.appliances.length > 0;
   }
 
-  function loadCell(label, why) {
-    const cell = el("td", "", label);
+  // A row's name, with what it means in a tooltip and anything about its figures below.
+  function loadCell(label, why, tip) {
+    const cell = el("td");
+    cell.append(tip ? tipped(el("span", "", label), tip) : label);
     if (why) cell.append(el("span", "why", why));
     return cell;
   }
 
   function renderCases() {
-    const rows = CASES.filter(({ key }) => overview.cases[key]).map(({ key, label, why }) => {
+    const rows = CASES.filter(({ key }) => overview.cases[key]).map(({ key, label, tip }) => {
       const load = overview.cases[key];
       const row = el("tr");
       const share = el("td", "num");
@@ -2992,7 +3090,7 @@
       room.append(overLimit(amps(load.headroom_amps), load.headroom_amps < 0));
       const runsFor = (hours) => timeLeft(load.watts > 0 ? hours : null); // Nothing to run yet.
       row.append(
-        loadCell(label, why), el("td", "num", watts(load.watts)), el("td", "num", amps(load.amps)), share, room,
+        loadCell(label, "", tip), el("td", "num", watts(load.watts)), el("td", "num", amps(load.amps)), share, room,
         el("td", "num", runsFor(load.hours_from_now)), el("td", "num", runsFor(load.hours_from_full)),
       );
       return row;
@@ -3056,37 +3154,40 @@
       [`Until ${plan.until.slice(11, 16)} ${day}`, "", el("td", "num", timeLeft(plan.hours))],
       [`Energy above the ${plan.min_soc}% minimum`, "", el("td", "num", kwh(plan.energy_kwh))],
       ["Most the battery can average", batteryNow(plan.battery_w), el("td", "num", watts(plan.max_battery_w))],
-      ["Most your appliances can average", heldToLimit(plan) || "After conversion and standby", el("td", "num", watts(plan.max_w))],
+      ["Most your appliances can average", heldToLimit(plan), el("td", "num", watts(plan.max_w)), "After what the inverter uses and loses"],
       ["Ticked, typical", `${watts(plan.selected_w)} against that`, fit],
-    ].map(([label, why, value]) => {
+    ].map(([label, why, value, tip]) => {
       const row = el("tr");
-      row.append(loadCell(label, why), value);
+      row.append(loadCell(label, why, tip), value);
       return row;
     });
     $("run-plan").replaceChildren(...rows);
   }
 
   const TARIFF_ROWS = [
-    { key: "night_kwh_cost", label: "Cost if charged at the night rate", why: "The night rate, plus what's lost on the way in and out", verdict: () => "" },
+    { key: "night_kwh_cost", label: "Cost if charged at the night rate", tip: "The night rate, plus what's lost on the way in and out", verdict: () => "" },
     { key: "saving_day", label: "Used instead of buying at the day rate", verdict: (x) => (x > 0 ? status("good", "Worth doing") : status("warning", "Not worth doing")) },
     { key: "saving_peak", label: "Used instead of buying at the peak rate", verdict: (x) => (x > 0 ? status("good", "Worth doing") : status("warning", "Not worth doing")) },
     { key: "gain_export", label: "Charged at the night rate, then exported", verdict: (x) => (x > 0 ? status("good", "Makes money") : status("warning", "Loses money")) },
-    { key: "leftover_export", label: "Left when the night rate starts, exported", why: "Compared with keeping it, to save buying a kWh at the night rate", verdict: (x) => (x > 0 ? "Export it" : "Keep it") },
-    { key: "solar_export", label: "Solar you can't store, exported", why: "The battery is full and the sun is still out", verdict: () => "Export it" },
+    { key: "leftover_export", label: "Left when the night rate starts, exported", tip: "Compared with keeping it, to save buying a kWh at the night rate", verdict: (x) => (x > 0 ? "Export it" : "Keep it") },
+    { key: "solar_export", label: "Solar you can't store, exported", tip: "The battery is full and the sun is still out", verdict: () => "Export it" },
   ];
 
   function renderTariffs() {
     const { tariffs } = overview;
-    const rows = TARIFF_ROWS.map(({ key, label, why, verdict }) => {
+    const rows = TARIFF_ROWS.map(({ key, label, tip, verdict }) => {
       const value = tariffs[key];
       const row = el("tr");
       const so = el("td");
       so.append(isNum(value) ? verdict(value) : "—");
-      row.append(loadCell(label, why), el("td", "num", isNum(value) ? number(value, 2) : "—"), so);
+      row.append(loadCell(label, "", tip), el("td", "num", isNum(value) ? number(value, 2) : "—"), so);
       return row;
     });
     $("tariff-values").replaceChildren(...rows);
-    $("tariff-sources").textContent = `Charging from the grid assumes ${number(tariffs.round_trip_efficiency * 100, 0)}% of it comes back out to the house, and energy already in the battery ${number(tariffs.delivery_efficiency * 100, 0)}%. Both are typical figures rather than measurements.`;
+    $("tariff-help").dataset.tip = [
+      "Your rates per kWh, in any money unit. The results come out in the same unit.",
+      `Assumes ${number(tariffs.round_trip_efficiency * 100, 0)}% of grid charging comes back out to the house, and ${number(tariffs.delivery_efficiency * 100, 0)}% of what's already in the battery: typical figures, not measured.`,
+    ].join("\n");
   }
 
   const SETTINGS_FORMS = document.querySelectorAll("form.settings");
@@ -3101,28 +3202,27 @@
         setValue(input, input.type === "time" ? timeInputValue(value) : value);
       }
     }
-    $("capacity-hint").textContent = capacity.source === "measured"
-      ? `Not used now: the log measures ${kwh(capacity.kwh)} over ${capacity.points} percentage points of charging and discharging.`
-      : "Used only until the log has enough charging and discharging to measure it, which can take a few days. Allows for the battery health the inverter reports.";
+    $("capacity-help").dataset.tip = capacity.source === "measured"
+      ? `Not used now: the log measures ${kwh(capacity.kwh)}, over ${capacity.points} percentage points of charging and discharging.`
+      : "Used until the log has enough charging and discharging to measure it, which can take a few days. Allows for the battery health the inverter reports.";
   }
 
   function renderSources() {
     const { volts, fallback_volts: fallback, reserve_soc: reserve, reserve_reported: reported, capacity, overhead } = overview;
-    const parts = [
-      isNum(volts)
-        ? `Amps use the ${number(volts, 0)} V the inverter reports now.`
-        : `Amps assume ${fallback} V until the inverter reports a voltage.`,
-      reported
-        ? `Run times go down to the ${reserve}% the inverter keeps in reserve during a power cut.`
-        : `Run times go down to ${reserve}%, an assumed reserve, because the inverter hasn't reported its own.`,
-      capacity.kwh === null
-        ? "They need the battery's capacity, which isn't known yet."
-        : `They use a capacity of ${kwh(capacity.kwh)}.`,
+    $("appliance-sources").textContent = [
+      `${number(isNum(volts) ? volts : fallback, 0)} V`,
+      `${reserve}% reserve`,
+      capacity.kwh === null ? "capacity unknown" : kwh(capacity.kwh),
+      ...(overhead ? [`overhead ${overheadFigures(overhead)}`] : []),
+    ].join(" · ");
+    $("appliance-sources-help").dataset.tip = [
+      isNum(volts) ? "Amps use the battery voltage the inverter reports now." : "Amps use an assumed voltage until the inverter reports one.",
+      reported ? "Run times go down to the reserve the inverter keeps for a power cut." : "Run times go down to an assumed reserve, as the inverter hasn't reported its own.",
+      capacity.kwh === null ? "They need the battery's capacity, which isn't known yet." : "",
       !overhead ? "" : overhead.source === "measured"
-        ? `They allow for ${overheadFigures(overhead)} going to the inverter, measured from the log with the grid connected, so a power cut may differ.`
-        : `They allow for ${overheadFigures(overhead)} going to the inverter, a typical figure, until the log has enough readings with the battery alone supplying the house.`,
-    ];
-    $("appliance-sources").textContent = parts.join(" ");
+        ? "The overhead is what the inverter uses and loses, measured with the grid connected, so a power cut may differ."
+        : "The overhead is what the inverter uses and loses: a typical figure, until the log has readings with the battery alone supplying the house.",
+    ].filter(Boolean).join("\n");
   }
 
   function renderOverview() {
@@ -3167,9 +3267,13 @@
 
   function exportContents({ first_ts, last_ts, appliances, settings, meter_readings: meterReadings = 0, size_bytes }) {
     const count = (n, what) => `${number(n, 0)} ${what}${n === 1 ? "" : "s"}`;
-    const span = first_ts === null ? "No readings yet" : `Readings from ${calendarDate(first_ts)} to ${calendarDate(last_ts)}`;
-    const meter = meterReadings ? `, ${count(meterReadings, "meter half-hour")}` : "";
-    return `${span}${meter}, ${count(appliances, "appliance")} and ${count(settings, "setting")}. The full database is about ${number(size_bytes / 1e6, 1)} MB.`;
+    return [
+      first_ts === null ? "No readings yet" : `Readings ${calendarDate(first_ts)} to ${calendarDate(last_ts)}`,
+      ...(meterReadings ? [count(meterReadings, "meter half-hour")] : []),
+      count(appliances, "appliance"),
+      count(settings, "setting"),
+      `${number(size_bytes / 1e6, 1)} MB in all`,
+    ].join(" · ");
   }
 
   /*
@@ -3185,7 +3289,7 @@
     } catch {
       formats.replaceChildren();
       $("export-button").disabled = true;
-      $("export-contents").textContent = "Couldn't get the export options from the app. If it was updated recently, restart it and try again.";
+      $("export-contents").textContent = "Couldn't get the export options. If the app was just updated, restart it.";
       return;
     }
     $("export-contents").textContent = exportContents(answer.contents);
@@ -3196,7 +3300,9 @@
       input.name = "format";
       input.value = id;
       input.checked = chosen ? id === chosen : index === 0;
-      option.append(input, el("span", "", label), el("span", "meta", description));
+      const name = el("span", "", label);
+      name.append(helpMark(description, `About ${label}`));
+      option.append(input, name);
       return option;
     }));
     $("export-button").disabled = false;
@@ -3204,12 +3310,14 @@
 
   function importSummary({ label, applied, changes, tables }) {
     const readings = tables.find(({ id }) => id === "samples");
-    const span = readings?.first_ts ? ` Readings from ${calendarDate(readings.first_ts)} to ${calendarDate(readings.last_ts)}.` : "";
     const halfHours = tables.find(({ id }) => id === "meter_readings");
     const onDay = (iso) => calendarDate(new Date(`${iso}T00:00`) / 1000);
-    const meterSpan = halfHours?.first ? ` Meter half-hours from ${onDay(halfHours.first)} to ${onDay(halfHours.last)}.` : "";
-    const outcome = !changes ? "There's nothing new in it to import." : applied ? "Imported." : "Nothing is saved until you press Import.";
-    return `${label}.${span}${meterSpan} ${outcome}`;
+    const outcome = !changes ? "Nothing new to import." : applied ? "Imported." : "Nothing is saved until you press Import.";
+    return [
+      label,
+      ...(readings?.first_ts ? [`readings ${calendarDate(readings.first_ts)} to ${calendarDate(readings.last_ts)}`] : []),
+      ...(halfHours?.first ? [`meter ${onDay(halfHours.first)} to ${onDay(halfHours.last)}`] : []),
+    ].join(" · ") + `. ${outcome}`;
   }
 
   function showImport(report, problem = "") {
@@ -3382,10 +3490,10 @@
 
     function dayNotes(day) {
       const notes = [];
-      if (day.flags.includes("b")) notes.push(`The readings start at ${meter.file.first.slice(11)}`);
-      if (day.flags.includes("p")) notes.push(`The file only runs to ${fileEnd().slice(11)} so far`);
-      if (day.flags.includes("s")) notes.push("The clocks went forward: a 23-hour day");
-      if (day.flags.includes("a")) notes.push("The clocks went back: a 25-hour day");
+      if (day.flags.includes("b")) notes.push(`Starts at ${meter.file.first.slice(11)}`);
+      if (day.flags.includes("p")) notes.push(`File runs to ${fileEnd().slice(11)} so far`);
+      if (day.flags.includes("s")) notes.push("Clocks forward: 23 hours");
+      if (day.flags.includes("a")) notes.push("Clocks back: 25 hours");
       if (day.missing) notes.push(`${count(day.missing, "half-hour")} missing`);
       return notes;
     }
@@ -3424,18 +3532,16 @@
     function renderIntro() {
       const first = days[0];
       const last = days.at(-1);
-      const partly = last.flags.includes("p") ? " The last day is only partly in the file so far." : "";
-      $("gm-intro").textContent = `Half-hourly import from your electricity meter, downloaded from ESB Networks: ${longDay(first.date)} to ${longDay(last.date)}.${partly}`;
+      const partly = last.flags.includes("p") ? " · last day partial" : "";
+      $("gm-intro").className = "meta";
+      $("gm-intro").textContent = `Meter file: ${longDay(first.date)} to ${longDay(last.date)}${partly}`;
     }
 
     function renderEmpty() {
       const link = el("a", "", "App Data");
       link.href = "#app-data";
-      $("gm-intro").replaceChildren(
-        "No meter readings yet. Download your smart meter's half-hourly readings in kW from the ESB Networks website, then import the file under ",
-        link,
-        ". This tab then shows what you imported from the grid, and when, priced at your rates.",
-      );
+      $("gm-intro").className = "note";
+      $("gm-intro").replaceChildren("No meter readings yet. Import an ESB Networks half-hourly kW file under ", link, ".");
     }
 
     /* ---- Tiles ---- */
@@ -3459,14 +3565,14 @@
       $("gm-t-total-sub").textContent = present ? `About ${number(total / (present / 48), 1)} kWh a day` : "No readings in this range";
       $("gm-t-cost").textContent = money(cost);
       $("gm-t-cost-sub").textContent = cost === null
-        ? "Enter your night, day and peak rates under Appliances & tariffs to see this."
-        : `${total > 0 ? `${number(cost / total, cost / total < 1 ? 3 : 2)} a kWh on average, in` : "In"} the same unit as your rates. No standing charge.`;
+        ? "Set your rates under Appliances & tariffs"
+        : total > 0 ? `${number(cost / total, cost / total < 1 ? 3 : 2)} a kWh on average` : "";
       $("gm-t-night").textContent = share(kwh[0]);
       $("gm-t-night-sub").textContent = `Day ${share(kwh[1])}, peak ${share(kwh[2])}`;
       if (best) {
-        const gap = afterGap(dayIndex.get(best.day.date), best.slot) ? " It comes just after a gap in the readings." : "";
+        const gap = afterGap(dayIndex.get(best.day.date), best.slot) ? " · just after a gap" : "";
         $("gm-t-max").textContent = kw(best.w);
-        $("gm-t-max-sub").textContent = `Average over ${slotSpan(best.slot)} on ${longDay(best.day.date)}.${gap}`;
+        $("gm-t-max-sub").textContent = `${slotSpan(best.slot)} on ${longDay(best.day.date)}${gap}`;
       } else {
         $("gm-t-max").textContent = "—";
         $("gm-t-max-sub").textContent = "Nothing above 0 kW in this range";
@@ -3516,9 +3622,9 @@
       const monthly = bars[0].kind === "month";
       $("gm-bars-sub").textContent = zoom ? `${monthLabel(zoom)}: kWh imported each day` : `kWh imported each ${monthly ? "month" : "day"}`;
       const below = monthly ? ["month", "days"] : ["day", "half-hours"];
-      $("gm-bars-hint").textContent = matchMedia("(pointer: fine)").matches
+      $("gm-bars-help").dataset.tip = matchMedia("(pointer: fine)").matches
         ? `Click a ${below[0]} to see its ${below[1]}.`
-        : `Tap a ${below[0]} to read it, and tap it again to see its ${below[1]}.`;
+        : `Tap a ${below[0]} to read it. Tap again to see its ${below[1]}.`;
       $("gm-zoom-out").hidden = !zoom;
       $("gm-bars-col").textContent = monthly ? "Month" : "Day";
       $("gm-bars-table").replaceChildren(...bars.toReversed().map((bar) => {
@@ -3745,9 +3851,8 @@
       $("gm-day-input").value = selected;
       $("gm-prev-day").disabled = position === 0;
       $("gm-next-day").disabled = position === days.length - 1;
-      const priced = cost === null ? "" : `, ${money(cost)} at your rates`;
-      const split = `Night ${number(day.kwh[0], 1)}, day ${number(day.kwh[1], 1)}, peak ${number(day.kwh[2], 1)} kWh`;
-      $("gm-day-summary").textContent = `${longDay(day.date)}: ${kwhText(day.total)} kWh imported${priced}. ${sentences([split, ...dayNotes(day)])}`;
+      const split = `night ${number(day.kwh[0], 1)}, day ${number(day.kwh[1], 1)}, peak ${number(day.kwh[2], 1)}`;
+      $("gm-day-summary").textContent = [`${longDay(day.date)}: ${kwhText(day.total)} kWh`, ...(cost === null ? [] : [`cost ${money(cost)}`]), split, ...dayNotes(day)].join(" · ");
       const rows = [];
       day.slots.forEach((w, slot) => {
         const twice = day.twice.find(([at]) => at === slot);
@@ -3877,7 +3982,7 @@
 
     const canvas = $("gm-carpet-canvas");
     const cursor = $("gm-carpet-cursor");
-    if (!matchMedia("(pointer: fine)").matches) $("gm-carpet-hint").textContent = "Tap a day to read it, and tap it again to open it above.";
+    if (!matchMedia("(pointer: fine)").matches) $("gm-carpet-help").dataset.tip = $("gm-carpet-help").dataset.tip.replace(/Click.*/, "Tap a day to read it. Tap again to open it above.");
     let carpet = null;
     const token = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -4045,9 +4150,9 @@
       $("gm-compare").hidden = !pairs.length;
       $("gm-compare-empty").hidden = pairs.length > 0;
       if (!pairs.length) {
-        let why = "No day is covered in full by both the meter file and this app's log yet. A day counts once the file has all its half-hours and this app logged readings just before the midnight at each end.";
+        let why = "No whole day in both the meter file and this app's log yet.";
         if (!app.first) why = "This app hasn't logged any readings yet.";
-        else if (fileEnd() <= app.first) why = `The meter file ends at ${endText(fileEnd())}, and this app's log starts at ${stampText(app.first)}. ESB Networks publishes a day or two behind, so a download in a few days will overlap the log, and these checks can start.`;
+        else if (fileEnd() <= app.first) why = `The meter file ends at ${endText(fileEnd())}, before this app's log starts. ESB Networks runs a day or two behind, so a later download will overlap.`;
         $("gm-compare-empty").replaceChildren(el("strong", "", "Nothing to compare yet"), why);
         $("gm-compare-table").replaceChildren();
         return;
@@ -4055,9 +4160,8 @@
       const meterSum = pairs.reduce((sum, pair) => sum + pair.meter, 0);
       const appSum = pairs.reduce((sum, pair) => sum + pair.app, 0);
       const percent = meterSum > 0 ? (100 * (appSum - meterSum)) / meterSum : null;
-      const verdict = percent === null ? "" : Math.abs(percent) < 0.05 ? " They agree." : ` This app's figure is ${number(Math.abs(percent), 1)}% ${percent > 0 ? "higher" : "lower"}.`;
-      const over = pairs.length === 1 ? "On the one day both cover in full" : `Over the ${pairs.length} days both cover in full`;
-      $("gm-compare-summary").textContent = `${over}, the meter recorded ${kwhText(meterSum)} kWh from the grid and this app ${kwhText(appSum)} kWh.${verdict}`;
+      const verdict = percent === null ? [] : [Math.abs(percent) < 0.05 ? "they agree" : `this app ${number(Math.abs(percent), 1)}% ${percent > 0 ? "higher" : "lower"}`];
+      $("gm-compare-summary").textContent = [`${count(pairs.length, "whole day")}: meter ${kwhText(meterSum)} kWh`, `this app ${kwhText(appSum)} kWh`, ...verdict].join(" · ");
       $("gm-compare-table").replaceChildren(...pairs.toReversed().map((pair) => {
         const row = el("tr");
         const name = el("th", "", longDay(pair.day));
@@ -4151,31 +4255,29 @@
       };
       const joined = (items) => (items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}` : items[0]);
       const bandText = (name, start, end) => (start === end ? `no ${name} rate` : `${name} ${hhmm(start)} to ${hhmm(end)}`);
-      const hours = `${bandText("night", bands.night_start, bands.night_end)} and ${bandText("peak", bands.peak_start, bands.peak_end)}, with the day rate the rest of the time`;
+      const hours = `${bandText("night", bands.night_start, bands.night_end)}, ${bandText("peak", bands.peak_start, bands.peak_end)}, day the rest`;
       const rateText = (rate) => rate.toLocaleString(undefined, { maximumFractionDigits: 4 });
       const items = [
-        ["What a reading is", `The average kW drawn from the grid over a half-hour, so a half-hour's kWh is half its reading. There are ${count(file.readings, "reading")}, from ${stampText(file.first)} to ${endText(fileEnd())}.`],
-        ["Time labels", "ESB Networks calls each reading's time its end time, but the jump in use when the night rate starts shows up at the 23:00 label, so each label is taken as the start of its half-hour."],
-        ["Rate bands", bandsSet
-          ? `${hours[0].toUpperCase()}${hours.slice(1)}, using the times you entered under Appliances & tariffs and the usual ones for any left blank. A half-hour takes the rate in force when it starts.`
-          : `The usual hours, ${hours}, until you set your own under Appliances & tariffs. A half-hour takes the rate in force when it starts.`],
+        ["Readings", `${count(file.readings, "reading")}, ${stampText(file.first)} to ${endText(fileEnd())}. Each is the average kW over a half-hour, so its kWh is half that.`],
+        ["Time labels", "Taken as each half-hour's start: the night-rate jump shows at 23:00, though ESB Networks calls it the end."],
+        ["Rate bands", `${hours[0].toUpperCase()}${hours.slice(1)}${bandsSet ? ", from Appliances & tariffs" : " (the usual hours, until you set your own under Appliances & tariffs)"}. A half-hour takes the rate at its start.`],
         ["Costs", rates.every(isNum)
-          ? `Today's rates from Appliances & tariffs (night ${rateText(rates[0])}, day ${rateText(rates[1])}, peak ${rateText(rates[2])}) for every half-hour, even ones from before those rates applied. No standing charge.`
-          : "Enter your night, day and peak rates under Appliances & tariffs to see costs."],
+          ? `Today's rates (night ${rateText(rates[0])}, day ${rateText(rates[1])}, peak ${rateText(rates[2])}) for every half-hour, even older ones. No standing charge.`
+          : "Set your rates under Appliances & tariffs to see costs."],
         ["Gaps", file.gapCount
           ? list([...file.gaps.map(gapText), ...(file.gapCount > file.gaps.length ? [`and ${number(file.gapCount - file.gaps.length, 0)} more`] : [])])
-          : "None. Every half-hour in the file's span has a reading."],
+          : "None."],
       ];
-      if (file.zeros) items.push(["Zero readings", `${count(file.zeros, "half-hour")} read exactly 0 kW. They're kept as readings, not treated as gaps.`]);
+      if (file.zeros) items.push(["Zero readings", `${count(file.zeros, "half-hour")} at exactly 0 kW, kept as readings.`]);
       const spring = days.filter((day) => day.flags.includes("s")).map((day) => dayMonthYear(day.date));
       const autumn = days.filter((day) => day.flags.includes("a")).map((day) => dayMonthYear(day.date));
       const clocks = [];
-      if (spring.length) clocks.push(`${joined(spring)} ${spring.length > 1 ? "have" : "has"} no 01:00 or 01:30, as the clocks went forward.`);
-      if (autumn.length) clocks.push(`On ${joined(autumn)} those half-hours happened twice, as the clocks went back. The day chart shows their average, and the day's totals count both.`);
+      if (spring.length) clocks.push(`Forward on ${joined(spring)}: no 01:00 or 01:30.`);
+      if (autumn.length) clocks.push(`Back on ${joined(autumn)}: those ran twice. The day chart averages them; the totals count both.`);
       if (clocks.length) items.push(["Clock changes", clocks.join(" ")]);
       items.push(
-        ["Time zones", "ESB Networks' times are Irish clock time. The cross-checks compare whole days on this app's clock, so they need the computer running this app set to Irish time."],
-        ["Export", "The file has import only, so this tab shows only what came from the grid."],
+        ["Time zones", "Irish time. The cross-checks need the computer running this app on Irish time too."],
+        ["Export", "Not in the file: import only."],
       );
       let best = null;
       let next = null;
@@ -4186,12 +4288,12 @@
         else if (!next || w > next.w) next = here;
       }));
       if (best && afterGap(best.position, best.slot)) {
-        const nextText = next ? ` The next highest is ${kw(next.w)} over ${slotSpan(next.slot)} on ${dayMonthYear(days[next.position].date)}.` : "";
-        items.push(["Highest half-hour", `The highest reading, ${kw(best.w)} over ${slotSpan(best.slot)} on ${dayMonthYear(days[best.position].date)}, comes just after a gap in the readings.${nextText}`]);
+        const nextText = next ? ` Next highest: ${kw(next.w)}, ${slotSpan(next.slot)} on ${dayMonthYear(days[next.position].date)}.` : "";
+        items.push(["Highest half-hour", `${kw(best.w)}, ${slotSpan(best.slot)} on ${dayMonthYear(days[best.position].date)}, just after a gap.${nextText}`]);
       }
       items.push(
-        ["Identifiers", "Every row of the file carries the MPRN and the meter's serial number. The import skips both, so they aren't stored or shown anywhere in this app."],
-        ["Updating", "Import a newer download under App Data whenever you like. Only the half-hours that aren't here yet are added."],
+        ["Identifiers", "The file's MPRN and meter serial number are skipped on import: never stored or shown."],
+        ["Updating", "Import a newer download under App Data at any time. Only new half-hours are added."],
       );
       $("gm-notes").replaceChildren(...items.flatMap(([term, body]) => {
         const detail = el("dd");
@@ -4261,7 +4363,10 @@
       try {
         answer = await getJson("/api/meter");
       } catch {
-        if (mine === request) $("gm-intro").textContent = "Couldn't get the meter readings from the app. If it was updated recently, restart it and try again.";
+        if (mine === request) {
+          $("gm-intro").className = "note";
+          $("gm-intro").textContent = "Couldn't get the meter readings. If the app was just updated, restart it.";
+        }
         return;
       }
       if (mine === request) load(answer);
@@ -4355,6 +4460,7 @@
     function copyHeader(pin) {
       const head = pin.table.tHead.cloneNode(true);
       for (const node of head.querySelectorAll("[id]")) node.removeAttribute("id");
+      for (const node of head.querySelectorAll("[tabindex]")) node.removeAttribute("tabindex");
       const real = pin.table.tHead.rows[0].cells;
       [...head.rows[0].cells].forEach((cell, i) => { cell.style.width = `${real[i].getBoundingClientRect().width}px`; });
       pin.copy.style.width = `${pin.table.getBoundingClientRect().width}px`;
