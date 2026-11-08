@@ -1885,13 +1885,10 @@
   const GRID_BELOW_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "importing" : "exporting";
 
   const HISTORY_CHARTS = [
-    // Each on its own scale, so the house still shows on a sunny day. Neither should go below zero;
-    // a brief misreading below it is cut off at the axis.
+    // Solar and house each on their own scale, so the house still shows on a sunny day. Neither
+    // should go below zero; a brief misreading below it is cut off at the axis.
     { title: "Solar", unit: "W", height: 150, floor: 0, series: [
       { key: "pv_w", label: "Solar", unit: "W", color: "--flow-solar" },
-    ] },
-    { title: "House", unit: "W", height: 150, floor: 0, series: [
-      { key: "load_w", label: "House", unit: "W", color: "--flow-load" },
     ] },
     { title: "Battery and grid", unit: "W", height: 190, series: [
       { key: "battery_w", label: "Battery", unit: "W", color: "--flow-battery", above: "discharging", below: "charging" },
@@ -1900,6 +1897,9 @@
       above: `Battery out · Grid ${GRID_POSITIVE_MEANS_EXPORT ? "export" : "import"} ↑`,
       below: `Battery in · Grid ${GRID_POSITIVE_MEANS_EXPORT ? "import" : "export"} ↓`,
     } },
+    { title: "House", unit: "W", height: 150, floor: 0, series: [
+      { key: "load_w", label: "House", unit: "W", color: "--flow-load" },
+    ] },
     { title: "Battery charge", unit: "%", height: 130, domain: [0, 100], series: [
       { key: "battery_soc", label: "Battery charge", unit: "%", color: "--flow-battery" },
     ] },
@@ -1933,7 +1933,6 @@
 
   const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const TOU_NAMES = { charge: "Charging from the grid", discharge: "Battery discharging", hold: "Battery holding" };
   const TOU_SHORT = { charge: "Grid charge", discharge: "Discharge", hold: "Hold" };
 
   /*
@@ -2404,7 +2403,12 @@
     return intervals;
   }
 
-  const touText = (period) => `Time-of-use: ${TOU_NAMES[period.action] ?? period.action}${period.action === "hold" ? "" : ` at ${period.power_pct}%`}`;
+  // Kept short: it's one line in the chart tooltip, e.g. "TOU 25% pwr".
+  const touText = (period) => ({
+    charge: `TOU ${period.power_pct}% pwr`,
+    discharge: `TOU discharge ${period.power_pct}% pwr`,
+    hold: "TOU hold",
+  })[period.action] ?? `TOU ${period.action}`;
 
   /* The loaded points whose middle is on screen. They set the y axes, the tooltip and the table. */
   function visiblePoints() {
