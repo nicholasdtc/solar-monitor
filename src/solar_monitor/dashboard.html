@@ -262,15 +262,39 @@
   .range input, .range select { min-height: 36px; padding: 4px 8px; background: var(--surface); border: 1px solid var(--rule-strong); }
   .range-shown { margin-top: 8px; }
   .charts { display: flex; flex-direction: column; gap: 16px; }
-  #history-charts { transition: opacity .15s; }
-  #history-charts.loading { opacity: .5; }
+  #history-charts > * { transition: opacity .15s; }
+  #history-charts.loading > * { opacity: .5; }
   #history-charts.panning svg { cursor: grabbing; }
   #history-charts.panning .chart-end { display: none; }
-  .chart-head { display: flex; flex-wrap: wrap; gap: 2px 16px; align-items: baseline; justify-content: space-between; }
+  .chart { position: relative; }
+  .chart-head { display: flex; flex-wrap: wrap; gap: 2px 16px; align-items: baseline; justify-content: space-between; padding-right: 36px; }
+  /* The full-screen button, at a chart's top right. Its icon is drawn in CSS: an svg in it would count as the chart. */
+  .chart-zoom {
+    position: absolute; top: -5px; right: 0; width: 30px; height: 30px; padding: 0; cursor: pointer;
+    border: 0; background: none; color: var(--muted); -webkit-tap-highlight-color: transparent;
+  }
+  .chart-zoom::before {
+    content: ""; position: absolute; inset: 7px; background: currentColor;
+    -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat;
+    --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.75'%3E%3Cpath d='M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5'/%3E%3C/svg%3E");
+  }
+  .chart-zoom.on::before {
+    --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.75'%3E%3Cpath d='M6 1v5H1M10 1v5h5M15 10h-5v5M1 10h5v5'/%3E%3C/svg%3E");
+  }
+  .chart-zoom:hover { color: var(--ink); background: var(--page); }
+  /* One chart filling the screen: its box of charts covers the page, holding only that chart. */
+  html.chart-full { overflow: hidden; }
+  .charts.full {
+    position: fixed; inset: 0; z-index: 7; overflow: hidden; background: var(--surface);
+    padding: max(12px, env(safe-area-inset-top)) max(var(--gutter), env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom)) max(var(--gutter), env(safe-area-inset-left));
+  }
   .legend { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); font-size: 13px; }
   .legend i { display: inline-block; width: 14px; height: 2px; margin-right: 5px; vertical-align: middle; }
   .legend.bars i { width: 10px; height: 10px; }
-  .chart svg { display: block; margin-top: 4px; touch-action: pan-y; user-select: none; }
+  .chart svg { display: block; margin-top: 4px; touch-action: pan-y; user-select: none; -webkit-tap-highlight-color: transparent; }
+  /* A ring round a chart only for the keyboard, not when it's clicked or tapped to read. */
+  .chart svg:focus:not(:focus-visible) { outline: none; }
   .chart svg:focus-visible { outline: 2px solid var(--flow-grid); outline-offset: 2px; }
   #history-charts svg { cursor: crosshair; }
   .chart-grid { stroke: var(--rule); }
@@ -290,7 +314,7 @@
   .flows { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
   td small.spread { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; }
   #chart-tip {
-    position: fixed; z-index: 6; padding: 8px 10px; pointer-events: none; font-size: 13px;
+    position: fixed; z-index: 8; padding: 8px 10px; pointer-events: none; font-size: 13px;
     background: var(--surface); border: 1px solid var(--rule-strong); box-shadow: 0 2px 8px rgba(0, 0, 0, .18);
   }
   .tip-title { margin-bottom: 4px; color: var(--ink-2); }
@@ -1885,8 +1909,8 @@
   }
 
   /*
-    History and daily energy. Different units get separate charts on a shared time axis,
-    never two scales on one chart. Battery and grid stay signed as the inverter reports
+    History and daily energy. Different units get separate charts over the same stretch of time,
+    each with its own time axis, never two scales on one chart. Battery and grid stay signed as the inverter reports
     them, which also matches the SEMS app, so the two can be compared directly.
   */
   const CHART_REFRESH_MS = 60000;
@@ -1916,14 +1940,14 @@
   const HISTORY_CHARTS = [
     // Solar and house each on their own scale, so the house still shows on a sunny day. Neither
     // should go below zero; a brief misreading below it is cut off at the axis.
-    // The last chart's height includes the time axis.
-    { title: "Solar", unit: "W", height: 150, floor: 0, series: [
+    // Each chart's height includes its time axis.
+    { title: "Solar", unit: "W", height: 164, floor: 0, series: [
       { key: "pv_w", label: "Solar", unit: "W", color: "--flow-solar" },
     ] },
-    { title: "Battery charge", unit: "%", height: 116, domain: [0, 100], series: [
+    { title: "Battery charge", unit: "%", height: 130, domain: [0, 100], series: [
       { key: "battery_soc", label: "Battery charge", unit: "%", color: "--flow-battery" },
     ] },
-    { title: "House", unit: "W", height: 150, floor: 0, series: [
+    { title: "House", unit: "W", height: 164, floor: 0, series: [
       { key: "load_w", label: "House", unit: "W", color: "--flow-load" },
     ] },
     { title: "Battery and grid", unit: "W", height: 204, series: [
@@ -1937,10 +1961,10 @@
 
   /* Same layout as history, each chart on its own scale: above the line is energy out of the battery or to the grid. */
   const DAILY_CHARTS = [
-    { title: "Solar", unit: "kWh", height: 150, columns: [
+    { title: "Solar", unit: "kWh", height: 164, columns: [
       { above: "pv", aboveLabel: "Solar", label: "Solar", color: "--flow-solar" },
     ] },
-    { title: "House", unit: "kWh", height: 150, columns: [
+    { title: "House", unit: "kWh", height: 164, columns: [
       { above: "load", aboveLabel: "House", label: "House", color: "--flow-load" },
     ] },
     { title: "Battery and grid", unit: "kWh", height: 224, columns: [
@@ -1951,7 +1975,7 @@
 
   /* Where each day's energy went, split reading by reading on the server. Stacked from the zero line up. */
   const FLOW_CHARTS = [
-    { title: "Where solar went", unit: "kWh", height: 170, stack: [
+    { title: "Where solar went", unit: "kWh", height: 184, stack: [
       { key: "solar_home", label: "House", tip: "Solar to house", color: "--flow-load" },
       { key: "solar_battery", label: "Battery", tip: "Solar to battery", color: "--flow-battery" },
       { key: "solar_export", label: "Grid export", tip: "Solar to grid", color: "--flow-grid" },
@@ -2081,8 +2105,8 @@
     if (bottom - zero > 26) svg.append(svgEl("text", { x, y: bottom - 7, class: "chart-words" }, labels.below));
   }
 
-  /* A titled chart with its legend. Identity is never left to colour alone. */
-  function chartShell(chart, entries, legendClass) {
+  /* A titled chart with its legend. Identity is never left to colour alone. `full`: it fills the screen. */
+  function chartShell(chart, entries, legendClass, full) {
     const node = el("div", "chart");
     const head = el("div", "chart-head");
     head.append(el("h3", "", chart.title));
@@ -2097,9 +2121,40 @@
       }
       head.append(legend);
     }
-    node.append(head);
+    const zoom = el("button", full ? "chart-zoom on" : "chart-zoom");
+    zoom.type = "button";
+    zoom.title = full ? "Exit full screen" : "Full screen";
+    zoom.setAttribute("aria-label", `${zoom.title}: ${chart.title}`);
+    node.append(head, zoom);
     if (chart.note) node.append(el("p", "meta", chart.note));
     return node;
+  }
+
+  /*
+    One chart can fill the screen, from the button at its top right. Its box of charts becomes the
+    overlay and holds only that chart, so dragging, zooming and the tooltip work as they do on the
+    page. Where the browser allows it, the page also goes full screen, hiding the browser's own bars.
+  */
+  let fullChart = null; // { box, index }: the id of the box of charts, and the chart's place in it.
+  const CHART_BOXES = ["history-charts", "daily-charts", "flow-charts"];
+
+  /* A box's room inside its padding. It has none on the page, and some while it fills the screen. */
+  function innerSize(box) {
+    const style = getComputedStyle(box);
+    return {
+      width: box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+      height: box.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+    };
+  }
+  /* A chart's height when it fills its box: all the room under its title. */
+  const fullHeight = (box, node) => Math.max(120, Math.floor(innerSize(box).height - node.offsetHeight - 4));
+
+  /* A redraw replaces the charts' buttons, so one that had the focus gets it back. Call before clearing the box. */
+  function keepZoomFocus(box) {
+    const focused = document.activeElement;
+    if (!focused?.matches(".chart-zoom") || !box.contains(focused)) return () => {};
+    const at = [...box.querySelectorAll(".chart-zoom")].indexOf(focused);
+    return () => box.querySelectorAll(".chart-zoom")[at]?.focus({ preventScroll: true });
   }
 
   /* The one tooltip. It enhances the charts: every value is also in a table. */
@@ -2137,7 +2192,9 @@
     const finger = tipPointer === "touch";
     const gap = finger ? 32 : 16;
     const [minX, maxX] = [8, document.documentElement.clientWidth - 8 - width];
-    const [minY, maxY] = [Math.max(8, document.querySelector(".tabs").getBoundingClientRect().bottom + 8), innerHeight - 8 - height];
+    // Clear of the bar at the top, unless a chart fills the screen over it.
+    const top = fullChart ? 8 : Math.max(8, document.querySelector(".tabs").getBoundingClientRect().bottom + 8);
+    const [minY, maxY] = [top, innerHeight - 8 - height];
     const midX = clamp(x - width / 2, minX, maxX);
     const midY = clamp(y - height / 2, minY, maxY);
     const right = [x + gap, midY];
@@ -2480,19 +2537,24 @@
     ].filter(Boolean).join("\n");
     renderHistoryTable();
 
+    const refocus = keepZoomFocus(box);
     box.replaceChildren();
-    const width = box.clientWidth;
-    const planned = HISTORY_CHARTS.map((chart, i) => {
-      const lastChart = i === HISTORY_CHARTS.length - 1;
-      const bottom = chart.height - (lastChart ? X_AXIS_HEIGHT : 10);
+    const full = fullChart?.box === box.id;
+    const { width } = innerSize(box);
+    const shown = HISTORY_CHARTS.map((chart, i) => ({ chart, i })).filter(({ i }) => !full || i === fullChart.index);
+    const planned = shown.map(({ chart, i }) => {
+      const node = chartShell(chart, chart.series, "lines", full);
+      box.append(node);
+      const height = full ? fullHeight(box, node) : chart.height;
+      const bottom = height - X_AXIS_HEIGHT;
       const keys = chart.series.flatMap((s) => [s.key, `${s.key}_min`, `${s.key}_max`]);
       const known = visible.flatMap((p) => keys.map((key) => p[key])).filter(isNum);
       let [low, high] = chart.domain ?? [Math.max(chart.floor ?? -Infinity, Math.min(0, ...known)), Math.max(0, ...known)];
       if (high - low < 100 && !chart.domain) high = low + 100; // A flat night stays readable.
-      return { chart, lastChart, bottom, scale: yScale(low, high, CHART_TOP, bottom, chart.unit) };
+      return { chart, i, node, height, bottom, scale: yScale(low, high, CHART_TOP, bottom, chart.unit) };
     });
-    const endLabels = width > END_LABELS_MIN_WIDTH;
-    const named = HISTORY_CHARTS.filter((chart) => chart.series.length > 1).flatMap((chart) => chart.series.map((s) => textWidth(s.label)));
+    const named = shown.filter(({ chart }) => chart.series.length > 1).flatMap(({ chart }) => chart.series.map((s) => textWidth(s.label)));
+    const endLabels = width > END_LABELS_MIN_WIDTH && named.length > 0;
     const frame = { left: leftMargin(planned.map((p) => p.scale)), right: endLabels ? Math.ceil(Math.max(...named)) + 12 : CHART_RIGHT, width };
     const plotWidth = width - frame.left - frame.right;
     historyFrame = { left: frame.left, plotWidth };
@@ -2502,9 +2564,8 @@
     const xTicks = timeTicks(start - span, end + span, Math.max(2, Math.floor(plotWidth / MIN_TICK_SPACING_PX)), span);
     const [bandLeft, bandRight] = [frame.left - 24, frame.left + plotWidth + 24];
 
-    const drawn = planned.map(({ chart, lastChart, bottom, scale }, i) => {
-      const node = chartShell(chart, chart.series, "lines");
-      const svg = svgEl("svg", { width, height: chart.height });
+    const drawn = planned.map(({ chart, i, node, height, bottom, scale }, n) => {
+      const svg = svgEl("svg", { width, height });
       // Anything past the axes is cut off at their edges. The tooltip and table still give the true value.
       const clips = svgEl("defs", {});
       const clip = (id, attrs) => {
@@ -2514,7 +2575,7 @@
         return id;
       };
       const plot = clip(`history-plot-${i}`, { x: frame.left - 2, y: CHART_TOP - 2, width: plotWidth + 4, height: bottom - CHART_TOP + 4 });
-      const band = clip(`history-band-${i}`, { x: bandLeft, y: bottom, width: bandRight - bandLeft, height: chart.height - bottom });
+      const band = clip(`history-band-${i}`, { x: bandLeft, y: bottom, width: bandRight - bandLeft, height: height - bottom });
       svg.append(clips);
       /* A layer that slides when the chart is dragged: an inner group that moves, in an outer one that clips. */
       const sliding = (clipId) => {
@@ -2530,7 +2591,7 @@
         const [left, right] = [atTime(interval.start), atTime(interval.end)];
         shade.append(svgEl("rect", { x: left, width: right - left, y: CHART_TOP, height: bottom - CHART_TOP, class: "chart-tou" }));
         const name = TOU_SHORT[interval.period.action];
-        if (i === 0 && name && right - left > textWidth(name) + 8) {
+        if (n === 0 && name && right - left > textWidth(name) + 8) {
           shade.append(svgEl("text", { x: (left + right) / 2, y: CHART_TOP + 15, class: "chart-words middle" }, name));
         }
       }
@@ -2540,15 +2601,13 @@
         const tx = Math.round(atTime(tick.ts)) + 0.5;
         grid.append(svgEl("line", { x1: tx, x2: tx, y1: CHART_TOP, y2: bottom, class: "chart-grid" }));
       }
-      if (lastChart) {
-        const labels = sliding(band);
-        for (const tick of xTicks) {
-          const tx = Math.round(atTime(tick.ts)) + 0.5;
-          const half = textWidth(tick.label) / 2;
-          // Leave out a label the edge would cut in two. Those wholly past it still slide in.
-          if ((tx - half < bandLeft && tx + half > bandLeft) || (tx - half < bandRight && tx + half > bandRight)) continue;
-          labels.append(svgEl("text", { x: tx, y: bottom + 17, class: "chart-tick chart-x" }, tick.label));
-        }
+      const labels = sliding(band);
+      for (const tick of xTicks) {
+        const tx = Math.round(atTime(tick.ts)) + 0.5;
+        const half = textWidth(tick.label) / 2;
+        // Leave out a label the edge would cut in two. Those wholly past it still slide in.
+        if ((tx - half < bandLeft && tx + half > bandLeft) || (tx - half < bandRight && tx + half > bandRight)) continue;
+        labels.append(svgEl("text", { x: tx, y: bottom + 17, class: "chart-tick chart-x" }, tick.label));
       }
       const lines = sliding(plot);
       for (const series of chart.series) {
@@ -2562,9 +2621,9 @@
       const overlay = svgEl("g", { class: "history-overlay" });
       svg.append(overlay);
       node.append(svg);
-      box.append(node);
       return { chart, svg, overlay, scale, bottom };
     });
+    refocus();
 
     const hide = () => {
       $("chart-tip").hidden = true;
@@ -2708,26 +2767,32 @@
     renderShare(days);
 
     const sets = [{ box, charts: DAILY_CHARTS }, ...(hasFlows ? [{ box: $("flow-charts"), charts: FLOW_CHARTS }] : [])];
-    const width = box.clientWidth;
-    const planned = sets.flatMap((set) => set.charts.map((chart, i) => {
-      const lastChart = i === set.charts.length - 1;
-      const bottom = chart.height - (lastChart ? X_AXIS_HEIGHT : 10);
+    // Filling the screen, only that chart is drawn. The other set stays as it is, under it.
+    const fullSet = sets.find((set) => set.box.id === fullChart?.box);
+    const drawnSets = fullSet ? [fullSet] : sets;
+    const { width } = innerSize(fullSet?.box ?? box);
+    const refocus = drawnSets.map((set) => keepZoomFocus(set.box));
+    for (const set of drawnSets) set.box.replaceChildren();
+    const shown = drawnSets.flatMap((set) => set.charts.map((chart, i) => ({ set, chart, i }))).filter(({ i }) => !fullSet || i === fullChart.index);
+    const planned = shown.map(({ set, chart }) => {
+      const node = chartShell(chart, chart.stack ?? chart.columns, "bars", Boolean(fullSet));
+      set.box.append(node);
+      const height = fullSet ? fullHeight(set.box, node) : chart.height;
+      const bottom = height - X_AXIS_HEIGHT;
       const high = Math.max(0.5, ...days.map((day) => chart.stack
         ? chart.stack.reduce((sum, part) => sum + (day[part.key] ?? 0), 0)
         : Math.max(...chart.columns.map((c) => day[c.above] ?? 0))));
       const low = chart.stack ? 0 : -Math.max(0, ...days.flatMap((day) => chart.columns.map((c) => day[c.below] ?? 0)));
-      return { set, chart, lastChart, bottom, scale: yScale(low, high, CHART_TOP, bottom, chart.unit) };
-    }));
+      return { set, chart, node, height, bottom, scale: yScale(low, high, CHART_TOP, bottom, chart.unit) };
+    });
     const frame = { left: leftMargin(planned.map((p) => p.scale)), right: CHART_RIGHT, width };
     const band = (width - frame.left - frame.right) / days.length;
     const labelEvery = Math.ceil(MIN_TICK_SPACING_PX * 0.7 / band);
     const center = (i) => frame.left + band * (i + 0.5);
     const dayDate = (day) => new Date(`${day.day}T12:00`);
 
-    for (const set of sets) set.box.replaceChildren();
-    const drawn = planned.map(({ set, chart, lastChart, bottom, scale }) => {
-      const node = chartShell(chart, chart.stack ?? chart.columns, "bars");
-      const svg = svgEl("svg", { width, height: chart.height });
+    const drawn = planned.map(({ set, chart, node, height, bottom, scale }) => {
+      const svg = svgEl("svg", { width, height });
       const under = svgEl("g", {});
       svg.append(under);
       drawYAxis(svg, frame, scale);
@@ -2758,15 +2823,15 @@
             }
           });
         }
-        if (lastChart && i % labelEvery === 0) {
+        if (i % labelEvery === 0) {
           svg.append(svgEl("text", { x: center(i), y: bottom + 17, class: "chart-tick chart-x" }, shortDate(dayDate(day))));
         }
       });
       drawInsideLabels(svg, frame, scale, bottom, chart.inside);
       node.append(svg);
-      set.box.append(node);
       return { set, chart, svg, under, bottom };
     });
+    for (const back of refocus) back();
 
     const hide = () => {
       $("chart-tip").hidden = true;
@@ -3045,6 +3110,46 @@
   redrawOnWidthChange($("daily-charts"), renderDaily);
   // Margins are measured from the tick labels, so measure again once the web font is in.
   document.fonts.ready.then(() => { renderHistory(); renderDaily(); });
+
+  /* Fills the screen with a chart, `next` as in fullChart, or with null goes back to the page. */
+  function setFullChart(next) {
+    const before = fullChart;
+    if (!before && !next) return;
+    // The button pressed is redrawn, so the focus goes to its counterpart: the same chart's other button.
+    const focused = document.activeElement?.closest?.(".charts");
+    fullChart = next;
+    for (const id of CHART_BOXES) {
+      $(id).classList.toggle("full", next?.box === id);
+      $(id).toggleAttribute("data-no-swipe", next?.box === id); // Swiping would turn the section under it.
+    }
+    document.documentElement.classList.toggle("chart-full", Boolean(next));
+    if (next && document.fullscreenEnabled && !document.fullscreenElement) {
+      document.documentElement.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+    } else if (!next && document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+    dropTip();
+    for (const id of new Set([before?.box, next?.box].filter(Boolean))) (id === "history-charts" ? renderHistory : renderDaily)();
+    const box = $((next ?? before).box);
+    if (focused === box) box.querySelectorAll(".chart-zoom")[next ? 0 : before.index]?.focus({ preventScroll: true });
+  }
+  for (const id of CHART_BOXES) {
+    $(id).addEventListener("click", (event) => {
+      const node = event.target.closest(".chart-zoom")?.closest(".chart");
+      if (!node) return;
+      setFullChart(fullChart?.box === id ? null : { box: id, index: [...$(id).children].indexOf(node) });
+    });
+  }
+  document.addEventListener("keydown", (event) => {
+    // In the browser's full screen, Escape is the browser's, and it ends in fullscreenchange.
+    if (event.key === "Escape" && fullChart && !document.fullscreenElement) setFullChart(null);
+  });
+  document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement) setFullChart(null); });
+  addEventListener("hashchange", () => setFullChart(null));
+  // Turning a phone or resizing the window changes the room it has.
+  addEventListener("resize", () => {
+    if (fullChart) (fullChart.box === "history-charts" ? renderHistory : renderDaily)();
+  });
 
   /*
     Appliances. The list and the choices live in the app's database, and the server answers
@@ -5030,7 +5135,8 @@
   refreshDaily();
   setInterval(() => {
     // Redrawing would drop the tooltip and keyboard focus from under someone reading a chart.
-    if ($("view-statistics").hidden || pan || !$("chart-tip").hidden || document.activeElement?.closest("#history-charts, #daily-charts, #flow-charts")) return;
+    // A full-screen button keeps its focus through a redraw.
+    if ($("view-statistics").hidden || pan || !$("chart-tip").hidden || document.activeElement?.closest(".charts svg")) return;
     refreshHistory();
     refreshDaily();
   }, CHART_REFRESH_MS);
