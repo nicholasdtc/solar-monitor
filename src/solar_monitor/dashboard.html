@@ -383,6 +383,7 @@
   .tile-label { color: var(--ink-2); font-weight: 500; }
   .tile-value { font: 600 32px/1.1 var(--body); font-variant-numeric: tabular-nums; }
   .tile-sub { color: var(--muted); font-size: 13px; line-height: 1.35; }
+  .tile-vs { color: var(--ink-2); }
   .head-text { display: flex; flex-direction: column; gap: 2px; }
   .legend .lead { color: var(--muted); }
   .btn { min-height: 36px; padding: 4px 12px; cursor: pointer; background: var(--surface); border: 1px solid var(--rule-strong); }
@@ -396,6 +397,10 @@
   .b2 { fill: var(--band-peak); }
   .nodata { fill: var(--rule-strong); }
   .sel { fill: var(--ink); }
+  /* The compared range's total: a dark tick across the bar, ringed in the surface so it reads on any band. */
+  .vs-mark { stroke: var(--ink); stroke-width: 2; }
+  .vs-ring { stroke: var(--surface); stroke-width: 6; }
+  .legend.bars .key-mark { width: 14px; height: 2px; background: var(--ink); }
   .lane { fill: var(--flow-grid); }
   .lane-edge { stroke: var(--ink-2); }
   .carpet { position: relative; }
@@ -518,13 +523,25 @@
         <div class="seg" id="gm-range" role="group" aria-label="Grid meter range">
           <button type="button" data-range="7">7 days</button><button type="button" data-range="30">30 days</button><button type="button" data-range="12m">12 months</button><button type="button" data-range="all">All</button>
         </div>
-        <span class="meta" id="gm-range-note"></span>
+        <label>From <input type="date" id="gm-from"></label>
+        <label>To <input type="date" id="gm-to"></label>
       </div>
+      <div class="range gm-data">
+        <label>Group by <select id="gm-group">
+          <option value="day">Day</option><option value="week">Week</option><option value="month">Month</option><option value="year">Year</option>
+        </select></label>
+        <label>Compare with <select id="gm-versus">
+          <option value="none">Nothing</option><option value="previous">The period before</option><option value="year">The same dates a year earlier</option><option value="custom">Dates starting on…</option>
+        </select></label>
+        <label id="gm-versus-start-label" hidden>Starting <input type="date" id="gm-versus-start"></label>
+        <button type="button" class="help" aria-label="About comparing" data-tip="The period before: the same number of days just before, or the same number of months when the range starts on the 1st.&#10;If the two ranges have different amounts of readings, the change is worked out per day.">?</button>
+      </div>
+      <p class="meta range-shown" id="gm-range-note"></p>
       <div class="tiles gm-data">
-        <div class="tile"><span class="tile-label">Imported</span><span class="tile-value" id="gm-t-total"></span><span class="tile-sub" id="gm-t-total-sub"></span></div>
-        <div class="tile"><span class="tile-label">Cost at your rates <button type="button" class="help" aria-label="About the cost" data-tip="In the same unit as your rates. No standing charge.">?</button></span><span class="tile-value" id="gm-t-cost"></span><span class="tile-sub" id="gm-t-cost-sub"></span></div>
-        <div class="tile"><span class="tile-label">At the night rate</span><span class="tile-value" id="gm-t-night"></span><span class="tile-sub" id="gm-t-night-sub"></span></div>
-        <div class="tile"><span class="tile-label">Highest half-hour</span><span class="tile-value" id="gm-t-max"></span><span class="tile-sub" id="gm-t-max-sub"></span></div>
+        <div class="tile"><span class="tile-label">Imported</span><span class="tile-value" id="gm-t-total"></span><span class="tile-sub" id="gm-t-total-sub"></span><span class="tile-sub tile-vs" id="gm-t-total-vs" hidden></span></div>
+        <div class="tile"><span class="tile-label">Cost at your rates <button type="button" class="help" aria-label="About the cost" data-tip="In the same unit as your rates. No standing charge.">?</button></span><span class="tile-value" id="gm-t-cost"></span><span class="tile-sub" id="gm-t-cost-sub"></span><span class="tile-sub tile-vs" id="gm-t-cost-vs" hidden></span></div>
+        <div class="tile"><span class="tile-label">At the night rate</span><span class="tile-value" id="gm-t-night"></span><span class="tile-sub" id="gm-t-night-sub"></span><span class="tile-sub tile-vs" id="gm-t-night-vs" hidden></span></div>
+        <div class="tile"><span class="tile-label">Highest half-hour</span><span class="tile-value" id="gm-t-max"></span><span class="tile-sub" id="gm-t-max-sub"></span><span class="tile-sub tile-vs" id="gm-t-max-vs" hidden></span></div>
       </div>
     </div>
 
@@ -537,13 +554,14 @@
         <span><i style="background: var(--band-night)"></i>Night</span>
         <span><i style="background: var(--band-day)"></i>Day</span>
         <span><i style="background: var(--band-peak)"></i>Peak</span>
+        <span id="gm-versus-key" hidden><i class="key-mark"></i><span id="gm-versus-key-text">Compared range</span></span>
       </div>
       <div class="chart" id="gm-bars"></div>
       <details>
         <summary>Show as a table</summary>
         <div class="scroll" tabindex="0" role="region" aria-label="Import by rate band, as a table">
           <table>
-            <thead><tr><th id="gm-bars-col">Day</th><th class="num">Night kWh</th><th class="num">Day kWh</th><th class="num">Peak kWh</th><th class="num">Total kWh</th><th class="num"><span tabindex="0" data-tip="In the same unit as your rates. No standing charge.">Cost</span></th><th>Notes</th></tr></thead>
+            <thead><tr><th id="gm-bars-col">Day</th><th class="num">Night kWh</th><th class="num">Day kWh</th><th class="num">Peak kWh</th><th class="num">Total kWh</th><th class="num"><span tabindex="0" data-tip="In the same unit as your rates. No standing charge.">Cost</span></th><th class="num" id="gm-bars-vs-kwh" hidden>Compared kWh</th><th class="num" id="gm-bars-vs-change" hidden>Change</th><th>Notes</th></tr></thead>
             <tbody id="gm-bars-table"></tbody>
           </table>
         </div>
@@ -3522,8 +3540,14 @@
     let dayIndex = new Map();
     let bandOf = []; // Each slot's band, from the time it starts: 0 night, 1 day, 2 peak. Peak wins an overlap.
     let rates = []; // In the order of BANDS.
-    let rangeKey = "30";
-    let zoom = null; // A month, "YYYY-MM", while the bars show its days.
+    let range = null; // { from, to }: the days shown, ISO dates within the file.
+    let preset = "30"; // The range button that set it, or null when the dates were entered or a bar opened.
+    let group = "day"; // What each bar adds up: "day", "week", "month" or "year".
+    let groupChosen = false; // Whether that was picked, rather than following the range.
+    let versus = "none"; // What to compare with: "none", "previous", "year" or "custom".
+    let versusStart = null; // The first day compared with, for "custom".
+    let zooms = []; // The views to go back to, one for each bar opened.
+    let versusBars = null; // The compared range's bars, in step with bars.
     let selected = null;
     let bars = [];
     let barFocus = -1;
@@ -3583,13 +3607,99 @@
       return y;
     }
 
-    function rangeDays(key) {
-      if (key === "7" || key === "30") return days.slice(-Number(key));
-      if (key === "12m") {
-        const start = monthsBack(days.at(-1).date.slice(0, 7), 11);
-        return days.filter((day) => day.date.slice(0, 7) >= start);
+    const dayCount = (from, to) => Math.round((toDate(to) - toDate(from)) / 86400000) + 1;
+    const later = (a, b) => (a > b ? a : b);
+    const earlier = (a, b) => (a < b ? a : b);
+    function shiftMonth(key, n) {
+      const index = Number(key.slice(0, 4)) * 12 + Number(key.slice(5, 7)) - 1 + n;
+      return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, "0")}`;
+    }
+    const monthEnd = (iso) => `${iso.slice(0, 7)}-${String(daysInMonth(iso.slice(0, 7))).padStart(2, "0")}`;
+    // The same day n months on, or that month's last day if it's shorter: 29 Feb a year earlier is 28 Feb.
+    function shiftDate(iso, months) {
+      const key = shiftMonth(iso.slice(0, 7), months);
+      return `${key}-${String(Math.min(Number(iso.slice(8)), daysInMonth(key))).padStart(2, "0")}`;
+    }
+    const isIso = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+
+    function presetRange(key) {
+      const first = days[0].date;
+      const last = days.at(-1).date;
+      const from = { 7: addDays(last, -6), 30: addDays(last, -29), "12m": `${monthsBack(last.slice(0, 7), 11)}-01`, all: first }[key];
+      return { from: later(from, first), to: last };
+    }
+    const inFileSpan = (span) => span && span.from >= days[0].date && span.to <= days.at(-1).date && span.from <= span.to;
+
+    const rangeDays = () => days.filter((day) => day.date >= range.from && day.date <= range.to);
+
+    /* The days to compare with. The period before is as many days just before, or as many months when the
+       range starts on the 1st, so a month is compared with the month before whatever their lengths. */
+    function versusRange(kind = versus) {
+      const { from, to } = range;
+      const n = dayCount(from, to);
+      if (kind === "year") return { from: shiftDate(from, -12), to: shiftDate(to, -12) };
+      if (kind === "custom") return { from: versusStart, to: addDays(versusStart, n - 1) };
+      if (from.endsWith("-01") && n >= 28) {
+        const months = (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 + Number(to.slice(5, 7)) - Number(from.slice(5, 7)) + 1;
+        const end = shiftDate(to, -months);
+        return { from: shiftDate(from, -months), to: to === monthEnd(to) ? monthEnd(end) : end };
       }
-      return days;
+      return { from: addDays(from, -n), to: addDays(from, -1) };
+    }
+    const VERSUS_NAMES = { previous: "The period before", year: "A year earlier", custom: "The dates chosen" };
+    const versusName = () => VERSUS_NAMES[versus];
+
+    /* ---- Adding up days, which may be outside the file ---- */
+    const emptySum = () => ({ kwh: [0, 0, 0], total: 0, present: 0, inFile: 0, inRange: 0, missing: 0, best: null });
+    function addDay(sum, iso) {
+      sum.inRange += 1;
+      const day = days[dayIndex.get(iso)];
+      if (!day) return;
+      sum.inFile += 1;
+      for (let band = 0; band < 3; band++) sum.kwh[band] += day.kwh[band];
+      sum.total += day.total;
+      sum.present += day.present;
+      sum.missing += day.missing;
+      day.slots.forEach((w, slot) => {
+        if (w > 0 && (!sum.best || w > sum.best.w)) sum.best = { w, day, slot };
+      });
+    }
+    function summarize({ from, to }) {
+      const sum = emptySum();
+      for (let iso = from; iso <= to; iso = addDays(iso, 1)) addDay(sum, iso);
+      return sum;
+    }
+
+    const GROUP_NAMES = { day: "Day", week: "Week", month: "Month", year: "Year" };
+    const OPENS_TO = { day: "half-hours", week: "days", month: "days", year: "months" };
+    const MAX_BARS = 400; // More than this and a bar is under a pixel wide on most screens.
+    // The period a day falls in. Weeks start on Monday and are keyed by it.
+    function periodOf(iso, kind) {
+      if (kind === "day") return { key: iso, start: iso, end: iso };
+      if (kind === "week") {
+        const start = addDays(iso, -((toDate(iso).getUTCDay() + 6) % 7));
+        return { key: start, start, end: addDays(start, 6) };
+      }
+      if (kind === "month") return { key: iso.slice(0, 7), start: `${iso.slice(0, 7)}-01`, end: monthEnd(iso) };
+      return { key: iso.slice(0, 4), start: `${iso.slice(0, 4)}-01-01`, end: `${iso.slice(0, 4)}-12-31` };
+    }
+    const periodLabel = (kind, key) => (kind === "day" ? longDay(key) : kind === "week" ? `Week of ${dayMonthYear(key)}` : kind === "month" ? monthLabel(key) : key);
+    function barCount({ from, to }, kind) {
+      if (kind === "day") return dayCount(from, to);
+      let n = 0;
+      for (let iso = from; iso <= to; iso = addDays(periodOf(iso, kind).end, 1)) n += 1;
+      return n;
+    }
+    function defaultGroup() {
+      const n = dayCount(range.from, range.to);
+      return n <= 62 ? "day" : n <= 190 ? "week" : "month";
+    }
+    const groupFits = (kind) => barCount(range, kind) <= MAX_BARS;
+    // A grouping picked earlier stays while it fits the range and doesn't leave a single bar for many days.
+    function fitGroup() {
+      if (groupChosen && groupFits(group) && (barCount(range, group) > 1 || range.from === range.to)) return;
+      group = defaultGroup();
+      groupChosen = false;
     }
 
     function renderIntro() {
@@ -3608,30 +3718,28 @@
     }
 
     /* ---- Tiles ---- */
+    const perDayOf = (sum, x) => x / (sum.present / 48);
+    const percentChange = (now, then) => `${signed((100 * (now - then)) / then, 0)}%`;
+    const changeText = (now, then) => (then > 0 ? ` (${percentChange(now, then)})` : "");
+    function setVs(id, text) {
+      const node = $(`gm-t-${id}-vs`);
+      node.hidden = !text;
+      node.textContent = text || "";
+    }
+
     function renderTiles() {
-      const span = rangeDays(rangeKey);
-      const kwh = [0, 0, 0];
-      let present = 0;
-      let best = null;
-      for (const day of span) {
-        for (let band = 0; band < 3; band++) kwh[band] += day.kwh[band];
-        present += day.present;
-        day.slots.forEach((w, slot) => {
-          if (w > 0 && (!best || w > best.w)) best = { w, day, slot };
-        });
-      }
-      const total = kwh[0] + kwh[1] + kwh[2];
+      const main = summarize(range);
+      const { kwh, total, present, best } = main;
       const cost = costOf(kwh);
-      const share = (x) => (total > 0 ? `${number((100 * x) / total, 0)}%` : "—");
-      $("gm-range-note").textContent = `${longDay(span[0].date)} to ${longDay(span.at(-1).date)}`;
+      const share = (sum, x) => (sum.total > 0 ? `${number((100 * x) / sum.total, 0)}%` : "—");
       $("gm-t-total").textContent = `${kwhText(total)} kWh`;
-      $("gm-t-total-sub").textContent = present ? `About ${number(total / (present / 48), 1)} kWh a day` : "No readings in this range";
+      $("gm-t-total-sub").textContent = present ? `About ${number(perDayOf(main, total), 1)} kWh a day` : "No readings in this range";
       $("gm-t-cost").textContent = money(cost);
       $("gm-t-cost-sub").textContent = cost === null
         ? "Set your rates under Appliances & tariffs"
         : total > 0 ? `${number(cost / total, cost / total < 1 ? 3 : 2)} a kWh on average` : "";
-      $("gm-t-night").textContent = share(kwh[0]);
-      $("gm-t-night-sub").textContent = `Day ${share(kwh[1])}, peak ${share(kwh[2])}`;
+      $("gm-t-night").textContent = share(main, kwh[0]);
+      $("gm-t-night-sub").textContent = `Day ${share(main, kwh[1])}, peak ${share(main, kwh[2])}`;
       if (best) {
         const gap = afterGap(dayIndex.get(best.day.date), best.slot) ? " · just after a gap" : "";
         $("gm-t-max").textContent = kw(best.w);
@@ -3640,38 +3748,78 @@
         $("gm-t-max").textContent = "—";
         $("gm-t-max-sub").textContent = "Nothing above 0 kW in this range";
       }
+
+      const shown = `${longDay(range.from)} to ${longDay(range.to)} · ${count(dayCount(range.from, range.to), "day")}`;
+      if (versus === "none") {
+        for (const id of ["total", "cost", "night", "max"]) setVs(id, null);
+        $("gm-range-note").textContent = shown;
+        return;
+      }
+      const span = versusRange();
+      const then = summarize(span);
+      const name = versusName();
+      let how = "";
+      if (!then.present) {
+        how = ". The file has no readings then";
+        setVs("total", `${name}: no readings`);
+        for (const id of ["cost", "night", "max"]) setVs(id, null);
+      } else {
+        // Totals only compare fairly when both have as many readings; otherwise compare an average day.
+        const perDay = then.present !== present && present > 0;
+        if (perDay) {
+          how = then.inFile < then.inRange
+            ? `. The file has only ${number(then.inFile, 0)} of its ${count(then.inRange, "day")}, so changes are per day`
+            : ". The two have different numbers of readings, so changes are per day";
+        }
+        const [a, b] = perDay ? [perDayOf(main, total), perDayOf(then, then.total)] : [total, then.total];
+        setVs("total", `${name}: ${kwhText(b)} kWh${perDay ? " a day" : ""}${changeText(a, b)}`);
+        const thenCost = costOf(then.kwh);
+        setVs("cost", cost === null ? null : perDay
+          ? `${name}: ${money(perDayOf(then, thenCost))} a day${changeText(perDayOf(main, cost), perDayOf(then, thenCost))}`
+          : `${name}: ${money(thenCost)}${changeText(cost, thenCost)}`);
+        setVs("night", `${name}: ${share(then, then.kwh[0])}`);
+        setVs("max", then.best ? `${name}: ${kw(then.best.w)} on ${dayMonthYear(then.best.day.date)}` : null);
+      }
+      $("gm-range-note").textContent = `${shown} · compared with ${longDay(span.from)} to ${longDay(span.to)}${how}.`;
     }
 
-    /* ---- Bars: kWh by band, each day or each month ---- */
-    const dayBar = (day) => ({ kind: "day", key: day.date, label: longDay(day.date), kwh: day.kwh, total: day.total, notes: dayNotes(day) });
-
-    function monthBars(span) {
-      const months = new Map();
-      for (const day of span) {
-        const key = day.date.slice(0, 7);
-        if (!months.has(key)) months.set(key, { kind: "month", key, label: monthLabel(key), kwh: [0, 0, 0], total: 0, days: 0, missing: 0 });
-        const bar = months.get(key);
-        for (let band = 0; band < 3; band++) bar.kwh[band] += day.kwh[band];
-        bar.total += day.total;
-        bar.days += 1;
-        bar.missing += day.missing;
+    /* ---- Bars: kWh by band, each day, week, month or year ---- */
+    function barNotes(bar, where) {
+      if (bar.kind === "day") {
+        const day = days[dayIndex.get(bar.key)];
+        return day ? dayNotes(day) : ["Not in the file"];
       }
+      if (!bar.inFile) return ["Not in the file"];
+      const all = dayCount(bar.start, bar.end);
+      const first = days[0].date;
       const last = days.at(-1);
-      for (const bar of months.values()) {
-        const all = daysInMonth(bar.key);
-        bar.notes = [];
-        if (bar.days < all) bar.notes.push(`${bar.days} of its ${all} days are in the file`);
-        else if (bar.key === last.date.slice(0, 7) && last.flags.includes("p")) bar.notes.push("Its last day is only partly in the file");
-        if (bar.missing) bar.notes.push(`${count(bar.missing, "half-hour")} missing`);
+      // How many of its days the file has, in or out of the range.
+      const held = bar.end < first || bar.start > last.date ? 0 : dayCount(later(bar.start, first), earlier(bar.end, last.date));
+      const notes = [];
+      if (bar.inRange < all && held > bar.inRange) {
+        notes.push(`${bar.inRange} of its ${all} days are in ${where}`);
+        if (bar.inFile < bar.inRange) notes.push(`${bar.inFile} of those are in the file`);
+      } else if (bar.inFile < all) {
+        notes.push(`${bar.inFile} of its ${all} days are in the file`);
       }
-      return [...months.values()];
+      if (bar.to === last.date && last.flags.includes("p")) notes.push("Its last day is only partly in the file");
+      if (bar.missing) notes.push(`${count(bar.missing, "half-hour")} missing`);
+      return notes;
     }
 
-    function computeBars() {
-      if (zoom) return days.filter((day) => day.date.startsWith(zoom)).map(dayBar);
-      if (rangeKey === "7" || rangeKey === "30") return rangeDays(rangeKey).map(dayBar);
-      return monthBars(rangeDays(rangeKey));
+    function buildBars({ from, to }, kind, where = "this range") {
+      const built = [];
+      for (let iso = from; iso <= to; iso = addDays(iso, 1)) {
+        const { key, start, end } = periodOf(iso, kind);
+        if (built.at(-1)?.key !== key) built.push({ kind, key, label: periodLabel(kind, key), start, end, from: iso, to: iso, ...emptySum() });
+        const bar = built.at(-1);
+        bar.to = iso;
+        addDay(bar, iso);
+      }
+      for (const bar of built) bar.notes = barNotes(bar, where);
+      return built;
     }
+    const lowerFirst = (text) => text.replace(/^./, (c) => c.toLowerCase());
 
     const barsSvg = svgEl("svg", { tabindex: "0", role: "img" });
     const barsFocus = svgEl("rect", { class: "chart-focus", visibility: "hidden" });
@@ -3679,26 +3827,43 @@
     let barsShape = null;
 
     function renderBars(focusKey) {
-      bars = computeBars();
+      bars = buildBars(range, group);
+      versusBars = versus === "none" ? null : buildBars(versusRange(), group, "the compared range");
       if (focusKey !== undefined) barFocus = Math.max(0, bars.findIndex((bar) => bar.key === focusKey));
       barFocus = Math.min(barFocus, bars.length - 1);
-      const monthly = bars[0].kind === "month";
-      $("gm-bars-sub").textContent = zoom ? `${monthLabel(zoom)}: kWh imported each day` : `kWh imported each ${monthly ? "month" : "day"}`;
-      const below = monthly ? ["month", "days"] : ["day", "half-hours"];
-      $("gm-bars-help").dataset.tip = matchMedia("(pointer: fine)").matches
-        ? `Click a ${below[0]} to see its ${below[1]}.`
-        : `Tap a ${below[0]} to read it. Tap again to see its ${below[1]}.`;
-      $("gm-zoom-out").hidden = !zoom;
-      $("gm-bars-col").textContent = monthly ? "Month" : "Day";
-      $("gm-bars-table").replaceChildren(...bars.toReversed().map((bar) => {
+      $("gm-bars-sub").textContent = `kWh imported each ${group}${versusBars ? `, against ${lowerFirst(versusName())}` : ""}`;
+      $("gm-bars-help").dataset.tip = (matchMedia("(pointer: fine)").matches
+        ? `Click a ${group} to see its ${OPENS_TO[group]}.`
+        : `Tap a ${group} to read it. Tap again to see its ${OPENS_TO[group]}.`)
+        + (versusBars ? `\nThe dark tick is ${lowerFirst(versusName())}: its ${group}s in the same order.` : "");
+      $("gm-zoom-out").hidden = !zooms.length;
+      $("gm-bars-col").textContent = GROUP_NAMES[group];
+      $("gm-versus-key").hidden = !versusBars;
+      $("gm-versus-key-text").textContent = versusBars ? versusName() : "";
+      // Their words change too, so the copy of the header row pinned under the tabs is made again.
+      $("gm-bars-vs-kwh").textContent = versusBars ? "Compared kWh" : "";
+      $("gm-bars-vs-change").textContent = versusBars ? "Change" : "";
+      $("gm-bars-vs-kwh").hidden = $("gm-bars-vs-change").hidden = !versusBars;
+      const rows = bars.map((bar, i) => {
         const row = el("tr");
         const name = el("th", "", bar.label);
         name.scope = "row";
         row.append(name, ...[...bar.kwh, bar.total].map((x) => el("td", "num", number(x, 1))));
         const cost = costOf(bar.kwh);
-        row.append(el("td", "num", cost === null ? "—" : number(cost, 2)), el("td", "quiet", sentences(bar.notes))); // Every row to the cent, so the column lines up.
+        row.append(el("td", "num", cost === null ? "—" : number(cost, 2))); // Every row to the cent, so the column lines up.
+        const notes = [...bar.notes];
+        if (versusBars) {
+          const then = versusBars[i];
+          row.append(
+            el("td", "num", then?.inFile ? number(then.total, 1) : "—"),
+            el("td", "num", then?.inFile && then.total > 0 ? percentChange(bar.total, then.total) : "—"),
+          );
+          if (then) notes.push(`Compared with ${then.label}${then.notes.length ? `: ${lowerFirst(then.notes.join("; "))}` : ""}`);
+        }
+        row.append(el("td", "quiet", sentences(notes)));
         return row;
-      }));
+      });
+      $("gm-bars-table").replaceChildren(...rows.toReversed());
       drawBars();
     }
 
@@ -3709,14 +3874,17 @@
       const m = { l: 44, r: 16, t: 16, b: 44 };
       const plotWidth = width - m.l - m.r;
       const plotHeight = height - m.t - m.b;
-      const monthly = bars[0].kind === "month";
+      const kind = bars[0].kind;
       barsSvg.setAttribute("width", width);
       barsSvg.setAttribute("height", height);
       barsSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-      barsSvg.setAttribute("aria-label", `kWh imported each ${monthly ? "month" : "day"} by rate band, ${bars[0].label} to ${bars.at(-1).label}. Use the arrow keys to read each bar, and Enter to open it. The same figures are in the table below.`);
+      const against = versusBars ? `, with a tick for ${lowerFirst(versusName())}` : "";
+      barsSvg.setAttribute("aria-label", `kWh imported each ${kind} by rate band${against}, ${bars[0].label} to ${bars.at(-1).label}. Use the arrow keys to read each bar, and Enter to open it. The same figures are in the table below.`);
 
       const nodes = [];
-      const y = yAxis(nodes, m, width, plotHeight, Math.max(1, ...bars.map((bar) => bar.total)));
+      const marks = [];
+      const highest = Math.max(1, ...bars.map((bar) => bar.total), ...(versusBars ?? []).map((bar) => bar.total));
+      const y = yAxis(nodes, m, width, plotHeight, highest);
       const step = plotWidth / bars.length;
       const barWidth = Math.max(2, Math.min(24, step * 0.7, step - 2));
       barsShape = { m, step, plotHeight };
@@ -3739,25 +3907,33 @@
             ? svgEl("path", { d: columnPath(left, barWidth, base, end), class: `b${band}` })
             : svgEl("rect", { x: left, y: end, width: barWidth, height: base - end, class: `b${band}` }));
         });
-        if (selected && (bar.kind === "day" ? bar.key === selected : selected.startsWith(bar.key))) {
+        if (selected && bar.from <= selected && selected <= bar.to) {
           nodes.push(svgEl("rect", { x: left, y: m.t + plotHeight + 3, width: barWidth, height: 3, class: "sel" }));
         }
+        const then = versusBars?.[i];
+        if (then?.inFile) {
+          const at = Math.round(y(then.total)) + 0.5;
+          const line = { x1: left - 3, x2: left + barWidth + 3, y1: at, y2: at };
+          marks.push(svgEl("line", { ...line, class: "vs-ring" }), svgEl("line", { ...line, class: "vs-mark" }));
+        }
       });
+      nodes.push(...marks); // Over every bar, so a tick is never hidden under the next bar.
       const zero = Math.round(y(0)) + 0.5;
       nodes.push(svgEl("line", { x1: m.l, x2: width - m.r, y1: zero, y2: zero, class: "chart-zero" }));
 
-      // Day numbers with the month under them where it changes, or months with the year.
+      // Day numbers with the month under them where it changes, months with the year, or years.
       let lastX = -Infinity;
-      let lastGroup = null;
+      let lastBelow = null;
       bars.forEach((bar, i) => {
         const x = m.l + step * (i + 0.5);
-        if (x - lastX < (monthly ? 36 : 26)) return;
-        const when = toDate(monthly ? `${bar.key}-01` : bar.key);
-        const group = monthly ? String(when.getUTCFullYear()) : MONTHS[when.getUTCMonth()];
-        nodes.push(svgEl("text", { x, y: m.t + plotHeight + 21, class: "chart-tick chart-x" }, monthly ? MONTHS[when.getUTCMonth()] : String(when.getUTCDate())));
-        if (group !== lastGroup) nodes.push(svgEl("text", { x, y: m.t + plotHeight + 37, class: "chart-tick chart-x" }, group));
+        if (x - lastX < (kind === "day" || kind === "week" ? 26 : 36)) return;
+        const when = toDate(bar.start);
+        const text = kind === "year" ? bar.key : kind === "month" ? MONTHS[when.getUTCMonth()] : String(when.getUTCDate());
+        const below = kind === "year" ? null : kind === "month" ? String(when.getUTCFullYear()) : MONTHS[when.getUTCMonth()];
+        nodes.push(svgEl("text", { x, y: m.t + plotHeight + 21, class: "chart-tick chart-x" }, text));
+        if (below !== null && below !== lastBelow) nodes.push(svgEl("text", { x, y: m.t + plotHeight + 37, class: "chart-tick chart-x" }, below));
         lastX = x;
-        lastGroup = group;
+        lastBelow = below;
       });
 
       barsSvg.replaceChildren(...nodes, barsFocus);
@@ -3773,7 +3949,14 @@
       ];
       const cost = costOf(bar.kwh);
       if (cost !== null) rows.push({ label: "Cost", value: money(cost) });
-      showTip(x, y, bar.label, rows, sentences([...bar.notes, ...extra]));
+      const notes = [...bar.notes];
+      const then = versusBars?.[i];
+      if (then) {
+        rows.push({ label: then.label, value: then.inFile ? `${number(then.total, 1)} kWh` : "—" });
+        if (then.inFile && then.total > 0) rows.push({ label: "Change", value: percentChange(bar.total, then.total) });
+        if (then.notes.length) notes.push(`${then.label}: ${lowerFirst(then.notes.join("; "))}`);
+      }
+      showTip(x, y, bar.label, rows, sentences([...notes, ...extra]));
     }
 
     function barAt(event) {
@@ -3794,19 +3977,27 @@
     function openBar(i, fromPointer) {
       const bar = bars[i];
       if (!bar) return;
-      if (bar.kind === "month") {
-        zoom = bar.key;
-        barFocus = 0;
-        renderBars();
-      } else {
+      if (bar.kind === "day") {
         selectDay(bar.key, fromPointer);
+        return;
       }
+      zooms.push({ range, preset, group, groupChosen });
+      range = { from: bar.from, to: bar.to };
+      preset = null;
+      group = bar.kind === "year" ? "month" : "day";
+      groupChosen = false;
+      barFocus = 0;
+      cellFocus = null;
+      showRange();
     }
 
     function zoomOut() {
-      const key = zoom;
-      zoom = null;
-      renderBars(key);
+      const back = zooms.pop();
+      if (!back) return;
+      const opened = range;
+      ({ range, preset, group, groupChosen } = back);
+      cellFocus = null;
+      showRange(periodOf(opened.from, group).key);
     }
 
     const barTouch = readThenOpen(barsSvg, {
@@ -3814,7 +4005,7 @@
       same: (a, b) => a === b,
       read: (key, event, hint) => {
         const i = bars.findIndex((bar) => bar.key === key);
-        const how = hint === "tap" ? [`Tap again to see its ${bars[i].kind === "month" ? "days" : "half-hours"}`] : [];
+        const how = hint === "tap" ? [`Tap again to see its ${OPENS_TO[bars[i].kind]}`] : [];
         barTip(i, event.clientX, event.clientY, how);
       },
       open: (key) => openBar(bars.findIndex((bar) => bar.key === key), true),
@@ -3841,7 +4032,7 @@
         openBar(i, false);
         return;
       } else if (event.key === "Escape") {
-        if (zoom) {
+        if (zooms.length) {
           event.preventDefault();
           zoomOut();
         } else {
@@ -4052,7 +4243,7 @@
     function drawCarpet() {
       const width = Math.floor($("gm-carpet").clientWidth);
       if (!width || !days.length) return;
-      const span = rangeDays(rangeKey);
+      const span = rangeDays();
       const narrow = width < 600;
       const m = { l: 46, r: narrow ? 10 : 56, t: 8, b: 44 };
       const rowHeight = narrow ? 4 : 5;
@@ -4367,22 +4558,66 @@
     }
 
     /* ---- Putting it together ---- */
-    function showRange() {
-      for (const button of $("gm-range").querySelectorAll("button")) button.setAttribute("aria-pressed", String(button.dataset.range === rangeKey));
+    function showRange(focusKey) {
+      for (const button of $("gm-range").querySelectorAll("button")) button.setAttribute("aria-pressed", String(button.dataset.range === preset));
+      $("gm-from").value = range.from;
+      $("gm-to").value = range.to;
+      for (const option of $("gm-group").options) option.disabled = !groupFits(option.value);
+      $("gm-group").value = group;
+      $("gm-versus").value = versus;
+      $("gm-versus-start-label").hidden = versus !== "custom";
+      if (versus === "custom") $("gm-versus-start").value = versusStart;
       renderTiles();
-      renderBars();
+      renderBars(focusKey);
       drawCarpet();
     }
 
-    function setRange(next) {
-      rangeKey = next;
-      zoom = null;
+    function setRange(next, from) {
+      range = next;
+      preset = from;
+      zooms = [];
       cellFocus = null;
+      fitGroup();
       showRange();
     }
     $("gm-range").addEventListener("click", (event) => {
       const button = event.target.closest("button");
-      if (button) setRange(button.dataset.range);
+      if (button) setRange(presetRange(button.dataset.range), button.dataset.range);
+    });
+    // A date outside the file moves to its nearest end, and one past the other date moves that one with it.
+    for (const id of ["gm-from", "gm-to"]) {
+      $(id).addEventListener("change", (event) => {
+        const value = event.target.value;
+        if (!isIso(value)) {
+          event.target.value = id === "gm-from" ? range.from : range.to;
+          return;
+        }
+        const day = earlier(later(value, days[0].date), days.at(-1).date);
+        setRange(id === "gm-from" ? { from: day, to: later(day, range.to) } : { from: earlier(day, range.from), to: day }, null);
+      });
+    }
+    $("gm-group").addEventListener("change", (event) => {
+      group = event.target.value;
+      groupChosen = true;
+      showRange();
+    });
+    $("gm-versus").addEventListener("change", (event) => {
+      versus = event.target.value;
+      if (versus === "custom" && !versusStart) {
+        // Start from a year earlier if the file has it, or else the period before.
+        const year = versusRange("year").from;
+        versusStart = year >= days[0].date ? year : later(versusRange("previous").from, days[0].date);
+      }
+      showRange();
+      if (versus === "custom") $("gm-versus-start").focus();
+    });
+    $("gm-versus-start").addEventListener("change", (event) => {
+      if (isIso(event.target.value)) {
+        versusStart = event.target.value;
+        showRange();
+      } else {
+        event.target.value = versusStart;
+      }
     });
 
     function drawAll() {
@@ -4409,9 +4644,20 @@
         return;
       }
       if (!dayIndex.has(selected)) selected = (days.findLast((day) => !day.flags.includes("p")) ?? days.at(-1)).date;
-      if (zoom && !days.some((day) => day.date.startsWith(zoom))) zoom = null;
-      $("gm-day-input").min = days[0].date;
-      $("gm-day-input").max = days.at(-1).date;
+      // A range from a button follows the file as it grows. One entered or opened stays while the file has it.
+      if (preset) {
+        range = presetRange(preset);
+      } else if (!inFileSpan(range)) {
+        preset = "30";
+        range = presetRange(preset);
+        zooms = [];
+      }
+      zooms = zooms.filter((back) => inFileSpan(back.range));
+      fitGroup();
+      for (const id of ["gm-day-input", "gm-from", "gm-to", "gm-versus-start"]) {
+        $(id).min = days[0].date;
+        $(id).max = days.at(-1).date;
+      }
       renderIntro();
       renderNotes();
       renderCompare();
