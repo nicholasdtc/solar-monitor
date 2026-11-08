@@ -582,6 +582,8 @@ def _merge_settings(source: Source, target: sqlite3.Connection, write: bool) -> 
     with _checked(source, "settings", _setting) as rows:
         for key, value in rows:
             in_file += 1
+            if key in db.RETIRED_SETTINGS:  # From an older copy of this app, so nothing to warn about.
+                continue
             if key not in db.SETTINGS:
                 unknown += 1
             elif key not in here:

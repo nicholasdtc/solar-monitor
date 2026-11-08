@@ -45,17 +45,24 @@ def device_info(inverter: goodwe.Inverter) -> dict[str, object]:
 
 
 async def read_battery_limits(inverter: goodwe.Inverter) -> dict[str, object]:
-    """The charge levels the battery stops discharging at, on-grid and during an outage.
+    """The charge levels the battery stops discharging at, on-grid and during an outage, and
+    the level it never charges past, whatever the time periods say.
 
-    Despite the name, these registers hold the level it stops at, not how deep it may go:
-    the goodwe library takes depth of discharge as 100 minus the value. None if not readable.
+    Despite the name, the discharge depth registers hold the level it stops at, not how deep it
+    may go: the goodwe library takes depth of discharge as 100 minus the value. None if not readable.
     """
     limits: dict[str, object] = {}
-    for name, setting in (("min_soc", "battery_discharge_depth"), ("reserve_soc", "battery_discharge_depth_offline")):
+    for name, setting in (
+        ("min_soc", "battery_discharge_depth"),
+        ("reserve_soc", "battery_discharge_depth_offline"),
+        ("max_soc", "soc_upper_limit"),
+    ):
         try:
             limits[name] = await inverter.read_setting(setting)
         except Exception:  # Not every inverter has these, and they aren't worth failing a poll over.
             limits[name] = None
+    if not (isinstance(limits["max_soc"], (int, float)) and 1 <= limits["max_soc"] <= 100):
+        limits["max_soc"] = None  # An inverter without it may answer 0 or 65535, which would mean nothing.
     return limits
 
 
@@ -117,7 +124,10 @@ class Collector:
                         self.latest["device"] = device_info(self.inverter)
                         settings_read_at = None  # A failed read of them often means a lost connection.
                     if settings_read_at is None or time.monotonic() - settings_read_at >= SETTINGS_SECONDS:
-                        self.latest["battery_limits"] = await read_battery_limits(self.inverter)
+                        limits = await read_battery_limits(self.inverter)
+                        if limits != self.latest.get("battery_limits"):
+                            log(f"Battery limits (%): {', '.join(f'{name} {value}' for name, value in limits.items())}")
+                        self.latest["battery_limits"] = limits
                         self.latest["schedule"] = {**await read_schedule(self.inverter), "read_at": timestamp()}
                         settings_read_at = time.monotonic()
                     values = await self.inverter.read_runtime_data()

@@ -28,7 +28,7 @@ from starlette.background import BackgroundTask
 from solar_monitor import config, control, db, export, importer, meter, planning
 from solar_monitor.collector import Collector
 from solar_monitor.inputs import ApplianceIn, SettingsIn
-from solar_monitor.schedule import TIME_PERIODS
+from solar_monitor.schedule import TIME_PERIODS, running_charge_period
 
 PAGE = Path(__file__).with_name("dashboard.html")
 # Served from here, not a font service, so the page looks the same on a LAN with no internet.
@@ -130,19 +130,34 @@ def create_app(collector: Collector) -> FastAPI:
         recent = db.battery_samples(collector.conn, start, collector.buffer)
         return planning.smoothed_power([power_w for _, power_w, _ in recent])
 
+    def charge_limit() -> tuple[float, dict[str, object]]:
+        """Where charging stops now, and what sets it: the inverter's overall limit, or the
+        cut-off of the TOU charge period running now if that's lower."""
+        upper = collector.latest.get("battery_limits", {}).get("max_soc")
+        limit, source = (upper, {"source": "inverter"}) if upper is not None else (
+            planning.FALLBACK_MAX_SOC, {"source": "fallback"}
+        )
+        period = running_charge_period(collector.latest.get("schedule"), datetime.now())
+        if period and period["cutoff_soc"] <= limit:
+            limit, source = period["cutoff_soc"], {"source": "period", "slot": period["slot"], "end": period["end"]}
+        return limit, source
+
     def battery_estimate() -> dict[str, object] | None:
         if collector.latest.get("error"):
             return None
         soc = readings().get("battery_soc")
         known = capacity()
+        max_soc, limit_from = charge_limit()
         estimate = planning.battery_estimate(
             soc if isinstance(soc, (int, float)) else None,
             smoothed_battery_w(),
             known["kwh"],
             battery_limit("min_soc"),
-            db.get_settings(collector.conn)["target_soc"] or planning.DEFAULT_TARGET_SOC,
+            max_soc,
         )
-        return estimate and {**estimate, "capacity": known}
+        if estimate is None:
+            return None
+        return {**estimate, "limit_from": limit_from if estimate["state"] == "charging" else None, "capacity": known}
 
     def overview() -> dict[str, object]:
         """Everything the appliances tab shows, so that any change can answer with all of it."""

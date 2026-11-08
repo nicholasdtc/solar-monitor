@@ -111,7 +111,6 @@ MAX_READING_SECONDS = 60
 # Planning choices the inverter can't report. An unset one isn't stored, and reads as None.
 SETTINGS = (
     "capacity_kwh",
-    "target_soc",
     "limit_amps",
     "surge_limit_w",
     "outage_hours",  # the length of power cut to plan for
@@ -125,6 +124,11 @@ SETTINGS = (
     "band_night_end_minutes",
     "band_peak_start_minutes",
     "band_peak_end_minutes",
+)
+
+# Settings older versions kept. They're removed on start, and skipped quietly in an import.
+RETIRED_SETTINGS = (
+    "target_soc",  # The charge target, now read from the inverter instead.
 )
 
 _APPLIANCE_FIELDS = ("name", "typical_w", "peak_w", "surge_w", "use_in_outage", "notes")
@@ -146,6 +150,8 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")  # Safe from corruption under WAL, with fewer writes.
     conn.executescript(SCHEMA)
+    with conn:
+        conn.executemany("DELETE FROM settings WHERE key = ?", [(key,) for key in RETIRED_SETTINGS])
     return conn
 
 

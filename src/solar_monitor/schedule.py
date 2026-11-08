@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import struct
+from datetime import datetime, timedelta
 
 import goodwe
 from goodwe.sensor import EcoModeV1, EcoModeV2, ScheduleType
 
 TIME_PERIODS = 4  # What the library exposes. SEMS+ shows them in this same order.
 ALL_DAYS = (127, -1)
+ALL_MONTHS = 0x0FFF
 TOU_TYPES = (ScheduleType.ECO_MODE, ScheduleType.ECO_MODE_745)
 
 # A period's 12 bytes: start hour and minute, end hour and minute, on/off, days, power, cut-off SOC, months.
@@ -56,9 +58,52 @@ def describe_period(slot: int, group) -> dict[str, object]:
         "cutoff_soc": None if isinstance(group, EcoModeV1) else group.soc,  # The older format has no cut-off.
         "days": "Every day" if group.day_bits in ALL_DAYS else group.days.replace(",", ", "),
         "months": getattr(group, "months", None) or "All year",
+        # The same as the inverter holds them, to tell whether the period is running at a given time.
+        "day_bits": group.day_bits,
+        "month_bits": getattr(group, "month_bits", 0),
         # What a change has to be based on. The older format can't be changed from here, so has none.
         "raw": period_bytes(group).hex() if isinstance(group, EcoModeV2) else None,
     }
+
+
+def _runs_on(period: dict[str, object], day: datetime) -> bool:
+    """Whether the period is set for this day. Bit 0 of the days is Sunday, and bit 0 of the months is January."""
+    on_day = period["day_bits"] & (1 << ((day.weekday() + 1) % 7))  # -1, every day, has every bit set.
+    months = period["month_bits"]
+    return bool(on_day) and (months <= 0 or months == ALL_MONTHS or bool(months & (1 << (day.month - 1))))
+
+
+def _is_running(period: dict[str, object], now: datetime) -> bool:
+    """A period that ends the next day belongs to the day it started on."""
+    clock = now.strftime("%H:%M")
+    if not period["next_day"]:
+        return period["start"] <= clock < period["end"] and _runs_on(period, now)
+    if clock >= period["start"]:
+        return _runs_on(period, now)
+    return clock < period["end"] and _runs_on(period, now - timedelta(days=1))
+
+
+def running_charge_period(schedule: dict[str, object] | None, now: datetime) -> dict[str, object] | None:
+    """The charge period running now that has a cut-off, or None.
+
+    The periods count when the TOU switch is on. Where that switch can't be read, as on some
+    older firmware, they count in the Eco working mode, which is where they used to live.
+    If two overlap, the first one in the inverter's order is taken.
+    """
+    if not schedule:
+        return None
+    if not (schedule.get("tou_on") or (schedule.get("tou_on") is None and schedule.get("work_mode") == "Eco")):
+        return None
+    for period in schedule.get("periods", []):
+        if (
+            period.get("state") == "on"
+            and period.get("action") == "charge"
+            and isinstance(period.get("cutoff_soc"), int)
+            and 1 <= period["cutoff_soc"] <= 100
+            and _is_running(period, now)
+        ):
+            return period
+    return None
 
 
 async def read_setting(inverter: goodwe.Inverter, setting: str):

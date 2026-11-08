@@ -307,9 +307,19 @@ def test_settings_start_unset(conn):
 
 
 def test_saving_settings_changes_those_given_and_none_clears_one(conn):
-    db.save_settings(conn, {"limit_amps": 16, "target_soc": 90, "tariff_day": 5})
-    db.save_settings(conn, {"limit_amps": None, "target_soc": 95})
-    assert db.get_settings(conn) == {**dict.fromkeys(db.SETTINGS), "target_soc": 95, "tariff_day": 5}
+    db.save_settings(conn, {"limit_amps": 16, "outage_hours": 4, "tariff_day": 5})
+    db.save_settings(conn, {"limit_amps": None, "outage_hours": 6})
+    assert db.get_settings(conn) == {**dict.fromkeys(db.SETTINGS), "outage_hours": 6, "tariff_day": 5}
+
+
+def test_a_retired_setting_is_removed_when_the_app_starts(tmp_path):
+    path = tmp_path / "old.db"
+    with db.connect(path) as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES ('target_soc', 90), ('tariff_day', 5)")
+    conn.close()
+    conn = db.connect(path)
+    assert dict(conn.execute("SELECT key, value FROM settings")) == {"tariff_day": 5}
+    conn.close()
 
 
 def appliance(**fields):

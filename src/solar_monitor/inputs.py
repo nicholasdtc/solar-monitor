@@ -24,7 +24,6 @@ class ApplianceIn(BaseModel):
 
 class SettingsIn(BaseModel):
     capacity_kwh: Positive | None = None
-    target_soc: Annotated[float, Field(ge=1, le=100, allow_inf_nan=False)] | None = None
     limit_amps: Positive | None = None
     surge_limit_w: Positive | None = None
     outage_hours: Annotated[float, Field(ge=0.1, le=8760, allow_inf_nan=False)] | None = None

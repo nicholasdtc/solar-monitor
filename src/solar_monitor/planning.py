@@ -20,7 +20,7 @@ SMOOTHING_SECONDS = 300
 # Used only if the inverter doesn't report its own limit.
 FALLBACK_MIN_SOC = 20
 FALLBACK_VOLTS = 230
-DEFAULT_TARGET_SOC = 100
+FALLBACK_MAX_SOC = 100
 
 # A measurement needs a clean stretch of samples: one reading of a gap or a reversal ends it.
 MAX_SAMPLE_GAP_SECONDS = 120
@@ -203,7 +203,7 @@ def battery_estimate(
     power_w: float | None,
     capacity_kwh: float | None,
     min_soc: float,
-    target_soc: float,
+    max_soc: float,
 ) -> dict[str, object] | None:
     """How long until the battery reaches its limit at this power. Negative power is charging.
 
@@ -214,7 +214,7 @@ def battery_estimate(
     direction = _direction(power_w)
     if direction == 0:
         return {"state": "idle", "power_w": round(power_w), "limit_soc": None, "hours": None}
-    limit = min_soc if direction > 0 else target_soc
+    limit = min_soc if direction > 0 else max_soc
     points = max(soc - limit, 0) if direction > 0 else max(limit - soc, 0)
     hours = None if capacity_kwh is None else points / 100 * capacity_kwh * 1000 / abs(power_w)
     return {

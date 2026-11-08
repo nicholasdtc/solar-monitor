@@ -2,11 +2,13 @@
 
 import asyncio
 import json
+from datetime import datetime
 
+import pytest
 from goodwe.protocol import ProtocolResponse
 from goodwe.sensor import EcoModeV1, EcoModeV2
 
-from solar_monitor.schedule import describe_period, read_schedule
+from solar_monitor.schedule import describe_period, read_schedule, running_charge_period
 
 ON_745, OFF_745 = 0xF9, 0x06  # The newer inverters' on and off values, which also mark the type.
 EVERY_DAY, ALL_YEAR = 0x7F, 0x0FFF
@@ -31,6 +33,8 @@ def test_an_enabled_overnight_charge():
         "cutoff_soc": 85,
         "days": "Every day",
         "months": "All year",
+        "day_bits": 127,
+        "month_bits": 4095,
         "raw": "161e0600f97ffea200550fff",
     }
 
@@ -70,6 +74,65 @@ def test_the_oldest_format_has_no_cut_off():
     old = EcoModeV1("eco_mode_1", 0, "test").read_value(ProtocolResponse(data, None))
     period = describe_period(1, old)
     assert (period["state"], period["power_pct"], period["cutoff_soc"]) == ("on", 30, None)
+
+
+# Which charge period is running, to know where charging will stop.
+MONDAY_NIGHT = datetime(2026, 11, 9, 23, 30)
+TUESDAY_EARLY = datetime(2026, 11, 10, 1, 0)
+
+
+def overnight(on_off=ON_745, power=-250, soc=90, **bits):
+    return describe_period(1, group((23, 1), (7, 57), on_off, power, soc, **bits))
+
+
+def tou(*periods, tou_on=True, work_mode="Self-consumption"):
+    return {"tou_on": tou_on, "work_mode": work_mode, "periods": list(periods)}
+
+
+@pytest.mark.parametrize("now", [MONDAY_NIGHT, TUESDAY_EARLY, datetime(2026, 11, 10, 7, 56)])
+def test_an_overnight_charge_runs_either_side_of_midnight(now):
+    assert running_charge_period(tou(overnight()), now)["cutoff_soc"] == 90
+
+
+@pytest.mark.parametrize("now", [datetime(2026, 11, 10, 12, 0), datetime(2026, 11, 10, 7, 57), datetime(2026, 11, 9, 23, 0)])
+def test_an_overnight_charge_isnt_running_outside_its_times(now):
+    assert running_charge_period(tou(overnight()), now) is None
+
+
+def test_after_midnight_belongs_to_the_day_it_started():
+    mondays = overnight(days=0b0000010)
+    assert running_charge_period(tou(mondays), MONDAY_NIGHT) is not None
+    assert running_charge_period(tou(mondays), TUESDAY_EARLY) is not None
+    assert running_charge_period(tou(mondays), datetime(2026, 11, 9, 1, 0)) is None  # That one started on Sunday.
+
+
+def test_a_period_only_runs_in_its_months():
+    november = 1 << 10
+    assert running_charge_period(tou(overnight(months=november)), MONDAY_NIGHT) is not None
+    assert running_charge_period(tou(overnight(months=november)), datetime(2026, 12, 1, 23, 30)) is None
+
+
+def test_periods_dont_run_with_the_tou_switch_off():
+    assert running_charge_period(tou(overnight(), tou_on=False), MONDAY_NIGHT) is None
+
+
+def test_without_a_tou_switch_they_run_in_eco_mode():
+    assert running_charge_period(tou(overnight(), tou_on=None, work_mode="Eco"), MONDAY_NIGHT) is not None
+    assert running_charge_period(tou(overnight(), tou_on=None), MONDAY_NIGHT) is None
+
+
+@pytest.mark.parametrize("period", [overnight(on_off=OFF_745), overnight(power=800), {"slot": 1, "state": "empty"}])
+def test_only_a_charge_period_thats_on_counts(period):
+    assert running_charge_period(tou(period), MONDAY_NIGHT) is None
+
+
+def test_the_first_running_charge_period_is_taken():
+    second = {**overnight(soc=80), "slot": 2}
+    assert running_charge_period(tou({"slot": 3, "state": "empty"}, second, overnight()), MONDAY_NIGHT)["slot"] == 2
+
+
+def test_no_schedule_means_no_period():
+    assert running_charge_period(None, MONDAY_NIGHT) is None
 
 
 class ReadOnlyInverter:

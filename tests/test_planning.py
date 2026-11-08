@@ -5,8 +5,8 @@ import pytest
 from solar_monitor import planning
 
 
-def estimate(soc=50, power_w=1000, capacity_kwh=10, min_soc=20, target_soc=90):
-    return planning.battery_estimate(soc, power_w, capacity_kwh, min_soc, target_soc)
+def estimate(soc=50, power_w=1000, capacity_kwh=10, min_soc=20, max_soc=90):
+    return planning.battery_estimate(soc, power_w, capacity_kwh, min_soc, max_soc)
 
 
 def test_discharge_time_uses_the_energy_above_the_minimum():
@@ -16,8 +16,8 @@ def test_discharge_time_uses_the_energy_above_the_minimum():
     assert result["hours"] == pytest.approx(3)
 
 
-def test_charge_time_uses_the_energy_below_the_target():
-    result = estimate(soc=50, power_w=-2000, capacity_kwh=10, target_soc=90)
+def test_charge_time_uses_the_energy_below_where_charging_stops():
+    result = estimate(soc=50, power_w=-2000, capacity_kwh=10, max_soc=90)
     assert result["state"] == "charging"
     assert result["limit_soc"] == 90
     assert result["hours"] == pytest.approx(2)
@@ -35,8 +35,8 @@ def test_already_at_or_below_the_minimum_is_zero_hours(soc):
 
 
 @pytest.mark.parametrize("soc", [90, 95])
-def test_already_at_or_above_the_target_is_zero_hours(soc):
-    assert estimate(soc=soc, power_w=-500, target_soc=90)["hours"] == 0
+def test_already_at_or_above_where_charging_stops_is_zero_hours(soc):
+    assert estimate(soc=soc, power_w=-500, max_soc=90)["hours"] == 0
 
 
 def test_unknown_capacity_still_reports_the_direction_and_limit():

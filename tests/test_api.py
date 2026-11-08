@@ -77,11 +77,53 @@ def test_estimate_falls_back_to_a_typical_minimum_if_the_inverter_reports_none(c
     assert call("GET", "/api/latest").json()["battery_estimate"]["limit_soc"] == 20
 
 
-def test_estimate_charges_toward_the_chosen_target(call, collector):
+def charge_period(cutoff, start="00:00", end="00:00", **fields):
+    """A TOU charge period in the form the collector keeps. Start and end the same run all day."""
+    next_day = end <= start
+    return {"slot": 1, "state": "on", "start": start, "end": end, "next_day": next_day, "action": "charge",
+            "cutoff_soc": cutoff, "day_bits": 127, "month_bits": 0x0FFF, **fields}
+
+
+def charge_limit(call):
+    estimate = call("GET", "/api/latest").json()["battery_estimate"]
+    return estimate["limit_soc"], estimate["limit_from"]
+
+
+def test_charging_counts_to_full_if_the_inverter_reports_no_limit(call, collector):
     discharging(collector, power_w=-1000)
-    assert call("GET", "/api/latest").json()["battery_estimate"]["limit_soc"] == 100
-    call("PUT", "/api/settings", json={"target_soc": 90})
-    assert call("GET", "/api/latest").json()["battery_estimate"]["limit_soc"] == 90
+    assert charge_limit(call) == (100, {"source": "fallback"})
+
+
+def test_charging_counts_to_the_inverters_own_limit(call, collector):
+    discharging(collector, power_w=-1000)
+    collector.latest["battery_limits"] = {"min_soc": 20, "reserve_soc": 10, "max_soc": 95}
+    assert charge_limit(call) == (95, {"source": "inverter"})
+
+
+def test_a_running_charge_period_stops_at_its_cut_off(call, collector):
+    discharging(collector, power_w=-1000)
+    collector.latest["battery_limits"] = {"min_soc": 20, "reserve_soc": 10, "max_soc": 95}
+    collector.latest["schedule"] = {"tou_on": True, "periods": [charge_period(90)]}
+    assert charge_limit(call) == (90, {"source": "period", "slot": 1, "end": "00:00"})
+
+
+def test_the_inverters_limit_wins_over_a_higher_cut_off(call, collector):
+    discharging(collector, power_w=-1000)
+    collector.latest["battery_limits"] = {"min_soc": 20, "reserve_soc": 10, "max_soc": 80}
+    collector.latest["schedule"] = {"tou_on": True, "periods": [charge_period(90)]}
+    assert charge_limit(call) == (80, {"source": "inverter"})
+
+
+def test_charge_periods_dont_count_with_the_tou_switch_off(call, collector):
+    discharging(collector, power_w=-1000)
+    collector.latest["schedule"] = {"tou_on": False, "work_mode": "Self-consumption", "periods": [charge_period(90)]}
+    assert charge_limit(call) == (100, {"source": "fallback"})
+
+
+def test_discharging_says_nothing_about_charge_limits(call, collector):
+    discharging(collector)
+    collector.latest["schedule"] = {"tou_on": True, "periods": [charge_period(90)]}
+    assert call("GET", "/api/latest").json()["battery_estimate"]["limit_from"] is None
 
 
 def test_estimate_is_withdrawn_when_the_inverter_stops_answering(call, collector):
@@ -196,7 +238,6 @@ def test_invalid_appliances_are_refused(call, body):
 
 @pytest.mark.parametrize("body", [
     {"limit_amps": 0},
-    {"target_soc": 101},
     {"capacity_kwh": -1},
     {"surge_limit_w": 0},
     {"outage_hours": 0},
@@ -348,12 +389,17 @@ class FakeInverter:
 
 
 def test_battery_limits_come_from_the_inverter_settings():
-    inverter = FakeInverter(battery_discharge_depth=20, battery_discharge_depth_offline=15)
-    assert asyncio.run(read_battery_limits(inverter)) == {"min_soc": 20, "reserve_soc": 15}
+    inverter = FakeInverter(battery_discharge_depth=20, battery_discharge_depth_offline=15, soc_upper_limit=95)
+    assert asyncio.run(read_battery_limits(inverter)) == {"min_soc": 20, "reserve_soc": 15, "max_soc": 95}
 
 
 def test_an_unreadable_limit_is_none_rather_than_a_failed_poll():
-    assert asyncio.run(read_battery_limits(FakeInverter())) == {"min_soc": None, "reserve_soc": None}
+    assert asyncio.run(read_battery_limits(FakeInverter())) == {"min_soc": None, "reserve_soc": None, "max_soc": None}
+
+
+@pytest.mark.parametrize("value", [0, 101, 65535])
+def test_a_charge_limit_that_cant_be_a_percentage_is_none(value):
+    assert asyncio.run(read_battery_limits(FakeInverter(soc_upper_limit=value)))["max_soc"] is None
 
 
 def test_daily_adds_where_the_energy_went_to_days_with_readings(call, collector):

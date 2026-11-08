@@ -680,7 +680,6 @@
       <form class="edit settings" id="settings">
         <label>Current limit (A) <input name="limit_amps" type="number" min="0" step="any"><span class="meta">What you want to stay under in a power cut, such as a breaker's rating. Of limit, Room left and Can add need this.</span></label>
         <label>Surge limit (W) <input name="surge_limit_w" type="number" min="0" step="any"><span class="meta">The most your system can supply for a few seconds.</span></label>
-        <label>Charge target (%) <input name="target_soc" type="number" min="1" max="100" step="any" placeholder="100"><span class="meta">Where the time to charge counts up to. Blank means 100%.</span></label>
         <label>Starting battery capacity (kWh) <input name="capacity_kwh" type="number" min="0" step="any"><span class="meta" id="capacity-hint"></span></label>
       </form>
       <p class="meta" id="appliance-sources"></p>
@@ -1120,10 +1119,40 @@
     return ` around ${shortDate(when)}`;
   }
 
+  /* Hours from now to the next time the clock shows this "HH:MM". */
+  function hoursUntil(clock) {
+    const [h, m] = clock.split(":").map(Number);
+    const now = new Date();
+    const at = new Date(now);
+    at.setHours(h, m, 0, 0);
+    if (at <= now) at.setDate(at.getDate() + 1);
+    return (at - now) / 3600000;
+  }
+
+  /*
+    What sets the level charging stops at: a running TOU charge period's cut-off, or the inverter's
+    overall limit. A period can end before charging gets to its cut-off, and then this says where it'll be.
+  */
+  function chargeStop(estimate) {
+    const from = estimate.limit_from;
+    if (from?.source === "period") {
+      const left = hoursUntil(from.end);
+      const soc = values.battery_soc;
+      if (estimate.hours > left && isNum(soc)) {
+        const then = Math.round(soc + (estimate.limit_soc - soc) * left / estimate.hours);
+        return `But TOU period ${from.slot} stops charging at ${from.end}, at about ${then}%`;
+      }
+      return `That's TOU period ${from.slot}'s cut-off, and the period runs until ${from.end}`;
+    }
+    if (from?.source === "inverter") return "That's the inverter's charge limit";
+    if (from?.source === "fallback") return "The inverter's charge limit couldn't be read, so this counts to full";
+    return "";
+  }
+
   /*
     The label says which way it's counting, so a charging time can't be read as how long the
-    battery will last: up to the charge target while charging, down to the inverter's minimum
-    while discharging.
+    battery will last: up to where the inverter stops charging while charging, down to its
+    minimum while discharging.
   */
   function batteryTimeReading() {
     const reading = { label: "Battery time", color: "--flow-battery", value: "—" };
@@ -1133,13 +1162,14 @@
     const { hours, limit_soc: limit } = estimate;
     const charging = estimate.state === "charging";
     const counting = { ...reading, label: `Time to ${charging ? "charge" : "discharge"} to ${limit}%` };
+    const why = (text) => [text, charging ? chargeStop(estimate) : ""].filter(Boolean).join(". ");
     if (hours === null) {
       return { ...counting, detail: "Needs the battery's capacity, which the log measures after a few days, or enter one on the Appliances & tariffs tab" };
     }
     if (hours === 0) {
-      return { ...counting, value: "Reached", detail: charging ? `Already at ${limit}% or more` : `At the ${limit}% the inverter stops discharging at` };
+      return { ...counting, value: "Reached", detail: charging ? why(`Already at ${limit}% or more`) : `At the ${limit}% the inverter stops discharging at` };
     }
-    return { ...counting, value: timeLeft(hours), detail: `Reaches ${limit}%${arrival(hours)}` };
+    return { ...counting, value: timeLeft(hours), detail: why(`Reaches ${limit}%${arrival(hours)}`) };
   }
 
   /* The charge as a meter, with a tick at the level the inverter stops discharging. */
@@ -1488,6 +1518,7 @@
       ["Smart charge", onOff(schedule?.smart_charge_on ?? null)],
       ["Stops discharging at, on-grid", percent(latest?.battery_limits?.min_soc)],
       ["Stops discharging at, in a power cut", percent(latest?.battery_limits?.reserve_soc)],
+      ["Never charges past", percent(latest?.battery_limits?.max_soc)],
     ].map(([label, value]) => {
       const row = el("tr");
       row.append(el("th", "", label), el("td", value ? "" : "no-value", value ?? "Unknown"));
@@ -2816,7 +2847,7 @@
     { key: "all_typical", label: "Everything, typical", why: "Every appliance at its typical draw" },
     { key: "all_worst", label: "Everything, at peak", why: "Every appliance at its peak" },
   ];
-  const COULD_NOT_SAVE = "Couldn't save that. Names can't be blank, watts and rates can't be negative, the charge target is at most 100%, a power cut is at least 0.1 hours and rate times are on the hour or half-hour. Showing what's saved.";
+  const COULD_NOT_SAVE = "Couldn't save that. Names can't be blank, watts and rates can't be negative, a power cut is at least 0.1 hours and rate times are on the hour or half-hour. Showing what's saved.";
 
   let overview = null;
   let overviewRequest = 0;

@@ -53,7 +53,7 @@ def source(tmp_path):
     db.save_samples(connection, [db.Sample(TS, READING), db.Sample(TS + DAY, LATER)])
     db.add_appliance(connection, FRIDGE)
     db.add_appliance(connection, KETTLE)
-    db.save_settings(connection, {"tariff_day": 0.25, "target_soc": 90})
+    db.save_settings(connection, {"tariff_day": 0.25, "outage_hours": 4})
     write = db.add_inverter_write(connection, 2, "aa" * 12, "bb" * 12, 50, 60)
     db.finish_inverter_write(connection, write, "confirmed", None)
     yield connection
@@ -132,7 +132,7 @@ def spoiled(tmp_path, source, name):
     if name == "csv":
         return with_cell(content, "settings", "value", "abc")
     if name == "sqlite":
-        return with_sql(tmp_path, content, "UPDATE settings SET value = 500 WHERE key = 'target_soc'")
+        return with_sql(tmp_path, content, "UPDATE settings SET value = 9000 WHERE key = 'outage_hours'")
     return content.replace(b'"typical_w": 2000.0', b'"typical_w": -1')
 
 
@@ -273,7 +273,7 @@ def test_a_setting_already_set_stays_and_an_unset_one_is_filled(tmp_path, conn, 
     db.save_settings(conn, {"tariff_day": 0.5})
     report = run(tmp_path, conn, exported(source, "csv"))
     assert db.get_settings(conn)["tariff_day"] == 0.5
-    assert db.get_settings(conn)["target_soc"] == 90
+    assert db.get_settings(conn)["outage_hours"] == 4
     assert table(report, "settings")["new"] == 1
     assert table(report, "settings")["already_here"] == 1
 
@@ -351,6 +351,14 @@ def test_settings_and_counters_from_a_newer_version_are_skipped_and_counted(tmp_
     assert table(report, "settings")["unknown"] == 1
     assert table(report, "settings")["already_here"] == 0
     assert any("recognise" in note and "2" in note for note in report["notes"])
+
+
+def test_a_retired_setting_from_an_older_copy_is_skipped_without_a_note(tmp_path, conn, source):
+    content = with_cell(exported(source, "csv"), "settings", "key", "target_soc")
+    report = run(tmp_path, conn, content)
+    assert "target_soc" not in dict(conn.execute("SELECT key, value FROM settings"))
+    assert table(report, "settings")["unknown"] == 0
+    assert not any("recognise" in note for note in report["notes"])
 
 
 # Files that are refused, leaving everything as it was.
