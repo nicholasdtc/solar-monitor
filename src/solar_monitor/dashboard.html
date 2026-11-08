@@ -24,10 +24,13 @@
     --good: #0b7f0b;
     --warning: #fab219;
     --critical: #c93434;
+    /* Grid, solar, battery and house: amber against magenta keeps solar and house apart. Checked with the palette
+       validator on this surface and the dark one. Solar and battery are under 3:1 here, so every chart of them carries a
+       title or key, and a table. */
     --flow-grid: #2a78d6;
-    --flow-solar: #eb6834;
+    --flow-solar: #d99400;
     --flow-battery: #1baf7a;
-    --flow-load: #b5338a;
+    --flow-load: #a3297f;
     /* Grid meter rate bands: one blue ramp, the cheapest lightest. Checked with the palette validator on this surface. */
     --band-night: #6da7ec;
     --band-day: #2a78d6;
@@ -54,9 +57,9 @@
       --good: #2f9e2f;
       --critical: #e05a5a;
       --flow-grid: #3987e5;
-      --flow-solar: #d95926;
+      --flow-solar: #c98500;
       --flow-battery: #199e70;
-      --flow-load: #da64ac;
+      --flow-load: #c84fb1;
       --band-night: #184f95;
       --band-day: #3987e5;
       --band-peak: #9ec5f4;
@@ -253,6 +256,12 @@
   .tip-row span { color: var(--ink-2); }
   .tip-row small { grid-column: 3; margin-top: -3px; color: var(--muted); font-size: 12px; }
   .tip-note { margin-top: 4px; color: var(--ink-2); }
+  #chart-tip:not(.help-tip) { max-width: min(36ch, calc(100vw - 16px)); }
+  /* On a phone the tooltip keeps to the values. The lowest to highest reading is in the table. */
+  @media (max-width: 719.98px) {
+    #chart-tip { padding: 6px 8px; }
+    .tip-row small { display: none; }
+  }
   /* Explanations live in the tooltip: on a "?" or on dotted words, shown on hover, keyboard focus or a tap. */
   .help {
     position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none;
@@ -1837,9 +1846,12 @@
   const GRID_BELOW_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "importing" : "exporting";
 
   const HISTORY_CHARTS = [
-    // Neither should go below zero. A brief misreading of the house below it is cut off at the axis.
-    { title: "Solar and house", unit: "W", height: 190, floor: 0, series: [
+    // Each on its own scale, so the house still shows on a sunny day. Neither should go below zero;
+    // a brief misreading below it is cut off at the axis.
+    { title: "Solar", unit: "W", height: 150, floor: 0, series: [
       { key: "pv_w", label: "Solar", unit: "W", color: "--flow-solar" },
+    ] },
+    { title: "House", unit: "W", height: 150, floor: 0, series: [
       { key: "load_w", label: "House", unit: "W", color: "--flow-load" },
     ] },
     { title: "Battery and grid", unit: "W", height: 190, series: [
@@ -2034,9 +2046,39 @@
     }));
     if (note) tip.append(el("div", "tip-note", note));
     tip.hidden = false;
-    const box = tip.getBoundingClientRect();
-    tip.style.left = `${x + 16 + box.width > innerWidth ? Math.max(x - 16 - box.width, 8) : x + 16}px`;
-    tip.style.top = `${clamp(y - box.height / 2, 8, innerHeight - box.height - 8)}px`;
+    placeTip(tip, x, y);
+  }
+
+  /*
+    The tooltip never covers the point it reads. Beside a mouse pointer, right then left. A finger
+    hides what's under it and the hand hides what's below, so for a tap it goes above, then beside,
+    then well below. It stays on screen and clear of the tab bar. Only when it fits nowhere, on a
+    small screen turned sideways, is it pinned to whichever end has more room.
+  */
+  let tipPointer = "mouse";
+  for (const type of ["pointerdown", "pointermove"]) {
+    // Caught on the way down, so it's known before the chart that was touched shows its tooltip.
+    document.addEventListener(type, (event) => { tipPointer = event.pointerType; }, true);
+  }
+  function placeTip(tip, x, y) {
+    // Measured from the corner, as where it was last would narrow it against the screen's edge.
+    tip.style.left = tip.style.top = "0px";
+    const { width, height } = tip.getBoundingClientRect();
+    const finger = tipPointer === "touch";
+    const gap = finger ? 32 : 16;
+    const [minX, maxX] = [8, document.documentElement.clientWidth - 8 - width];
+    const [minY, maxY] = [Math.max(8, document.querySelector(".tabs").getBoundingClientRect().bottom + 8), innerHeight - 8 - height];
+    const midX = clamp(x - width / 2, minX, maxX);
+    const midY = clamp(y - height / 2, minY, maxY);
+    const right = [x + gap, midY];
+    const left = [x - gap - width, midY];
+    const above = [midX, y - gap - height];
+    const below = [midX, y + (finger ? 56 : gap)];
+    const fits = ([l, t]) => l >= minX && l <= maxX && t >= minY && t <= maxY;
+    const [l, t] = (finger ? [above, right, left, below] : [right, left, above, below]).find(fits)
+      ?? [midX, y - minY > innerHeight - y ? minY : Math.max(maxY, minY)];
+    tip.style.left = `${l}px`;
+    tip.style.top = `${t}px`;
   }
 
   /*
