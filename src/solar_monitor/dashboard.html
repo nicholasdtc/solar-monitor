@@ -1120,13 +1120,26 @@
     return ` around ${shortDate(when)}`;
   }
 
+  /*
+    The label says which way it's counting, so a charging time can't be read as how long the
+    battery will last: up to the charge target while charging, down to the inverter's minimum
+    while discharging.
+  */
   function batteryTimeReading() {
-    const reading = { label: "Battery time remaining", color: "--flow-battery", value: "—" };
+    const reading = { label: "Battery time", color: "--flow-battery", value: "—" };
     const estimate = latest.battery_estimate;
-    if (!estimate || estimate.state === "idle" || estimate.hours === null) return reading;
+    if (!estimate) return reading;
+    if (estimate.state === "idle") return { ...reading, detail: "Not charging or discharging" };
     const { hours, limit_soc: limit } = estimate;
-    if (hours === 0) return { ...reading, value: "0 min" };
-    return { ...reading, value: timeLeft(hours), detail: `Reaches ${limit}%${arrival(hours)}` };
+    const charging = estimate.state === "charging";
+    const counting = { ...reading, label: `Time to ${charging ? "charge" : "discharge"} to ${limit}%` };
+    if (hours === null) {
+      return { ...counting, detail: "Needs the battery's capacity, which the log measures after a few days, or enter one on the Appliances & tariffs tab" };
+    }
+    if (hours === 0) {
+      return { ...counting, value: "Reached", detail: charging ? `Already at ${limit}% or more` : `At the ${limit}% the inverter stops discharging at` };
+    }
+    return { ...counting, value: timeLeft(hours), detail: `Reaches ${limit}%${arrival(hours)}` };
   }
 
   /* The charge as a meter, with a tick at the level the inverter stops discharging. */
