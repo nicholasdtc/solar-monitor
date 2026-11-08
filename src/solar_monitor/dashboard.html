@@ -94,33 +94,45 @@
   .seg button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); font-weight: 600; position: relative; }
   .seg button:disabled { color: var(--muted); background: var(--surface); cursor: default; }
 
-  /* Header: identity and the slow-changing facts. It scrolls away; the tab row doesn't. */
+  /* Header: the app's name. It scrolls away; the bar with the menu doesn't. */
   .top { background: var(--surface); }
-  .top-in {
-    max-width: var(--board-max); margin: 0 auto; padding: 12px var(--gutter);
-    display: flex; flex-wrap: wrap; gap: 4px 24px; align-items: baseline;
-  }
-  .top-meta { flex: 1 1 320px; display: flex; flex-wrap: wrap; gap: 0 20px; color: var(--muted); font-size: 13px; }
-  .top button {
-    padding: 4px 10px; min-height: 32px; cursor: pointer; background: none; color: var(--ink-2);
-    border: 1px solid var(--rule-strong); font-size: 13px;
-  }
-  #storage .status { white-space: normal; }
+  .top-in { max-width: var(--board-max); margin: 0 auto; padding: 12px var(--gutter); }
   .alert, #error { padding: 10px var(--gutter); background: #b02a2a; color: #fff; font-weight: 500; }
   #error:empty, .alert:empty { display: none; }
 
-  /* Sticky tab row. Tabs scroll sideways inside it; the connection state stays put. */
+  /*
+    Sticky bar: the menu button, named after the open section, and the connection state.
+    The menu opens below the bar, over the page, so the bar keeps its height and the table
+    header rows and tooltips placed under it stay put.
+  */
   .tabs { position: sticky; top: 0; z-index: 5; flex: none; background: var(--surface); border-block: 1px solid var(--rule-strong); }
   .tabs-in { max-width: var(--board-max); margin: 0 auto; display: flex; height: var(--tabs-h); }
-  .tab-row { flex: 1; min-width: 0; display: flex; overflow-x: auto; scrollbar-width: none; }
-  .tab-row::-webkit-scrollbar { display: none; }
-  .tab-row a {
-    flex: none; display: flex; align-items: center; padding: 0 16px; white-space: nowrap;
-    color: var(--ink-2); font-weight: 500; text-decoration: none; border-right: 1px solid var(--rule);
+  .menu-button {
+    flex: 0 1 auto; margin-right: auto; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0 16px 0 var(--gutter);
+    cursor: pointer; background: none; border: 0; color: var(--ink); font-weight: 600; text-align: left;
   }
-  .tab-row a:first-child { padding-left: var(--gutter); }
-  .tab-row a:hover { background: var(--page); color: var(--ink); }
-  .tab-row a[aria-current="page"] { background: var(--ink); color: var(--surface); font-weight: 600; }
+  .menu-button:hover, .menu-button[aria-expanded="true"] { background: var(--page); }
+  .menu-button .bars { flex: none; width: 18px; height: 12px; border-block: 2px solid currentColor; position: relative; }
+  .menu-button .bars::after { content: ""; position: absolute; inset: 3px 0 auto; border-top: 2px solid currentColor; }
+  .menu-button .current { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .menu-button .caret { flex: none; color: var(--muted); font-size: 12px; transition: transform 0.15s; }
+  .menu-button[aria-expanded="true"] .caret { transform: rotate(180deg); }
+  .menu {
+    position: absolute; top: 100%; left: max(0px, (100% - var(--board-max)) / 2); width: min(100%, 320px);
+    max-height: calc(100dvh - var(--tabs-h) - 16px); overflow-y: auto; margin-top: 1px;
+    background: var(--surface); border: 1px solid var(--rule-strong); border-top: 0;
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
+  }
+  .menu ul { list-style: none; margin: 0; padding: 0; }
+  .menu a, .menu form button {
+    display: flex; align-items: center; width: 100%; min-height: 48px; padding: 0 var(--gutter);
+    color: var(--ink-2); font-weight: 500; text-decoration: none; border-bottom: 1px solid var(--rule);
+  }
+  .menu a:hover, .menu form button:hover { background: var(--page); color: var(--ink); }
+  .menu a[aria-current="page"] { background: var(--ink); color: var(--surface); font-weight: 600; }
+  .menu form { margin: 0; }
+  .menu form button { cursor: pointer; background: none; border: 0; border-bottom: 1px solid var(--rule); text-align: left; }
+  @media (max-width: 640px) { .menu { width: 100%; border-inline: 0; } }
   .conn { flex: none; display: flex; align-items: center; padding: 0 var(--gutter) 0 12px; border-left: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); }
   .conn .long { display: none; }
   @media (min-width: 1280px) { .conn .long { display: inline; } .conn .short { display: none; } }
@@ -292,7 +304,7 @@
   th, td { padding: 8px 12px; text-align: left; vertical-align: top; border-top: 1px solid var(--rule); }
   th:first-child, td:first-child { padding-left: 0; }
   th:last-child, td:last-child { padding-right: 0; }
-  /* Header rows stay in view under the tab row (50px with its borders) while their table passes beneath.
+  /* Header rows stay in view under the bar (50px with its borders) while their table passes beneath.
      The rule under them is a shadow because a collapsed border stays behind with the row below. */
   thead th {
     position: sticky; top: calc(var(--tabs-h) + 2px); z-index: 1; box-shadow: 0 1px 0 var(--rule);
@@ -408,29 +420,31 @@
 <header class="top">
   <div class="top-in">
     <h1>Solar monitor</h1>
-    <div class="top-meta">
-      <p id="device"></p>
-      <p id="storage"></p>
-    </div>
-    <form id="logout" method="post" action="/logout" hidden><button>Log out</button></form>
   </div>
 </header>
 <p id="error" role="alert"></p>
+<p class="alert" id="storage-error" role="alert"></p>
 
 <div id="tabs-top"></div>
 <nav class="tabs" aria-label="Sections">
   <div class="tabs-in">
-    <div class="tab-row" id="tab-row">
-      <a href="#dashboard" aria-current="page">Dashboard</a>
-      <a href="#statistics">Statistics</a>
-      <a href="#grid-meter">Grid meter</a>
-      <a href="#counters">Counters &amp; checks</a>
-      <a href="#appliances">Appliances &amp; tariffs</a>
-      <a href="#schedule">Battery schedule</a>
-      <a href="#fields">All fields</a>
-      <a href="#app-data">App Data</a>
-    </div>
-    <div class="conn" id="conn"></div>
+    <button type="button" class="menu-button" id="menu-button" aria-expanded="false" aria-controls="menu">
+      <span class="bars" aria-hidden="true"></span><span class="current" id="menu-current">Dashboard</span><span class="caret" aria-hidden="true">▼</span>
+    </button>
+    <div class="conn" id="conn" tabindex="0" data-tip=""></div>
+  </div>
+  <div class="menu" id="menu" hidden>
+    <ul id="tab-links">
+      <li><a href="#dashboard" aria-current="page">Dashboard</a></li>
+      <li><a href="#statistics">Statistics</a></li>
+      <li><a href="#grid-meter">Grid meter</a></li>
+      <li><a href="#counters">Counters &amp; checks</a></li>
+      <li><a href="#appliances">Appliances &amp; tariffs</a></li>
+      <li><a href="#schedule">Battery schedule</a></li>
+      <li><a href="#fields">All fields</a></li>
+      <li><a href="#app-data">App Data</a></li>
+      <li><form id="logout" method="post" action="/logout" hidden><button>Log out</button></form></li>
+    </ul>
   </div>
 </nav>
 
@@ -578,7 +592,7 @@
       <div class="empty" id="gm-compare-empty" hidden></div>
       <div id="gm-compare" hidden>
         <p class="note" id="gm-compare-summary"></p>
-        <!-- In the page from the start, so its header row is copied under the tab row like the other tables'. -->
+        <!-- In the page from the start, so its header row is copied under the bar like the other tables'. -->
         <div class="scroll gm-scroll" tabindex="0" role="region" aria-label="Each day's import, from the meter and from this app">
           <table>
             <thead><tr><th>Day</th><th class="num">Meter kWh</th><th class="num">This app kWh</th><th class="num">Difference kWh</th><th class="num">Difference</th></tr></thead>
@@ -763,6 +777,7 @@
   <section class="view" id="view-fields" aria-label="All fields" hidden>
     <div class="pane">
       <h2>All fields</h2>
+      <p class="meta" id="device"></p>
       <input id="filter" type="search" placeholder="Filter fields" aria-label="Filter fields">
       <div class="field-tables" id="field-tables"></div>
     </div>
@@ -878,7 +893,7 @@
     return `${Math.floor(wholeHours / 24)} d ${wholeHours % 24} h`;
   }
 
-  /* `short` is what shows where the tab row has no room for the whole label. */
+  /* `short` is what shows where the bar has no room for the whole label. */
   function status(kind, label, short) {
     const icons = { good: "✓", warning: "!", critical: "×", waiting: "–" };
     const node = el("span", `status ${kind}`);
@@ -1464,13 +1479,19 @@
   }
 
   function renderStorage() {
+    // The logging state is the tooltip on the connection counter. A failure also gets a banner,
+    // so it isn't left for someone to find by hovering.
     const s = latest?.storage;
-    const node = $("storage");
     const readings = (n) => `${n} reading${n === 1 ? "" : "s"}`;
-    if (!s) node.replaceChildren();
-    else if (s.error) node.replaceChildren(status("critical", `Logging is failing, ${readings(s.pending)} waiting to be saved: ${s.error}`));
-    else if (s.saved_at) node.textContent = `Logging: ${readings(s.saved)} saved since start, last at ${new Date(s.saved_at).toLocaleTimeString()}, ${s.pending} waiting.`;
-    else node.textContent = `Logging: ${readings(s.pending)} waiting for the first save.`;
+    let tip = "";
+    if (s?.error) tip = `Logging is failing, ${readings(s.pending)} waiting to be saved: ${s.error}`;
+    else if (s?.saved_at) tip = `Logging: ${readings(s.saved)} saved since start, last at ${new Date(s.saved_at).toLocaleTimeString()}, ${s.pending} waiting.`;
+    else if (s) tip = `Logging: ${readings(s.pending)} waiting for the first save.`;
+    $("storage-error").textContent = s?.error ? tip : "";
+    const conn = $("conn");
+    if (conn.dataset.tip === tip) return;
+    conn.dataset.tip = tip;
+    if (helpShown(conn)) tip ? showHelp(conn) : dropTip(); // Up to date while it's being read.
   }
 
   function renderConnection() {
@@ -1797,7 +1818,7 @@
     });
     play.addEventListener("click", () => (timer ? pause() : resume()));
 
-    $("tab-row").style.visibility = "hidden";
+    $("menu-button").style.visibility = "hidden";
     $("flow-test").hidden = false;
     buildFlow();
     show(0);
@@ -2052,7 +2073,7 @@
   /*
     The tooltip never covers the point it reads. Beside a mouse pointer, right then left. A finger
     hides what's under it and the hand hides what's below, so for a tap it goes above, then beside,
-    then well below. It stays on screen and clear of the tab bar. Only when it fits nowhere, on a
+    then well below. It stays on screen and clear of the bar. Only when it fits nowhere, on a
     small screen turned sideways, is it pinned to whichever end has more room.
   */
   let tipPointer = "mouse";
@@ -4436,11 +4457,22 @@
     "#app-data": "view-app-data",
   };
 
-  function centreTab() {
-    const row = $("tab-row");
-    const link = row.querySelector("a[aria-current]");
-    row.scrollLeft = link.offsetLeft - row.offsetLeft - (row.clientWidth - link.offsetWidth) / 2;
+  /* The sections are listed in a menu under the bar, which closes once one is chosen. */
+  function setMenu(open) {
+    $("menu").hidden = !open;
+    $("menu-button").setAttribute("aria-expanded", String(open));
   }
+  $("menu-button").addEventListener("click", () => setMenu($("menu").hidden));
+  // The open section's own link changes no hash, so it would leave the menu open.
+  $("tab-links").addEventListener("click", (event) => { if (event.target.closest("a")) setMenu(false); });
+  document.addEventListener("click", (event) => {
+    if (!$("menu").hidden && !event.target.closest("#menu, #menu-button")) setMenu(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || $("menu").hidden) return;
+    setMenu(false);
+    $("menu-button").focus();
+  });
 
   function showTab() {
     // Links saved when the first tab was called Live still open it.
@@ -4451,11 +4483,14 @@
     const tab = !FLOW_TEST && TABS[location.hash] ? location.hash : "#dashboard";
     const returning = tab === "#statistics" && $("view-statistics").hidden;
     for (const [hash, view] of Object.entries(TABS)) $(view).hidden = hash !== tab;
-    for (const link of $("tab-row").querySelectorAll("a")) {
-      if (link.hash === tab) link.setAttribute("aria-current", "page");
-      else link.removeAttribute("aria-current");
+    for (const link of $("tab-links").querySelectorAll("a")) {
+      if (link.hash !== tab) link.removeAttribute("aria-current");
+      else {
+        link.setAttribute("aria-current", "page");
+        $("menu-current").textContent = link.textContent;
+      }
     }
-    centreTab();
+    setMenu(false);
     $("chart-tip").hidden = true;
     if (tab === "#appliances") refreshOverview();
     if (tab === "#app-data") refreshExport();
@@ -4468,7 +4503,7 @@
   }
   window.addEventListener("hashchange", () => {
     showTab();
-    // Each tab starts at its top, just under the tab row, wherever the last one was scrolled to.
+    // Each tab starts at its top, just under the bar, wherever the last one was scrolled to.
     const top = $("tabs-top").getBoundingClientRect().top + scrollY;
     if (scrollY > top) scrollTo(0, top);
   });
@@ -4476,8 +4511,8 @@
 
   /*
     A table that scrolls sideways sits in a box that scrolls, and a sticky header only follows the
-    nearest box that scrolls, so its header row can't stay under the tab row by itself. Each gets a
-    copy instead, shown under the tab row while the table passes beneath, with the real columns'
+    nearest box that scrolls, so its header row can't stay under the bar by itself. Each gets a
+    copy instead, shown under the bar while the table passes beneath, with the real columns'
     widths and moved sideways along with the table. Screen readers skip the copy.
   */
   function pinHeaderRows() {
@@ -4539,7 +4574,7 @@
   if (FLOW_TEST) {
     startFlowTest();
   } else {
-    refresh().then(centreTab); // The connection status has now taken its share of the tab row.
+    refresh();
     setInterval(refresh, REFRESH_MS);
   }
   setInterval(renderConnection, 1000);
