@@ -3100,6 +3100,12 @@
   function redrawOnWidthChange(box, draw) {
     let drawnWidth = 0;
     new ResizeObserver(() => {
+      // With a chart filling the screen, the page's scrollbar goes, and redrawing what's under it would
+      // drop the tooltip. The full chart redraws on a resize, and all of them as it closes.
+      if (fullChart) {
+        drawnWidth = 0;
+        return;
+      }
       const width = box.clientWidth;
       if (!width || width === drawnWidth) return;
       drawnWidth = width;
@@ -3129,7 +3135,12 @@
       document.exitFullscreen().catch(() => {});
     }
     dropTip();
-    for (const id of new Set([before?.box, next?.box].filter(Boolean))) (id === "history-charts" ? renderHistory : renderDaily)();
+    if (next) (next.box === "history-charts" ? renderHistory : renderDaily)();
+    else {
+      // The window may have changed size meanwhile, under the full chart.
+      renderHistory();
+      renderDaily();
+    }
     const box = $((next ?? before).box);
     if (focused === box) box.querySelectorAll(".chart-zoom")[next ? 0 : before.index]?.focus({ preventScroll: true });
   }
