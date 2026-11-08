@@ -1897,22 +1897,23 @@
   const HISTORY_CHARTS = [
     // Solar and house each on their own scale, so the house still shows on a sunny day. Neither
     // should go below zero; a brief misreading below it is cut off at the axis.
+    // The last chart's height includes the time axis.
     { title: "Solar", unit: "W", height: 150, floor: 0, series: [
       { key: "pv_w", label: "Solar", unit: "W", color: "--flow-solar" },
     ] },
-    { title: "Battery and grid", unit: "W", height: 190, series: [
+    { title: "Battery charge", unit: "%", height: 116, domain: [0, 100], series: [
+      { key: "battery_soc", label: "Battery charge", unit: "%", color: "--flow-battery" },
+    ] },
+    { title: "House", unit: "W", height: 150, floor: 0, series: [
+      { key: "load_w", label: "House", unit: "W", color: "--flow-load" },
+    ] },
+    { title: "Battery and grid", unit: "W", height: 204, series: [
       { key: "battery_w", label: "Battery", unit: "W", color: "--flow-battery", above: "discharging", below: "charging" },
       { key: "grid_w", label: "Grid", unit: "W", color: "--flow-grid", above: GRID_ABOVE_ZERO, below: GRID_BELOW_ZERO },
     ], inside: {
       above: `Battery out · Grid ${GRID_POSITIVE_MEANS_EXPORT ? "export" : "import"} ↑`,
       below: `Battery in · Grid ${GRID_POSITIVE_MEANS_EXPORT ? "import" : "export"} ↓`,
     } },
-    { title: "House", unit: "W", height: 150, floor: 0, series: [
-      { key: "load_w", label: "House", unit: "W", color: "--flow-load" },
-    ] },
-    { title: "Battery charge", unit: "%", height: 130, domain: [0, 100], series: [
-      { key: "battery_soc", label: "Battery charge", unit: "%", color: "--flow-battery" },
-    ] },
   ];
 
   /* Same layout as history, each chart on its own scale: above the line is energy out of the battery or to the grid. */
@@ -1920,13 +1921,13 @@
     { title: "Solar", unit: "kWh", height: 150, columns: [
       { above: "pv", aboveLabel: "Solar", label: "Solar", color: "--flow-solar" },
     ] },
-    { title: "Battery and grid", unit: "kWh", height: 210, columns: [
-      { above: "battery_discharge", aboveLabel: "Battery discharged", below: "battery_charge", belowLabel: "Battery charged", label: "Battery", color: "--flow-battery" },
-      { above: "grid_export", aboveLabel: "Grid export", below: "grid_import", belowLabel: "Grid import", label: "Grid", color: "--flow-grid" },
-    ], inside: { above: "Battery out · Grid export ↑", below: "Battery in · Grid import ↓" } },
     { title: "House", unit: "kWh", height: 150, columns: [
       { above: "load", aboveLabel: "House", label: "House", color: "--flow-load" },
     ] },
+    { title: "Battery and grid", unit: "kWh", height: 224, columns: [
+      { above: "battery_discharge", aboveLabel: "Battery discharged", below: "battery_charge", belowLabel: "Battery charged", label: "Battery", color: "--flow-battery" },
+      { above: "grid_export", aboveLabel: "Grid export", below: "grid_import", belowLabel: "Grid import", label: "Grid", color: "--flow-grid" },
+    ], inside: { above: "Battery out · Grid export ↑", below: "Battery in · Grid import ↓" } },
   ];
 
   /* Where each day's energy went, split reading by reading on the server. Stacked from the zero line up. */
