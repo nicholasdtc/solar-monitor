@@ -6,10 +6,11 @@
 <title>Solar monitor</title>
 <meta name="server-time-zone" content="">
 <script>
-  // The theme picked in the user menu goes on <html> before the page paints, so it never shows the other one first.
+  // The theme and motion picked in Settings go on <html> before the page paints, so it never shows the others first.
   try {
-    const theme = JSON.parse(localStorage.getItem("solar-monitor.prefs") || "{}").theme;
+    const { theme, motion } = JSON.parse(localStorage.getItem("solar-monitor.prefs") || "{}");
     if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+    if (motion === "reduce" || motion === "full") document.documentElement.dataset.motion = motion;
   } catch {}
 </script>
 <style>
@@ -207,6 +208,22 @@
     cursor: pointer; background: none; border: 0; border-top: 1px solid var(--rule); color: var(--ink-2); font-weight: 500; text-align: left;
   }
   .user-menu .item:hover { background: var(--page); color: var(--ink); }
+  .user-menu .item > span:first-child { flex: 1; display: grid; gap: 2px; padding: 8px 12px 8px 0; }
+  .user-menu .item small { font-size: 12px; font-weight: 400; color: var(--muted); }
+  /* Kiosk mode's on and off, drawn like the TOU programmes' switches. */
+  .user-menu .item .switch {
+    position: relative; flex: none; width: 38px; height: 22px; border-radius: 11px;
+    background: var(--rule-strong); transition: background-color .15s;
+  }
+  .user-menu .item .switch::before {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--surface); transition: transform .15s;
+  }
+  .user-menu .item[aria-pressed="true"] .switch { background: var(--good); }
+  .user-menu .item[aria-pressed="true"] .switch::before { transform: translateX(16px); }
+  @media (prefers-reduced-motion: reduce) {
+    :root:not([data-motion="full"]) .user-menu .switch, :root:not([data-motion="full"]) .user-menu .switch::before { transition: none; }
+  }
   @media (max-width: 640px) {
     .user { position: static; }
     .user-button { width: 44px; }
@@ -221,7 +238,14 @@
   .modal::backdrop { background: rgb(0 0 0 / 0.5); }
   .modal form { margin: 0; padding: 20px var(--gutter); display: grid; gap: 14px; }
   .modal h2 { font-size: 22px; }
+  .modal h3 { margin: 6px 0 0; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 15px; font-weight: 600; }
+  .modal h3:first-of-type { margin-top: 0; padding-top: 0; border-top: 0; }
   .modal label { display: grid; gap: 4px; color: var(--ink-2); font-size: 14px; }
+  .modal label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .modal label.check input { width: 18px; height: 18px; margin: 0; }
+  .modal .about { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin: 0; font-size: 14px; }
+  .modal .about dt { color: var(--muted); }
+  .modal .about dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .modal select { width: 100%; min-height: 40px; padding: 6px 8px; background: var(--page); color: var(--ink); border: 1px solid var(--rule-strong); }
   .modal .note { font-size: 13px; color: var(--muted); }
   .modal .now { padding: 10px 12px; background: var(--page); border: 1px solid var(--rule); font-variant-numeric: tabular-nums; }
@@ -299,7 +323,10 @@
   .flow-hit:focus-visible { outline-offset: 2px; }
   .frozen .flow-hit { display: none; }
   @keyframes flow-move { to { stroke-dashoffset: -24; } }
-  @media (prefers-reduced-motion: reduce) { .flow-dash { animation: none; } .stage svg { transition: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    :root:not([data-motion="full"]) .flow-dash { animation: none; }
+    :root:not([data-motion="full"]) .stage svg { transition: none; }
+  }
 
   .now-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
   .now-head a { color: var(--ink-2); }
@@ -521,7 +548,14 @@
   .edit input[type="checkbox"].switch:checked::before { transform: translateX(16px); }
   .edit input[type="checkbox"].switch:disabled { opacity: .5; cursor: default; }
   .edit input[type="checkbox"].switch:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-  @media (prefers-reduced-motion: reduce) { .edit input[type="checkbox"].switch, .edit input[type="checkbox"].switch::before { transition: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    :root:not([data-motion="full"]) .edit input[type="checkbox"].switch,
+    :root:not([data-motion="full"]) .edit input[type="checkbox"].switch::before { transition: none; }
+  }
+  /* Reduced motion picked in Settings, whatever the device says: nothing moves on its own or slides. */
+  :root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after {
+    animation: none !important; transition: none !important; scroll-behavior: auto !important;
+  }
   #tou-result:empty { display: none; }
 
   /* Grid meter */
@@ -606,6 +640,10 @@
           <button type="button" data-theme="dark" aria-pressed="false">Dark</button>
         </div>
         <button type="button" class="item" id="open-prefs">Settings…</button>
+        <button type="button" class="item" id="kiosk" aria-pressed="false">
+          <span>Kiosk mode<small id="kiosk-note">Full screen, screen kept on</small></span><span class="switch" aria-hidden="true"></span>
+        </button>
+        <button type="button" class="item" id="open-about">About…</button>
         <button type="button" class="item" id="open-logout" hidden>Log out…</button>
       </div>
     </div>
@@ -615,6 +653,7 @@
 <dialog class="modal" id="prefs" aria-labelledby="prefs-title">
   <form method="dialog" id="prefs-form">
     <h2 id="prefs-title">Settings</h2>
+    <h3>Dates and times</h3>
     <label>Date format
       <select name="date">
         <option value="auto">This device's</option>
@@ -638,8 +677,41 @@
         <option value="device">This device's</option>
       </select>
     </label>
+    <label>Weeks start on
+      <select name="week">
+        <option value="mon">Monday</option>
+        <option value="sun">Sunday</option>
+      </select>
+    </label>
     <p class="now" id="prefs-now" aria-live="polite"></p>
-    <p class="note">Saved in this browser. The tariff periods and the daily totals keep to the monitor's own clock.</p>
+    <p class="note">The tariff periods and the daily totals keep to the monitor's own clock.</p>
+    <h3>Display</h3>
+    <label>Currency
+      <select name="currency">
+        <option value="none">None, just the number</option>
+        <option value="EUR">Euro (€)</option>
+        <option value="GBP">Pound (£)</option>
+        <option value="USD">Dollar ($)</option>
+      </select>
+    </label>
+    <label>Power
+      <select name="power">
+        <option value="auto">W, with kW on chart scales from 1,000 W</option>
+        <option value="W">Always W</option>
+        <option value="kW">Always kW</option>
+      </select>
+    </label>
+    <label>Open on
+      <select name="section" id="prefs-section"></select>
+    </label>
+    <label>Motion
+      <select name="motion">
+        <option value="system">This device's setting</option>
+        <option value="reduce">Reduced: nothing moves</option>
+        <option value="full">Full</option>
+      </select>
+    </label>
+    <p class="note" id="prefs-where">Kept on the monitor, so they follow you to every device. Appliance ratings stay in W.</p>
     <div class="actions">
       <button type="button" class="btn" id="prefs-reset">Reset</button>
       <button class="btn primary" value="done">Done</button>
@@ -651,9 +723,20 @@
   <form method="post" action="/logout">
     <h2 id="logout-title">Log out?</h2>
     <p>You'll need your username and password to get back in.</p>
+    <label class="check"><input type="checkbox" name="everywhere" value="1"> On every device, not just this one</label>
     <div class="actions">
       <button type="button" class="btn" id="logout-cancel">Cancel</button>
       <button class="btn primary">Log out</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="about" aria-labelledby="about-title">
+  <form method="dialog">
+    <h2 id="about-title">About</h2>
+    <dl class="about" id="about-list"></dl>
+    <div class="actions">
+      <button class="btn primary" value="done">Close</button>
     </div>
   </form>
 </dialog>
@@ -1128,10 +1211,33 @@
   }
   const watts = (x) => (isNum(x) ? `${number(x, 0)} W` : "—");
   const kwh = (x) => (isNum(x) ? `${number(x, 1)} kWh` : "—");
+  // The diagram's live power, in W unless Settings picks kW for all.
+  const livePower = (x) => (isNum(x) && prefs.power === "kW" ? `${number(x / 1000, 2)} kW` : watts(x));
 
   /*
-    Dates and times. Settings, in the user menu, picks a date format, a time format and a time zone, kept in this
-    browser in `prefs` with the theme. Times show in that zone, the monitor's own unless another is picked. HOME_ZONE
+    Money, with the currency picked in Settings, or as a plain number with none picked. The rates are kept as plain
+    numbers in any unit, so picking a currency only changes how they're shown.
+  */
+  const moneyFormats = new Map();
+  function moneyText(x, digits) {
+    if (prefs.currency === "none") return number(x, digits);
+    const key = `${prefs.currency} ${digits}`;
+    if (!moneyFormats.has(key)) {
+      const options = { style: "currency", currency: prefs.currency, minimumFractionDigits: digits, maximumFractionDigits: digits };
+      let format;
+      try {
+        format = new Intl.NumberFormat(undefined, { ...options, currencyDisplay: "narrowSymbol" });
+      } catch {
+        format = new Intl.NumberFormat(undefined, options); // An older browser has no narrow symbols.
+      }
+      moneyFormats.set(key, format);
+    }
+    return moneyFormats.get(key).format(x).replace("-", "−");
+  }
+
+  /*
+    Dates and times. Settings, in the user menu, picks a date format, a time format and a time zone, kept in `prefs`
+    with the theme and the other choices. Times show in that zone, the monitor's own unless another is picked. HOME_ZONE
     is the monitor's: the tariff periods, the history buckets and the inverter's clock follow it whatever the viewer
     picks, as the server and the inverter do. Dates given as "YYYY-MM-DD", such as a day's totals, are calendar dates
     and only take the format.
@@ -1139,8 +1245,19 @@
   const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const PREFS_KEY = "solar-monitor.prefs";
-  const PREF_CHOICES = { theme: ["system", "light", "dark"], date: ["auto", "dmy", "mdy", "dd/mm", "mm/dd", "iso"], time: ["auto", "24", "12"] };
-  const PREF_DEFAULTS = { theme: "system", date: "auto", time: "auto", zone: "server" };
+  const PREF_CHOICES = {
+    theme: ["system", "light", "dark"],
+    date: ["auto", "dmy", "mdy", "dd/mm", "mm/dd", "iso"],
+    time: ["auto", "24", "12"],
+    currency: ["none", "EUR", "GBP", "USD"],
+    week: ["mon", "sun"],
+    power: ["auto", "W", "kW"],
+    motion: ["system", "reduce", "full"],
+  };
+  const PREF_DEFAULTS = {
+    theme: "system", date: "auto", time: "auto", zone: "server",
+    currency: "none", week: "mon", power: "auto", section: "dashboard", motion: "system",
+  };
   function validZone(zone) {
     if (!zone) return null;
     try {
@@ -1153,16 +1270,68 @@
   const DEVICE_ZONE = validZone(Intl.DateTimeFormat().resolvedOptions().timeZone) ?? "UTC";
   // The server fills this in. A page from an older server has it empty, and takes this device's zone instead.
   const HOME_ZONE = validZone(document.querySelector('meta[name="server-time-zone"]')?.content) ?? DEVICE_ZONE;
-  const prefs = { ...PREF_DEFAULTS };
+  // A full set of prefs from what was saved, with anything missing, unknown or no longer offered on its default.
+  function cleanPrefs(saved) {
+    const clean = { ...PREF_DEFAULTS };
+    if (!saved || typeof saved !== "object") return clean;
+    for (const [key, choices] of Object.entries(PREF_CHOICES)) if (choices.includes(saved[key])) clean[key] = saved[key];
+    if (saved.zone === "device" || validZone(saved.zone)) clean.zone = saved.zone;
+    if (typeof saved.section === "string" && /^[a-z]+(-[a-z]+)*$/.test(saved.section)) clean.section = saved.section;
+    return clean;
+  }
+  let prefs = PREF_DEFAULTS;
   try {
-    const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
-    for (const [key, choices] of Object.entries(PREF_CHOICES)) if (choices.includes(saved[key])) prefs[key] = saved[key];
-    if (saved.zone === "device" || validZone(saved.zone)) prefs.zone = saved.zone;
-  } catch {}
-  function savePrefs() {
+    prefs = cleanPrefs(JSON.parse(localStorage.getItem(PREFS_KEY) || "{}"));
+  } catch {
+    prefs = cleanPrefs({});
+  }
+  const DEVICE_STILL = matchMedia("(prefers-reduced-motion: reduce)");
+  const reduceMotion = () => prefs.motion === "reduce" || (prefs.motion === "system" && DEVICE_STILL.matches);
+
+  /*
+    The prefs are kept on the monitor, so they follow you to every device, and copied into this browser so the page
+    opens with them before the monitor answers. A server from before this had nowhere to keep them, and answers 404.
+  */
+  let prefsOnServer = true;
+  let prefsEdits = 0; // Counts changes made here, so an answer from the monitor sent before one doesn't undo it.
+  function keepPrefsHere() {
     try {
       localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
     } catch {}
+  }
+  function savePrefs() {
+    prefsEdits += 1;
+    keepPrefsHere();
+    if (!prefsOnServer) return;
+    fetch("/api/prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(prefs) })
+      .then((response) => { if (response.status === 404) prefsOnServer = false; })
+      .catch(() => {});
+  }
+  // Takes up the monitor's prefs if they differ from these, and calls showChanged(the old prefs) to show them.
+  async function loadServerPrefs(showChanged) {
+    if (!prefsOnServer) return;
+    const edits = prefsEdits;
+    let stored;
+    try {
+      const response = await fetch("/api/prefs");
+      if (response.status === 404) prefsOnServer = false;
+      if (!response.ok) return;
+      stored = (await response.json()).prefs;
+    } catch {
+      return;
+    }
+    if (edits !== prefsEdits || !stored || typeof stored !== "object") return;
+    if (!Object.keys(stored).length) {
+      // Nothing kept on the monitor yet: the choices made in this browser, before they were kept there, become everyone's.
+      if (JSON.stringify(prefs) !== JSON.stringify(cleanPrefs({}))) savePrefs();
+      return;
+    }
+    const next = cleanPrefs(stored);
+    if (JSON.stringify(next) === JSON.stringify(prefs)) return;
+    const old = prefs;
+    prefs = next;
+    keepPrefsHere();
+    showChanged(old);
   }
   const shownZone = () => (prefs.zone === "server" ? HOME_ZONE : prefs.zone === "device" ? DEVICE_ZONE : prefs.zone);
 
@@ -1482,7 +1651,7 @@
       const active = known && Math.abs(toward) >= flow.minW;
       const outward = known && toward < 0;
       flow.node.classList.toggle("active", active);
-      flow.value_.textContent = known ? watts(Math.abs(toward)) : "—";
+      flow.value_.textContent = known ? livePower(Math.abs(toward)) : "—";
       flow.state_.textContent = !known ? "No data" : !active ? flow.idle : outward ? flow.away : flow.toward;
     }
     const paths = flowPaths();
@@ -1530,7 +1699,7 @@
       if (toward === null) return `${label}: no data.`;
       const state = Math.abs(toward) < flow.minW ? flow.idle : toward < 0 ? flow.away : flow.toward;
       const eta = name === "battery" ? batteryEta() : "";
-      return `${label}: ${watts(Math.abs(toward))}, ${state.toLowerCase()}${eta ? `, ${eta}` : ""}.`;
+      return `${label}: ${livePower(Math.abs(toward))}, ${state.toLowerCase()}${eta ? `, ${eta}` : ""}.`;
     }).join(" ");
   }
 
@@ -1901,7 +2070,7 @@
     add(period.cutoff_soc === null ? "–" : `${period.cutoff_soc}%`, "num");
     add(`${{ charge: "Grid import", discharge: "Battery discharge", hold: "Power" }[period.action]} ${period.power_pct}%`);
     add(Number.isInteger(period.day_bits)
-      ? `${namedBits(daysMeant(period.day_bits), DAY_BITS, EVERY_DAY, "Every day")}, ${namedBits(monthsMeant(period.month_bits), MONTH_BITS, ALL_MONTHS, "all year")}`
+      ? `${namedBits(daysMeant(period.day_bits), dayBits(), EVERY_DAY, "Every day")}, ${namedBits(monthsMeant(period.month_bits), MONTH_BITS, ALL_MONTHS, "all year")}`
       : `${period.days}, ${period.months === "All year" ? "all year" : period.months.replaceAll(",", ", ")}`);
     return row;
   }
@@ -1940,8 +2109,9 @@
     mismatch: ["critical", "Holds something else: check SEMS+"],
     unknown: ["warning", "Couldn't read it back: check SEMS+"],
   };
-  // Each by its bit, the week from Monday. Bit 0 is Sunday, and bit 0 of the months is January.
-  const DAY_BITS = [["Mon", 1], ["Tue", 2], ["Wed", 3], ["Thu", 4], ["Fri", 5], ["Sat", 6], ["Sun", 0]];
+  // Each by its bit, the week from the day picked in Settings. Bit 0 is Sunday, and bit 0 of the months is January.
+  const MONDAY_FIRST = [["Mon", 1], ["Tue", 2], ["Wed", 3], ["Thu", 4], ["Fri", 5], ["Sat", 6], ["Sun", 0]];
+  const dayBits = () => (prefs.week === "sun" ? [MONDAY_FIRST[6], ...MONDAY_FIRST.slice(0, 6)] : MONDAY_FIRST);
   const MONTH_BITS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((name, bit) => [name, bit]);
   const EVERY_DAY = 0x7f;
   const ALL_MONTHS = 0x0fff;
@@ -1999,7 +2169,7 @@
       state: fields.on ? "on" : "off",
       start: fields.start,
       end: fields.end,
-      days: namedBits(fields.day_bits, DAY_BITS, EVERY_DAY, "every day"),
+      days: namedBits(fields.day_bits, dayBits(), EVERY_DAY, "every day"),
       months: namedBits(fields.month_bits, MONTH_BITS, ALL_MONTHS, "all year"),
       cutoff_soc: `${fields.cutoff_soc}%`,
       power: `${fields.percent}%`,
@@ -2127,13 +2297,19 @@
       return label;
     }));
   }
-  makeTicks($("tou-days"), DAY_BITS);
+  makeTicks($("tou-days"), dayBits());
   makeTicks($("tou-months"), MONTH_BITS);
 
   const tickedBits = (container) => [...container.querySelectorAll("input")]
     .reduce((bits, input) => input.checked ? bits | (1 << Number(input.dataset.bit)) : bits, 0);
   function setTicks(container, bits) {
     for (const input of container.querySelectorAll("input")) input.checked = Boolean(bits & (1 << Number(input.dataset.bit)));
+  }
+  // Puts the day ticks in the order of the week picked in Settings, keeping what's ticked.
+  function orderDayTicks() {
+    const bits = tickedBits($("tou-days"));
+    makeTicks($("tou-days"), dayBits());
+    setTicks($("tou-days"), bits);
   }
 
   function touWanted() {
@@ -2482,7 +2658,9 @@
   let pan = null; // A drag along the charts while the pointer is down.
 
   const clamp = (x, low, high) => Math.min(Math.max(x, low), high);
-  const power = (w) => (Math.abs(w) >= 1000 ? `${number(w / 1000, 2)} kW` : `${number(w, 0)} W`);
+  // In kW from 1,000 W, unless Settings picks one unit for all.
+  const inKilowatts = (w) => prefs.power === "kW" || (prefs.power === "auto" && Math.abs(w) >= 1000);
+  const power = (w) => (inKilowatts(w) ? `${number(w / 1000, 2)} kW` : `${number(w, 0)} W`);
 
   /* Round tick values that span low to high, always including both. Takes the smallest round step
      that needs no more than maxSteps, so the axis reaches only a little past the data. */
@@ -2499,12 +2677,12 @@
     return [low, high];
   }
 
-  /* Ticks switch to kW once they reach 1000 W. Only the top tick carries the unit.
+  /* Ticks switch to kW once they reach 1000 W, unless Settings picks one unit. Only the top tick carries the unit.
      Taller plots get more ticks, about one every `spacing` px. */
   function yScale(low, high, top, bottom, unit, spacing = 28) {
     const ticks = niceTicks(low, high, clamp(Math.floor((bottom - top) / spacing), 2, 6));
     const [min, max] = [ticks[0], ticks.at(-1)];
-    const kilo = unit === "W" && Math.max(-min, max) >= 1000;
+    const kilo = unit === "W" && inKilowatts(Math.max(-min, max));
     const divisor = kilo ? 1000 : 1;
     const shownUnit = kilo ? "kW" : unit;
     const digits = Math.max(0, -Math.floor(Math.log10((ticks[1] - ticks[0]) / divisor) + 1e-9));
@@ -2544,9 +2722,9 @@
     if (step < 1) minute -= minute % (step * 60);
     else [hour, minute] = [step < 24 ? hour - (hour % step) : 0, 0];
     if (step > 24) {
-      // Days counted from a Monday, so weekly labels fall on Mondays.
+      // Days counted from the first day of the week picked in Settings, so weekly labels fall on it. Day 0 was a Thursday.
       const days = step / 24;
-      const dayNumber = Math.round(Date.UTC(year, month - 1, day) / 86400000) + 3;
+      const dayNumber = Math.round(Date.UTC(year, month - 1, day) / 86400000) + (prefs.week === "sun" ? 4 : 3);
       day -= ((dayNumber % days) + days) % days;
     }
     const ticks = [];
@@ -3988,12 +4166,12 @@
       const row = el("tr");
       const so = el("td");
       so.append(isNum(value) ? verdict(value) : "—");
-      row.append(loadCell(label, "", tip), el("td", "num", isNum(value) ? number(value, 2) : "—"), so);
+      row.append(loadCell(label, "", tip), el("td", "num", isNum(value) ? moneyText(value, 2) : "—"), so);
       return row;
     });
     $("tariff-values").replaceChildren(...rows);
     $("tariff-help").dataset.tip = [
-      "Your rates per kWh, in any money unit. The results come out in the same unit.",
+      prefs.currency === "none" ? "Your rates per kWh, in any money unit. The results come out in the same unit." : `Rates per kWh, in ${prefs.currency}`,
       `Assumes ${number(tariffs.round_trip_efficiency * 100, 0)}% of grid charging comes back out to the house, and ${number(tariffs.delivery_efficiency * 100, 0)}% of what's already in the battery: typical figures, not measured.`,
     ].join("\n");
   }
@@ -4245,7 +4423,7 @@
     const endText = (end) => (end.slice(11) === "00:00" && prefs.time !== "12" ? `24:00 on ${longDay(stampAt(stampMs(end) - 30 * 60000).slice(0, 10))}` : stampText(end));
 
     const kwhText = (x) => number(x, x >= 100 ? 0 : 1);
-    const money = (x) => (x === null ? "—" : number(x, x >= 100 ? 0 : 2));
+    const money = (x) => (x === null ? "—" : moneyText(x, x >= 100 ? 0 : 2));
     const kw = (w) => `${number(w / 1000, 2)} kW`;
     const count = (n, what) => `${number(n, 0)} ${what}${n === 1 ? "" : "s"}`;
     const sentences = (parts) => parts.map((part) => `${part}.`).join(" ");
@@ -4398,11 +4576,12 @@
     const GROUP_NAMES = { day: "Day", week: "Week", month: "Month", year: "Year" };
     const OPENS_TO = { day: "half-hours", week: "days", month: "days", year: "months" };
     const MAX_BARS = 400; // More than this and a bar is under a pixel wide on most screens.
-    // The period a day falls in. Weeks start on Monday and are keyed by it.
+    // The period a day falls in. Weeks start on the day picked in Settings and are keyed by it.
     function periodOf(iso, kind) {
       if (kind === "day") return { key: iso, start: iso, end: iso };
       if (kind === "week") {
-        const start = addDays(iso, -((toDate(iso).getUTCDay() + 6) % 7));
+        const weekday = toDate(iso).getUTCDay();
+        const start = addDays(iso, -(prefs.week === "sun" ? weekday : (weekday + 6) % 7));
         return { key: start, start, end: addDays(start, 6) };
       }
       if (kind === "month") return { key: iso.slice(0, 7), start: `${iso.slice(0, 7)}-01`, end: monthEnd(iso) };
@@ -4462,7 +4641,7 @@
       $("gm-t-cost").textContent = money(cost);
       $("gm-t-cost-sub").textContent = cost === null
         ? "Set your rates under Appliances & tariffs"
-        : total > 0 ? `${number(cost / total, cost / total < 1 ? 3 : 2)} a kWh on average` : "";
+        : total > 0 ? `${moneyText(cost / total, cost / total < 1 ? 3 : 2)} a kWh on average` : "";
       $("gm-t-night").textContent = share(main, kwh[0]);
       $("gm-t-night-sub").textContent = `Day ${share(main, kwh[1])}, peak ${share(main, kwh[2])}`;
       if (best) {
@@ -4787,7 +4966,7 @@
       drawCarpet();
       if (fromPointer) {
         const box = $("gm-day-pane").getBoundingClientRect();
-        if (box.top > innerHeight - 80 || box.bottom < 120) $("gm-day-pane").scrollIntoView({ block: "start", behavior: "smooth" });
+        if (box.top > innerHeight - 80 || box.bottom < 120) $("gm-day-pane").scrollIntoView({ block: "start", behavior: reduceMotion() ? "auto" : "smooth" });
       }
     }
 
@@ -5235,7 +5414,10 @@
       const joined = (items) => (items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}` : items[0]);
       const bandText = (name, start, end) => (start === end ? `no ${name} rate` : `${name} ${hhmm(start)} to ${hhmm(end)}`);
       const hours = `${bandText("night", bands.night_start, bands.night_end)}, ${bandText("peak", bands.peak_start, bands.peak_end)}, day the rest`;
-      const rateText = (rate) => rate.toLocaleString(undefined, { maximumFractionDigits: 4 });
+      // As entered, to four places, with at least the currency's two.
+      const rateText = (rate) => (prefs.currency === "none"
+        ? rate.toLocaleString(undefined, { maximumFractionDigits: 4 })
+        : moneyText(rate, clamp((String(rate).split(".")[1] ?? "").length, 2, 4)));
       const items = [
         ["Readings", `${count(file.readings, "reading")}, ${stampText(file.first)} to ${endText(fileEnd())}. Each is the average kW over a half-hour, so its kWh is half that.`],
         ["Time labels", "Taken as each half-hour's start: the night-rate jump shows at 23:00, though ESB Networks calls it the end."],
@@ -5452,8 +5634,8 @@
   TAB_ROW.addEventListener("change", () => setMenu(false));
 
   /*
-    The user menu, at the end of the bar: the theme, Settings and logging out. The theme and the settings
-    are kept in this browser with `prefs`. The head's script puts the theme on before the page shows.
+    The user menu, at the end of the bar: the theme, Settings, kiosk mode, About and logging out. The theme and the
+    settings are kept in `prefs`. The head's script puts the theme and motion on before the page shows.
   */
   const userOpen = () => $("user-button").getAttribute("aria-expanded") === "true";
   function setUserMenu(open) {
@@ -5484,6 +5666,78 @@
   });
   showTheme();
 
+  // Motion follows this device's setting unless Settings picks one. The CSS stops what moves, and reduceMotion() the scripts.
+  function showMotion() {
+    if (prefs.motion === "system") delete document.documentElement.dataset.motion;
+    else document.documentElement.dataset.motion = prefs.motion;
+  }
+  showMotion();
+
+  /*
+    Kiosk mode, for a screen left showing the monitor: full screen, with the screen kept on where the browser allows
+    it. It's for this device alone, so it's kept here rather than with the prefs. Browsers keep the screen on only for
+    a page served over HTTPS, and go full screen only on a tap, so after a reload the first tap brings it back.
+    Leaving full screen ends it.
+  */
+  const KIOSK_KEY = "solar-monitor.kiosk";
+  const CAN_KEEP_AWAKE = "wakeLock" in navigator;
+  let kiosk = false;
+  let wakeLock = null;
+  try {
+    kiosk = localStorage.getItem(KIOSK_KEY) === "1";
+  } catch {}
+  function showKiosk() {
+    $("kiosk").setAttribute("aria-pressed", String(kiosk));
+    $("kiosk-note").textContent = !CAN_KEEP_AWAKE ? "Full screen. Screen on needs HTTPS"
+      : kiosk && !wakeLock && !document.hidden ? "Full screen. Screen may sleep" : "Full screen, screen kept on";
+  }
+  async function keepAwake() {
+    if (!kiosk || !CAN_KEEP_AWAKE || wakeLock || document.hidden) return;
+    try {
+      const lock = await navigator.wakeLock.request("screen");
+      if (!kiosk) {
+        lock.release().catch(() => {});
+        return;
+      }
+      wakeLock = lock;
+      // Hiding the page lets the screen sleep again. It's asked for again when the page shows.
+      lock.addEventListener("release", () => {
+        if (wakeLock === lock) wakeLock = null;
+        showKiosk();
+      });
+    } catch {} // Refused, as with a low battery.
+    showKiosk();
+  }
+  function fullScreen() {
+    if (document.fullscreenElement || !document.documentElement.requestFullscreen) return;
+    document.documentElement.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+  }
+  function setKiosk(on) {
+    kiosk = on;
+    try {
+      if (on) localStorage.setItem(KIOSK_KEY, "1");
+      else localStorage.removeItem(KIOSK_KEY);
+    } catch {}
+    if (on) {
+      fullScreen();
+      keepAwake();
+    } else {
+      wakeLock?.release().catch(() => {});
+      wakeLock = null;
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    }
+    showKiosk();
+  }
+  $("kiosk").addEventListener("click", () => {
+    setUserMenu(false);
+    setKiosk(!kiosk);
+  });
+  document.addEventListener("fullscreenchange", () => { if (kiosk && !document.fullscreenElement) setKiosk(false); });
+  document.addEventListener("click", (event) => { if (kiosk && !event.target.closest("#kiosk")) fullScreen(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) keepAwake(); });
+  showKiosk();
+  keepAwake();
+
   // A click on the dimmed page around a dialog closes it.
   for (const dialog of document.querySelectorAll("dialog.modal")) {
     dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
@@ -5494,6 +5748,7 @@
     A change is saved and shown at once.
   */
   const prefsForm = $("prefs-form");
+  const PREF_FIELDS = ["date", "time", "zone", "week", "currency", "power", "section", "motion"]; // The theme is the user menu's.
   let zonesListed = false;
   function listZones() {
     const select = prefsForm.elements.zone;
@@ -5528,10 +5783,17 @@
       const example = clockTime(now, { style: option.value });
       option.textContent = { auto: `This device's (${example})`, 24: `24-hour (${example})`, 12: `12-hour (${example})` }[option.value];
     }
-    form.date.value = prefs.date;
-    form.time.value = prefs.time;
-    form.zone.value = prefs.zone;
+    if (!form.section.options.length) {
+      for (const link of $("tab-links").querySelectorAll("a")) {
+        const option = el("option", "", link.textContent.trim());
+        option.value = link.hash.slice(1);
+        form.section.append(option);
+      }
+    }
+    for (const name of PREF_FIELDS) form[name].value = prefs[name];
+    if (!TABS[`#${prefs.section}`]) form.section.value = "dashboard"; // A section that's gone opens the dashboard.
     $("prefs-now").textContent = `Now ${dateText(now, { year: true, weekday: true })}, ${clockTime(now)}, ${shownZone().replaceAll("_", " ")}`;
+    $("prefs-where").textContent = `${prefsOnServer ? "Kept on the monitor, so they follow you to every device" : "Kept in this browser"}. Appliance ratings stay in W.`;
   }
   $("open-prefs").addEventListener("click", () => {
     setUserMenu(false);
@@ -5539,8 +5801,8 @@
     $("prefs").showModal();
   });
 
-  /* Shows every date and time again in the new formats or zone. */
-  function timesChanged() {
+  /* Shows everything again in the new formats, zone, units or week. */
+  function redrawAll() {
     showPrefs();
     touShown = null;
     if (latest) render();
@@ -5552,23 +5814,68 @@
     gridMeter.redraw();
     if (!$("view-app-data").hidden) refreshExport();
   }
+  /* Shows a change of prefs, made here or on another device. */
+  function prefsChanged(old) {
+    const changed = (...names) => names.some((name) => old[name] !== prefs[name]);
+    if (changed("theme")) {
+      showTheme();
+      gridMeter.repaint();
+    }
+    if (changed("motion")) showMotion();
+    if (changed("week")) orderDayTicks();
+    if (changed("date", "time", "zone", "week", "currency", "power")) redrawAll();
+    else showPrefs();
+  }
   prefsForm.addEventListener("change", () => {
-    const form = prefsForm.elements;
-    prefs.date = form.date.value;
-    prefs.time = form.time.value;
-    prefs.zone = form.zone.value;
+    const old = { ...prefs };
+    for (const name of PREF_FIELDS) prefs[name] = prefsForm.elements[name].value;
     savePrefs();
-    timesChanged();
+    prefsChanged(old);
   });
+  // Puts back everything in Settings. The theme is the user menu's.
   $("prefs-reset").addEventListener("click", () => {
-    Object.assign(prefs, { date: PREF_DEFAULTS.date, time: PREF_DEFAULTS.time, zone: PREF_DEFAULTS.zone });
+    const old = prefs;
+    prefs = { ...PREF_DEFAULTS, theme: prefs.theme };
     savePrefs();
-    timesChanged();
+    prefsChanged(old);
   });
 
-  // Log out asks first. The form posts to /logout, which ends the session and goes to the login page.
+  /* About: the app's version, how long it and the monitor have been running, and the room its data takes. */
+  const bytesText = (n) => (!isNum(n) ? "—" : n >= 1e9 ? `${number(n / 1e9, 1)} GB` : `${number(n / 1e6, 1)} MB`);
+  async function showAbout() {
+    const list = $("about-list");
+    list.replaceChildren(el("dt", "", "Loading…"));
+    let about;
+    try {
+      about = await getJson("/api/about");
+    } catch {
+      list.replaceChildren(el("dt", "", "Couldn't reach the monitor."));
+      return;
+    }
+    const since = (seconds) => (isNum(seconds) ? timeLeft(seconds / 3600) : "—");
+    const rows = [
+      ["Version", [about.version, about.commit && `(${about.commit})`].filter(Boolean).join(" ") || "—"],
+      ["App running", since(about.app_seconds)],
+      ["Monitor up", since(about.machine_seconds)],
+      ["Reads every", isNum(about.poll_seconds) ? `${number(about.poll_seconds, 0)} s` : "—"],
+      ["Readings from", isNum(about.first_reading) ? dateText(about.first_reading * 1000, { year: true }) : "—"],
+      ["Database", bytesText(about.database_bytes)],
+      ["Disk free", isNum(about.disk_total_bytes) ? `${bytesText(about.disk_free_bytes)} of ${bytesText(about.disk_total_bytes)}` : "—"],
+      ["Time zone", about.time_zone ? about.time_zone.replaceAll("_", " ") : "—"],
+      ["Python", about.python ?? "—"],
+    ];
+    list.replaceChildren(...rows.flatMap(([term, value]) => [el("dt", "", term), el("dd", "", value)]));
+  }
+  $("open-about").addEventListener("click", () => {
+    setUserMenu(false);
+    showAbout();
+    $("about").showModal();
+  });
+
+  // Log out asks first. The form posts to /logout, which ends the session, or every one, and goes to the login page.
   $("open-logout").addEventListener("click", () => {
     setUserMenu(false);
+    $("logout-confirm").querySelector("form").elements.everywhere.checked = false;
     $("logout-confirm").showModal();
   });
   $("logout-cancel").addEventListener("click", () => $("logout-confirm").close());
@@ -5602,8 +5909,22 @@
     }
     if (backToDashboard && !FLOW_TEST) refreshNow();
   }
+  /*
+    Opened with no section in the address, the page opens on the one picked in Settings, and puts it in the address.
+    The monitor's prefs come after the page opens, so a section picked on another device is taken up then, unless
+    another section has been chosen here meanwhile.
+  */
+  const OPENED_WITHOUT_SECTION = !location.hash;
+  let sectionChosen = false;
+  function openOnSection() {
+    if (!OPENED_WITHOUT_SECTION || sectionChosen || FLOW_TEST) return false;
+    const hash = `#${prefs.section}`;
+    window.history.replaceState(null, "", TABS[hash] && hash !== "#dashboard" ? hash : location.pathname + location.search);
+    return true;
+  }
   let afterTabChange = null; // Set by a swipe, to drop its sliding once the new section shows.
   window.addEventListener("hashchange", () => {
+    sectionChosen = true;
     showTab();
     // Each tab starts at its top, just under the bar, wherever the last one was scrolled to.
     const top = $("tabs-top").getBoundingClientRect().top + scrollY;
@@ -5627,7 +5948,6 @@
       "svg, canvas, .stage, input, select, textarea, button, a, label, summary, [role=slider], [contenteditable], [tabindex], [data-tip], [data-no-swipe], dialog, .user-menu";
     const order = Object.keys(TABS);
     const main = document.querySelector("main");
-    const still = matchMedia("(prefers-reduced-motion: reduce)");
     let swipe = null;
     let settling = false;
 
@@ -5684,7 +6004,7 @@
       settling = true;
       const end = turnTo === after ? -width : turnTo === before ? width : 0;
       const placed = [[current, end], [after?.view, end + width], [before?.view, end - width]].filter(([view]) => view);
-      const ms = still.matches ? 0 : Math.round(140 + 160 * Math.min(1, Math.abs(end - dx) / width));
+      const ms = reduceMotion() ? 0 : Math.round(140 + 160 * Math.min(1, Math.abs(end - dx) / width));
       const done = () => {
         for (const [view] of placed) {
           view.classList.remove("swipe-next", "swipe-move", "swipe-settle");
@@ -5829,7 +6149,15 @@
 
   $("filter").addEventListener("input", () => { if (latest?.readings) renderFields(); });
   TWO_FIELD_COLUMNS.addEventListener("change", () => { if (latest?.readings) renderFields(); });
+  showPrefs(); // A change copies every field from the form, so it has to hold the prefs from the start.
+  openOnSection();
   showTab();
+  // The prefs kept on the monitor, which may have been changed on another device since this one last looked.
+  loadServerPrefs((old) => {
+    prefsChanged(old);
+    if (old.section !== prefs.section && openOnSection()) showTab();
+  });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadServerPrefs(prefsChanged); });
   new ResizeObserver(buildFlow).observe($("stage")); // Also draws the diagram when its tab opens.
   if (FLOW_TEST) {
     startFlowTest();

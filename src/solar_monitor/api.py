@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import html
+import importlib.metadata
 import json
+import platform
 import os
 import re
 import shutil
@@ -30,7 +32,7 @@ from starlette.background import BackgroundTask
 
 from solar_monitor import config, control, db, export, importer, meter, planning
 from solar_monitor.collector import Collector
-from solar_monitor.inputs import ApplianceIn, SettingsIn
+from solar_monitor.inputs import ApplianceIn, DisplayPrefsIn, SettingsIn
 from solar_monitor.schedule import (
     ALL_MONTHS,
     EVERY_DAY,
@@ -62,6 +64,52 @@ def system_time_zone() -> str | None:
     except OSError:
         pass
     return next((name for name in candidates if name and ZONE_NAME.fullmatch(name)), None)
+
+
+REPO = Path(__file__).resolve().parents[2]
+COMMIT = re.compile(r"[0-9a-f]{40}")
+
+
+def code_commit(repo: Path = REPO) -> str | None:
+    """The commit the code was checked out at, shortened, or None if it can't tell.
+
+    Read from the .git folder rather than by running git, which on the Pi refuses a checkout owned
+    by another user. Handles a worktree, whose .git is a file naming its real folder.
+    """
+    try:
+        git = repo / ".git"
+        if git.is_file():
+            git = repo / git.read_text(encoding="utf-8").removeprefix("gitdir:").strip()
+        common = git / "commondir"
+        shared = git / common.read_text(encoding="utf-8").strip() if common.is_file() else git
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+        commit = head
+        if head.startswith("ref: "):
+            ref = head.removeprefix("ref: ")
+            loose = shared / ref
+            if loose.is_file():
+                commit = loose.read_text(encoding="utf-8").strip()
+            else:
+                packed = (shared / "packed-refs").read_text(encoding="utf-8").splitlines()
+                commit = next((line.split()[0] for line in packed if line.endswith(f" {ref}")), "")
+    except (OSError, ValueError):
+        return None
+    return commit[:7] if COMMIT.fullmatch(commit) else None
+
+
+def machine_uptime() -> float | None:
+    """Seconds since this machine started, or None where there's no /proc, as on Windows."""
+    try:
+        return float(Path("/proc/uptime").read_text(encoding="utf-8").split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def app_version() -> str | None:
+    try:
+        return importlib.metadata.version("solar-monitor")
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
 
 # Served from here, not a font service, so the page looks the same on a LAN with no internet.
@@ -143,6 +191,7 @@ def create_app(collector: Collector) -> FastAPI:
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
+    started = time.monotonic()
     measured: tuple[float, int] | None = None
     measured_at: float | None = None
     measured_overhead: dict[str, object] = {}
@@ -365,6 +414,45 @@ def create_app(collector: Collector) -> FastAPI:
     async def api_settings(settings: SettingsIn) -> dict[str, object]:
         db.save_settings(collector.conn, settings.model_dump(exclude_unset=True))
         return overview()
+
+    @app.get("/api/prefs")
+    async def api_prefs() -> dict[str, object]:
+        return {"prefs": db.get_display_prefs(collector.conn)}
+
+    @app.put("/api/prefs")
+    async def api_save_prefs(prefs: DisplayPrefsIn) -> dict[str, object]:
+        """Replaces the whole set, so the page always sends every choice."""
+        db.save_display_prefs(collector.conn, prefs.model_dump(exclude_none=True))
+        return {"prefs": db.get_display_prefs(collector.conn)}
+
+    @app.get("/api/about")
+    async def api_about() -> dict[str, object]:
+        """For the page's About box. Leaves out the inverter's address and serial, and where files are kept."""
+        database = export.database_path(collector.conn)
+        size = 0
+        for path in (database, database.with_name(database.name + "-wal")):
+            try:
+                size += path.stat().st_size
+            except OSError:
+                pass
+        try:
+            disk = shutil.disk_usage(database.parent)
+            free, total = disk.free, disk.total
+        except OSError:
+            free = total = None
+        return {
+            "version": app_version(),
+            "commit": code_commit(),
+            "python": platform.python_version(),
+            "app_seconds": time.monotonic() - started,
+            "machine_seconds": machine_uptime(),
+            "time_zone": system_time_zone(),
+            "poll_seconds": collector.latest.get("poll_seconds"),
+            "first_reading": db.first_reading(collector.conn, collector.buffer),
+            "database_bytes": size,
+            "disk_free_bytes": free,
+            "disk_total_bytes": total,
+        }
 
     @app.get("/api/tou/writes")
     async def api_tou_writes() -> dict[str, object]:

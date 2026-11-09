@@ -70,6 +70,13 @@ CREATE TABLE IF NOT EXISTS meter_readings (
     kw         REAL NOT NULL,           -- the average kW taken from the grid over the half-hour
     PRIMARY KEY (day, slot, occurrence)
 ) WITHOUT ROWID;
+
+-- How the page shows things, as chosen in its Settings: theme, date format and so on. Kept here
+-- rather than in the browser, so the choices follow you to every device.
+CREATE TABLE IF NOT EXISTS display_prefs (
+    name  TEXT PRIMARY KEY,             -- a field of inputs.DisplayPrefsIn
+    value TEXT NOT NULL
+) WITHOUT ROWID;
 """
 
 # Our name -> the inverter's lifetime kWh reading. Lifetime rather than "today" readings,
@@ -430,6 +437,17 @@ def save_settings(conn: sqlite3.Connection, settings: dict[str, float | None]) -
             "INSERT INTO settings (key, value) VALUES (?, ?)",
             [(key, settings[key]) for key in given if settings[key] is not None],
         )
+
+
+def get_display_prefs(conn: sqlite3.Connection) -> dict[str, str]:
+    return dict(conn.execute("SELECT name, value FROM display_prefs ORDER BY name"))
+
+
+def save_display_prefs(conn: sqlite3.Connection, prefs: dict[str, str]) -> None:
+    """Replace the whole set, so a choice put back to its default is forgotten too."""
+    with conn:
+        conn.execute("DELETE FROM display_prefs")
+        conn.executemany("INSERT INTO display_prefs (name, value) VALUES (?, ?)", prefs.items())
 
 
 def _appliance(row: tuple[object, ...]) -> dict[str, object]:

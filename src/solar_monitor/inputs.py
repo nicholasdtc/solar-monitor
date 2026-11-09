@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints
 
@@ -36,3 +36,20 @@ class SettingsIn(BaseModel):
     band_night_end_minutes: HalfHour | None = None
     band_peak_start_minutes: HalfHour | None = None
     band_peak_end_minutes: HalfHour | None = None
+
+
+class DisplayPrefsIn(BaseModel):
+    """How the page shows things. One left out is on its default. The page checks them again on
+    reading, so a choice it no longer offers just falls back to the default."""
+
+    theme: Literal["system", "light", "dark"] | None = None
+    date: Literal["auto", "dmy", "mdy", "dd/mm", "mm/dd", "iso"] | None = None
+    time: Literal["auto", "24", "12"] | None = None
+    # "server", "device" or a time zone's name, such as Europe/Dublin.
+    zone: Annotated[str, StringConstraints(max_length=64, pattern=r"^[A-Za-z0-9_+\-]+(?:/[A-Za-z0-9_+\-]+)*$")] | None = None
+    currency: Literal["none", "EUR", "GBP", "USD"] | None = None
+    week: Literal["mon", "sun"] | None = None
+    power: Literal["auto", "W", "kW"] | None = None
+    # The section the page opens on, such as grid-meter.
+    section: Annotated[str, StringConstraints(max_length=32, pattern=r"^[a-z]+(?:-[a-z]+)*$")] | None = None
+    motion: Literal["system", "reduce", "full"] | None = None

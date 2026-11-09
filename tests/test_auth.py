@@ -134,6 +134,49 @@ def test_logging_out_ends_the_session_even_if_the_cookie_is_kept(client):
     assert client.get("/api/data").status_code == 401
 
 
+def two_sessions(client):
+    """Log in twice, as from two devices. The client is left with the second session."""
+    log_in(client)
+    first = client.cookies[COOKIE]
+    client.cookies.clear()
+    log_in(client)
+    return first, client.cookies[COOKIE]
+
+
+def test_logging_out_leaves_other_devices_logged_in(client):
+    first, second = two_sessions(client)
+    client.post("/logout")
+    assert with_cookie(client, second).get("/api/data").status_code == 401
+    assert with_cookie(client, first).get("/api/data").status_code == 200
+
+
+def test_logging_out_everywhere_ends_every_session(client):
+    first, second = two_sessions(client)
+    response = client.post("/logout", data={"everywhere": "1"})
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+    assert COOKIE not in client.cookies
+    for token in (first, second):
+        assert with_cookie(client, token).get("/api/data").status_code == 401
+
+
+def test_only_a_logged_in_session_can_log_everyone_out(client):
+    log_in(client)
+    token = client.cookies[COOKIE]
+    client.cookies.clear()
+    client.post("/logout", data={"everywhere": "1"})
+    client.cookies.set(COOKIE, "made-up")
+    client.post("/logout", data={"everywhere": "1"})
+    assert with_cookie(client, token).get("/api/data").status_code == 200
+
+
+def test_an_oversized_logout_form_only_logs_this_session_out(client):
+    first, second = two_sessions(client)
+    client.post("/logout", data={"everywhere": "1", "padding": "x" * auth.MAX_FORM_BYTES})
+    assert with_cookie(client, second).get("/api/data").status_code == 401
+    assert with_cookie(client, first).get("/api/data").status_code == 200
+
+
 def test_following_a_link_to_logout_does_not_log_out(client):
     log_in(client)
     client.get("/logout")
@@ -192,6 +235,14 @@ def test_logging_out_is_saved_too(sessions_file):
     with_cookie(saving_to(sessions_file), token).post("/logout")
     assert json.loads(sessions_file.read_text(encoding="utf-8")) == {}
     assert with_cookie(saving_to(sessions_file), token).get("/api/data").status_code == 401
+
+
+def test_logging_out_everywhere_is_saved_too(sessions_file):
+    first = logged_in_token(sessions_file)
+    second = logged_in_token(sessions_file)
+    with_cookie(saving_to(sessions_file), second).post("/logout", data={"everywhere": "1"})
+    assert json.loads(sessions_file.read_text(encoding="utf-8")) == {}
+    assert with_cookie(saving_to(sessions_file), first).get("/api/data").status_code == 401
 
 
 def test_changing_the_password_logs_everyone_out(sessions_file):

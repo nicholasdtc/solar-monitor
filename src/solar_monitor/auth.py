@@ -89,14 +89,19 @@ class LoginRequired:
         html = self.page.replace("<!--error-->", ERROR if error else "")
         return HTMLResponse(html, status_code=401 if error else 200, headers={"Cache-Control": "no-store"})
 
-    async def log_in(self, request: Request) -> Response:
+    @staticmethod
+    async def read_form(request: Request) -> dict[str, list[str]] | None:
+        """The posted form, or None if it's too big to be one of ours."""
         body = b""
         async for chunk in request.stream():
             body += chunk
             if len(body) > MAX_FORM_BYTES:
-                return self.login_page(error=True)
-        form = parse_qs(body.decode(errors="replace"))
-        if not self.correct(form.get("username", [""])[0], form.get("password", [""])[0]):
+                return None
+        return parse_qs(body.decode(errors="replace"))
+
+    async def log_in(self, request: Request) -> Response:
+        form = await self.read_form(request)
+        if form is None or not self.correct(form.get("username", [""])[0], form.get("password", [""])[0]):
             return self.login_page(error=True)
 
         now = time.time()
@@ -109,8 +114,14 @@ class LoginRequired:
         response.set_cookie(COOKIE, token, max_age=SESSION_SECONDS, httponly=True, samesite="lax")
         return response
 
-    def log_out(self, token: str | None) -> Response:
-        if token is not None and self.sessions.pop(self.hash(token), None) is not None:
+    async def log_out(self, request: Request, token: str | None) -> Response:
+        form = await self.read_form(request) or {}
+        # Only a logged-in session may end the others. The cookie isn't sent with a form posted from
+        # another site, so no other site can log everyone out.
+        if form.get("everywhere") == ["1"] and self.logged_in(token):
+            self.sessions.clear()
+            self.save()
+        elif token is not None and self.sessions.pop(self.hash(token), None) is not None:
             self.save()
         response = RedirectResponse("/login", status_code=303)
         response.delete_cookie(COOKIE)
@@ -127,7 +138,7 @@ class LoginRequired:
         if route == ("POST", "/login"):
             response = await self.log_in(Request(scope, receive))
         elif route == ("POST", "/logout"):
-            response = self.log_out(token)
+            response = await self.log_out(Request(scope, receive), token)
         elif route in (("GET", "/login"), ("HEAD", "/login")):
             response = RedirectResponse("/", status_code=303) if logged_in else self.login_page()
         elif not logged_in:

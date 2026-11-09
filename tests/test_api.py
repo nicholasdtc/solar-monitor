@@ -432,3 +432,85 @@ def test_the_time_zone_comes_from_tz_first(monkeypatch):
     assert system_time_zone() == "America/New_York"
     monkeypatch.setenv("TZ", "<script>")
     assert system_time_zone() != "<script>"
+
+
+def test_display_prefs_start_empty_and_are_replaced_whole(call):
+    assert call("GET", "/api/prefs").json() == {"prefs": {}}
+    saved = call("PUT", "/api/prefs", json={"theme": "dark", "zone": "Europe/Dublin", "currency": "EUR"}).json()
+    assert saved == {"prefs": {"currency": "EUR", "theme": "dark", "zone": "Europe/Dublin"}}
+    call("PUT", "/api/prefs", json={"week": "sun", "section": "grid-meter"})
+    assert call("GET", "/api/prefs").json() == {"prefs": {"section": "grid-meter", "week": "sun"}}
+
+
+def test_display_prefs_ignore_names_they_dont_know(call):
+    assert call("PUT", "/api/prefs", json={"theme": "light", "colour": "red"}).json() == {"prefs": {"theme": "light"}}
+
+
+@pytest.mark.parametrize("body", [
+    {"theme": "blue"},
+    {"date": "yyyy"},
+    {"time": 24},
+    {"zone": "<script>"},
+    {"zone": "Europe/" + "x" * 64},
+    {"currency": "BTC"},
+    {"week": "wed"},
+    {"power": "MW"},
+    {"section": "#dashboard"},
+    {"section": "Grid meter"},
+    {"motion": "slow"},
+])
+def test_invalid_display_prefs_are_refused(call, body):
+    call("PUT", "/api/prefs", json={"theme": "dark"})
+    assert call("PUT", "/api/prefs", json=body).status_code == 422
+    assert call("GET", "/api/prefs").json() == {"prefs": {"theme": "dark"}}
+
+
+def test_about_gives_the_apps_details_but_not_the_inverters_or_where_files_are(call, collector, tmp_path):
+    collector.host = "192.0.2.77"
+    collector.latest["device"] = {"serial_number": "SERIAL123"}
+    about = call("GET", "/api/about").json()
+    assert about["version"]
+    assert about["poll_seconds"] == collector.latest["poll_seconds"]
+    assert about["app_seconds"] >= 0
+    assert about["database_bytes"] > 0
+    assert about["disk_free_bytes"] > 0
+    assert about["first_reading"] is None
+    text = json.dumps(about)
+    for secret in ("192.0.2.77", "SERIAL123", str(tmp_path), tmp_path.name, "test.db"):
+        assert secret not in text
+
+
+def test_the_commit_is_read_from_the_checkouts_folder(tmp_path):
+    from solar_monitor.api import code_commit
+    commit = "0123456789abcdef0123456789abcdef01234567"
+    folder = tmp_path / ".git"
+    (folder / "refs" / "heads").mkdir(parents=True)
+    (folder / "HEAD").write_text("ref: refs/heads/master\n", encoding="utf-8")
+    assert code_commit(tmp_path) is None
+    (folder / "packed-refs").write_text(f"# pack-refs\n{commit} refs/heads/master\n", encoding="utf-8")
+    assert code_commit(tmp_path) == "0123456"
+    (folder / "refs" / "heads" / "master").write_text(commit.replace("0", "f") + "\n", encoding="utf-8")
+    assert code_commit(tmp_path) == "f123456"
+    (folder / "HEAD").write_text(commit + "\n", encoding="utf-8")
+    assert code_commit(tmp_path) == "0123456"
+
+
+def test_the_commit_is_found_from_a_worktree(tmp_path):
+    from solar_monitor.api import code_commit
+    commit = "89abcdef0123456789abcdef0123456789abcdef"
+    shared = tmp_path / "main" / ".git"
+    private = shared / "worktrees" / "other"
+    private.mkdir(parents=True)
+    (shared / "refs" / "heads").mkdir(parents=True)
+    (shared / "refs" / "heads" / "feature").write_text(commit, encoding="utf-8")
+    (private / "HEAD").write_text("ref: refs/heads/feature\n", encoding="utf-8")
+    (private / "commondir").write_text("../..\n", encoding="utf-8")
+    checkout = tmp_path / "other"
+    checkout.mkdir()
+    (checkout / ".git").write_text(f"gitdir: {private}\n", encoding="utf-8")
+    assert code_commit(checkout) == "89abcde"
+
+
+def test_no_checkout_folder_means_no_commit(tmp_path):
+    from solar_monitor.api import code_commit
+    assert code_commit(tmp_path) is None
