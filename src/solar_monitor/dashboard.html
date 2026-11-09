@@ -5830,7 +5830,7 @@
       return {
         ts: h.hour_start,
         gti: h.gti_wm2, ghi: h.ghi_wm2, pv_w: solar.get(h.hour_start) ?? null, expected: learned() ? expectedAt(h) : null,
-        cloud: h.cloud_pct, cloud_low: h.cloud_low_pct, cloud_mid: h.cloud_mid_pct, cloud_high: h.cloud_high_pct,
+        cloud: h.cloud_pct,
         chance: h.precipitation_chance_pct, rain: rainIn(h.precipitation_mm),
         temp: tempIn(h.temperature_c), feels: tempIn(h.feels_like_c),
       };
@@ -5870,12 +5870,7 @@
           aria: "Sun (W/m²)" + (bars ? " and solar made (W)" : ""),
         });
       }
-      const cloud = keep([
-        { key: "cloud", label: "Cloud", unit: "%", color: "--ink-2" },
-        { key: "cloud_low", label: "Low", unit: "%", color: "--heat-6" },
-        { key: "cloud_mid", label: "Mid", unit: "%", color: "--heat-4" },
-        { key: "cloud_high", label: "High", unit: "%", color: "--heat-2" },
-      ]);
+      const cloud = keep([{ key: "cloud", label: "Cloud", unit: "%", color: "--ink-2" }]);
       if (cloud.length) charts.push({ title: "Cloud", unit: "%", height: 164, domain: [0, 100], series: cloud });
       if (has("chance") || has("rain")) {
         const unit = rainUnit();
