@@ -418,7 +418,7 @@ def test_every_page_but_the_dashboard_and_weather_needs_a_permission(app):
     page = as_(app, "admin").get("/").text
     links = re.search(r'<ul id="tab-links">(.*?)</ul>', page, re.S).group(1)
     tabs = re.findall(r'href="#([\w-]+)"', links)
-    assert tabs[0] == "dashboard"
+    assert tabs[:3] == ["dashboard", "statistics", "weather"]
     views = [dict(re.findall(r'([\w-]+)="([^"]*)"', tag)) for tag in re.findall(r'<section [^>]*class="view\b[^>]*>', page)]
     assert [view["data-tab"] for view in views if view["data-tab"] not in tabs] == []
     assert {view["data-tab"] for view in views} == set(tabs)
@@ -432,12 +432,17 @@ def test_every_page_but_the_dashboard_and_weather_needs_a_permission(app):
         assert set(view["data-perm"].split()) <= set(auth.TABS), view["id"]
         given.update(view["data-perm"].split())
     assert given == set(auth.TABS)
+    # Each tab's pages come together, in the bar's order, so a swipe goes through them tab by tab.
+    order = list(dict.fromkeys(view["data-tab"] for view in views))
+    assert order == tabs
+    assert [view["data-sub"] for view in views if view["data-tab"] == "statistics"][-2:] == ["grid", "grid-about"]
 
 
 def test_old_links_open_a_page_that_exists(app):
     page = as_(app, "admin").get("/").text
     old = dict(re.findall(r'"(#[\w/-]+)": "(#[\w/-]+)"', re.search(r"const OLD_HASHES = \{(.*?)\};", page, re.S).group(1)))
-    assert old["#grid-meter/day"] == "#grid-meter/overview"
+    assert old["#grid-meter"] == old["#grid-meter/overview"] == old["#grid-meter/day"] == "#statistics/grid"
+    assert old["#grid-meter/about"] == "#statistics/grid-about"
     assert old["#appliances/outage"] == old["#appliances/run"] == "#appliances/planning"
     assert old["#history"] == old["#setup/activity"] == "#system/activity"
     assert old["#app-data"] == old["#setup/tariffs"] == old["#setup/panels"] == old["#setup/data"] == "#setup"

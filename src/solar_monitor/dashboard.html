@@ -668,8 +668,8 @@
   #limit-change { margin-top: 12px; }
 
   /* Grid meter */
-  [data-tab="grid-meter"] .chart-head { align-items: flex-start; }
-  [data-tab="grid-meter"] .legend span { white-space: nowrap; }
+  #view-statistics-grid .chart-head { align-items: flex-start; }
+  #view-statistics-grid .legend span { white-space: nowrap; }
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 16px 32px; margin-top: 4px; }
   .tile { display: flex; flex-direction: column; gap: 2px; padding-top: 10px; border-top: 1px solid var(--rule); min-width: 0; }
   .tile-label { color: var(--ink-2); font-weight: 500; }
@@ -684,7 +684,7 @@
   #gm-bars svg { cursor: pointer; }
   #gm-day-chart svg { cursor: crosshair; }
   /* Overview shows one day's half-hours, or the bars and carpet for longer. */
-  #view-grid-meter-overview.one-day .gm-many, #view-grid-meter-overview:not(.one-day) .gm-one { display: none; }
+  #view-statistics-grid.one-day .gm-many, #view-statistics-grid:not(.one-day) .gm-one { display: none; }
   .chart-focus { fill: none; stroke: var(--flow-grid); stroke-width: 2; }
   .b0 { fill: var(--band-night); }
   .b1 { fill: var(--band-day); }
@@ -726,9 +726,8 @@
       <div class="menu" id="menu">
         <ul id="tab-links">
           <li><a href="#dashboard" aria-current="page">Dashboard</a></li>
-          <li><a href="#weather">Weather</a></li>
           <li><a href="#statistics">History</a></li>
-          <li><a href="#grid-meter">Grid meter</a></li>
+          <li><a href="#weather">Weather</a></li>
           <li><a href="#appliances">Appliances</a></li>
           <li><a href="#battery">Battery</a></li>
           <li><a href="#system">System</a></li>
@@ -1009,49 +1008,6 @@
     </div>
   </section>
 
-  <section class="view page" id="view-weather" data-tab="weather" aria-label="Weather" hidden>
-    <div class="pane" id="wx-unset" hidden>
-      <h2>Weather</h2>
-      <p class="note">Set where the panels are under <a href="#setup">Setup</a> to see the forecast.</p>
-    </div>
-    <div class="pane wx-warnings" id="wx-warnings" hidden>
-      <h2>Warnings</h2>
-      <ul class="wx-warning-list" id="wx-warning-list"></ul>
-    </div>
-    <div class="pane" id="wx-now-pane">
-      <h2>Now</h2>
-      <div class="tiles" id="wx-now"></div>
-      <p class="meta" id="wx-now-note" aria-live="polite"></p>
-    </div>
-    <div class="pane" id="wx-charts-pane" hidden>
-      <h2>12 hours back, 48 ahead <button type="button" class="help" id="wx-charts-help" aria-label="About these charts" data-tip="">?</button></h2>
-      <div class="charts" id="weather-charts"></div>
-    </div>
-    <div class="pane" id="wx-hours-pane" hidden>
-      <h2>Hour by hour</h2>
-      <div class="scroll" tabindex="0" role="region" aria-label="Hourly forecast">
-        <table class="wx-hours">
-          <thead id="wx-hours-head"></thead>
-          <tbody id="wx-hours"></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="pane" id="wx-days-pane" hidden>
-      <h2>Next days <button type="button" class="help" aria-label="About sunshine" data-tip="Sunshine: direct sun ≥ 120 W/m²&#10;WMO measure">?</button></h2>
-      <div class="scroll" tabindex="0" role="region" aria-label="Daily forecast">
-        <table class="wx-days">
-          <thead id="wx-days-head"></thead>
-          <tbody id="wx-days"></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="pane wx-foot">
-      <ul class="meta wx-credits" id="wx-credits"></ul>
-      <p class="meta" id="wx-fetches"></p>
-      <p class="meta" id="wx-backfill"></p>
-    </div>
-  </section>
-
   <section class="view page" id="view-statistics-charts" data-tab="statistics" data-sub="charts" data-label="Charts" data-perm="statistics" aria-label="History: Charts" hidden>
     <div class="pane">
       <h2>History <button type="button" class="help" id="history-help" aria-label="About these charts" data-tip="">?</button></h2>
@@ -1122,9 +1078,9 @@
     </div>
   </section>
 
-  <section class="view page" id="view-grid-meter-overview" data-tab="grid-meter" data-sub="overview" data-label="Overview" data-perm="grid-meter" aria-label="Grid meter: Overview" hidden>
+  <section class="view page" id="view-statistics-grid" data-tab="statistics" data-sub="grid" data-label="Grid" data-perm="grid-meter" aria-label="History: Grid" hidden>
     <div class="pane">
-      <h2>Grid meter <button type="button" class="help" aria-label="About this tab" data-tip="Half-hourly grid import from your smart meter, as downloaded from ESB Networks. Priced at your rates.">?</button></h2>
+      <h2>Grid meter <button type="button" class="help" aria-label="About this page" data-tip="Half-hourly grid import from your smart meter, as downloaded from ESB Networks. Priced at your rates.">?</button></h2>
       <p class="meta" id="gm-intro"></p>
       <div class="range gm-data">
         <div class="seg" id="gm-range" role="group" aria-label="Grid meter range">
@@ -1213,7 +1169,7 @@
     </div>
   </section>
 
-  <section class="view page" id="view-grid-meter-about" data-tab="grid-meter" data-sub="about" data-label="About" data-perm="grid-meter" aria-label="Grid meter: About" hidden>
+  <section class="view page" id="view-statistics-grid-about" data-tab="statistics" data-sub="grid-about" data-label="About grid" data-perm="grid-meter" aria-label="History: About grid" hidden>
     <div class="pane gm-none" hidden>
       <p class="note">No meter readings yet. Import an ESB Networks half-hourly kW file under <a href="#setup">Setup</a>.</p>
     </div>
@@ -1221,6 +1177,49 @@
     <div class="pane gm-data">
       <h2>About this data</h2>
       <dl class="notes" id="gm-notes"></dl>
+    </div>
+  </section>
+
+  <section class="view page" id="view-weather" data-tab="weather" aria-label="Weather" hidden>
+    <div class="pane" id="wx-unset" hidden>
+      <h2>Weather</h2>
+      <p class="note">Set where the panels are under <a href="#setup">Setup</a> to see the forecast.</p>
+    </div>
+    <div class="pane wx-warnings" id="wx-warnings" hidden>
+      <h2>Warnings</h2>
+      <ul class="wx-warning-list" id="wx-warning-list"></ul>
+    </div>
+    <div class="pane" id="wx-now-pane">
+      <h2>Now</h2>
+      <div class="tiles" id="wx-now"></div>
+      <p class="meta" id="wx-now-note" aria-live="polite"></p>
+    </div>
+    <div class="pane" id="wx-charts-pane" hidden>
+      <h2>12 hours back, 48 ahead <button type="button" class="help" id="wx-charts-help" aria-label="About these charts" data-tip="">?</button></h2>
+      <div class="charts" id="weather-charts"></div>
+    </div>
+    <div class="pane" id="wx-hours-pane" hidden>
+      <h2>Hour by hour</h2>
+      <div class="scroll" tabindex="0" role="region" aria-label="Hourly forecast">
+        <table class="wx-hours">
+          <thead id="wx-hours-head"></thead>
+          <tbody id="wx-hours"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pane" id="wx-days-pane" hidden>
+      <h2>Next days <button type="button" class="help" aria-label="About sunshine" data-tip="Sunshine: direct sun ≥ 120 W/m²&#10;WMO measure">?</button></h2>
+      <div class="scroll" tabindex="0" role="region" aria-label="Daily forecast">
+        <table class="wx-days">
+          <thead id="wx-days-head"></thead>
+          <tbody id="wx-days"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pane wx-foot">
+      <ul class="meta wx-credits" id="wx-credits"></ul>
+      <p class="meta" id="wx-fetches"></p>
+      <p class="meta" id="wx-backfill"></p>
     </div>
   </section>
 
@@ -1482,7 +1481,7 @@
         <label>Night rate <input name="tariff_night" type="number" min="0" step="any"></label>
         <label>Export rate <input name="tariff_export" type="number" min="0" step="any"></label>
       </form>
-      <h3>When each rate applies <button type="button" class="help" aria-label="About the rate times" data-tip="For the Grid meter. On the hour or half-hour.&#10;Blank: night 23:00 to 08:00, peak 17:00 to 19:00, day the rest.">?</button></h3>
+      <h3>When each rate applies <button type="button" class="help" aria-label="About the rate times" data-tip="For History › Grid. On the hour or half-hour.&#10;Blank: night 23:00 to 08:00, peak 17:00 to 19:00, day the rest.">?</button></h3>
       <form class="edit settings" id="band-settings">
         <label>Night starts <input name="band_night_start_minutes" type="time" step="1800"></label>
         <label>Night ends <input name="band_night_end_minutes" type="time" step="1800"></label>
@@ -6045,7 +6044,7 @@
   })();
 
   /*
-    Grid meter: the electricity meter's half-hours, imported from ESB Networks under Setup.
+    History › Grid: the electricity meter's half-hours, imported from ESB Networks under Setup.
     Days are calendar days on the meter's Irish clock, handled as UTC so neither the browser's
     time zone nor the one picked in Preferences moves them. Only the date and time formats apply. A slot is a half-hour from midnight, 0 to 47, and holds the average
     draw over it in whole watts, null where the file has a gap, or -1 where there was no
@@ -7170,7 +7169,7 @@
     function showRange(focusKey) {
       const single = oneDay();
       if (single) selected = range.from; // Still marked on the bars and carpet after zooming out.
-      $("view-grid-meter-overview").classList.toggle("one-day", single);
+      $("view-statistics-grid").classList.toggle("one-day", single);
       for (const button of $("gm-range").querySelectorAll("button")) {
         button.setAttribute("aria-pressed", String(button.dataset.range === "day" ? single : !single && button.dataset.range === preset));
       }
@@ -7341,7 +7340,10 @@
     "#app-data": "#setup",
     "#history": "#system/activity",
     "#setup/activity": "#system/activity",
-    "#grid-meter/day": "#grid-meter/overview",
+    "#grid-meter": "#statistics/grid",
+    "#grid-meter/overview": "#statistics/grid",
+    "#grid-meter/day": "#statistics/grid",
+    "#grid-meter/about": "#statistics/grid-about",
     "#appliances/outage": "#appliances/planning",
     "#appliances/run": "#appliances/planning",
     "#setup/tariffs": "#setup",
@@ -7359,6 +7361,8 @@
     return Object.keys(PAGES).find((page) => PAGES[page].tab === tab) ?? "#dashboard";
   }
   const shownPage = () => Object.keys(PAGES).find((hash) => !PAGES[hash].view.hidden);
+  // History's own pages, which share its readings and daily totals. Its Grid pages have the meter's instead.
+  const onHistory = (hash) => PAGES[hash]?.view.dataset.perm === "statistics";
   // The pills under the bar for the open tab's pages. A tab with none, such as the dashboard, has no row.
   function renderSubtabs(tab, open) {
     const row = $("subtabs");
@@ -8014,7 +8018,7 @@
     if (!FLOW_TEST && location.hash && location.hash !== page) window.history.replaceState(null, "", page);
     const { view, tab } = PAGES[page];
     const before = shownPage();
-    const returning = tab === "#statistics" && PAGES[before]?.tab !== "#statistics";
+    const returning = onHistory(page) && !onHistory(before);
     const backToDashboard = page === "#dashboard" && before !== "#dashboard";
     lastPage[tab] = page;
     for (const [hash, other] of Object.entries(PAGES)) other.view.hidden = hash !== page;
@@ -8030,7 +8034,7 @@
     $("chart-tip").hidden = true;
     if (usesOverview(view)) refreshOverview();
     if (page === "#setup" && may("app-data")) refreshExport();
-    if (tab === "#grid-meter" || (page === "#system/checks" && may("grid-meter"))) gridMeter.refresh();
+    if (page.startsWith("#statistics/grid") || (page === "#system/checks" && may("grid-meter"))) gridMeter.refresh();
     if (page === "#system/activity") refreshActions();
     if (tab === "#weather") weatherTab.refresh();
     if (tab === "#battery") {
@@ -8041,7 +8045,7 @@
       refreshHistory();
       refreshDaily();
     } else if (page === "#statistics/charts") renderHistory(); // Charts aren't drawn while their page is hidden.
-    else if (tab === "#statistics") renderDaily();
+    else if (onHistory(page)) renderDaily();
     if (backToDashboard && !FLOW_TEST) {
       refreshNow();
       weatherTab.refresh();
@@ -8351,7 +8355,7 @@
     // Redrawing would drop the tooltip and keyboard focus from under someone reading a chart.
     // A full-screen button keeps its focus through a redraw.
     if (pan || !$("chart-tip").hidden || document.activeElement?.closest(".charts svg")) return;
-    if (PAGES[shownPage()]?.tab === "#statistics") {
+    if (onHistory(shownPage())) {
       refreshHistory();
       refreshDaily();
     }
