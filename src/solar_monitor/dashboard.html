@@ -5660,7 +5660,7 @@
         : moneyText(rate, clamp((String(rate).split(".")[1] ?? "").length, 2, 4)));
       const items = [
         ["Readings", `${count(file.readings, "reading")}, ${stampText(file.first)} to ${endText(fileEnd())}. Each is the average kW over a half-hour, so its kWh is half that.`],
-        ["Time labels", "Taken as each half-hour's start: the night-rate jump shows at 23:00, though ESB Networks calls it the end."],
+        ["Time labels", "ESB Networks labels each half-hour by its end. Here each shows from its start, so the file's 23:30 is 23:00–23:30, and its 00:00 is the day before's last."],
         ["Rate bands", `${hours[0].toUpperCase()}${hours.slice(1)}${bandsSet ? ", from Appliances & tariffs" : " (the usual hours, until you set your own under Appliances & tariffs)"}. A half-hour takes the rate at its start.`],
         ["Costs", rates.every(isNum)
           ? `Today's rates (night ${rateText(rates[0])}, day ${rateText(rates[1])}, peak ${rateText(rates[2])}) for every half-hour, even older ones. No standing charge.`

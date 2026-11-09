@@ -33,7 +33,10 @@ ONE_DAY = timedelta(days=1)
 
 
 def labels(day):
-    """A day's half-hours in time order, labelled as the meter file labels them."""
+    """The meter file's labels dated this day, in time order.
+
+    Each is when a half-hour ends, so the one at 00:00 ends the day before.
+    """
     slots = [slot for slot in range(48) if not (day == meter.last_sunday(day.year, 3) and slot in (2, 3))]
     if day == meter.last_sunday(day.year, 10):
         slots[4:4] = [2, 3]  # The clocks go back at 02:00, so 01:00 and 01:30 come round again.
@@ -41,8 +44,13 @@ def labels(day):
 
 
 def half_hours(*days, kw=0.5):
-    """(label, kW) for every half-hour of the days, in time order."""
+    """(label, kW) for every label dated these days, in time order."""
     return [(label, kw) for day in days for label in labels(day)]
+
+
+def whole_days(*days, kw=0.5):
+    """(label, kW) for every half-hour that starts on these days, in time order: 00:30 to the next 00:00."""
+    return [(label, kw) for day in days for label in labels(day)[1:] + labels(day + ONE_DAY)[:1]]
 
 
 def lines(readings, *, mprn=MPRN):
@@ -393,7 +401,7 @@ def test_no_half_hours_yet(conn):
 
 
 def test_each_day_has_its_48_half_hours_in_watts(tmp_path, conn):
-    readings = half_hours(WINTER, kw=0.25)
+    readings = whole_days(WINTER, kw=0.25)
     readings[5] = (readings[5][0], 0)
     run(tmp_path, conn, esb(readings))
     payload = meter.readings(conn)
@@ -413,8 +421,43 @@ def test_each_day_has_its_48_half_hours_in_watts(tmp_path, conn):
     }
 
 
+def test_each_half_hour_shows_from_its_start_though_the_file_labels_its_end(tmp_path, conn):
+    labelled = dict(whole_days(WINTER))
+    labelled["14-01-2026 18:30"] = 3.0  # 18:00 to 18:30.
+    labelled["15-01-2026 00:00"] = 2.0  # 23:30 to midnight.
+    run(tmp_path, conn, esb(list(labelled.items())))
+    payload = meter.readings(conn)
+    [(day, flags, slots, _)] = payload["days"]
+    assert (day, flags) == ("2026-01-14", "")
+    assert (slots[36], slots[47]) == (3000, 2000)
+    assert slots.count(500) == 46
+    assert (payload["file"]["first"], payload["file"]["last"]) == ("2026-01-14 00:00", "2026-01-14 23:30")
+
+
+def test_the_label_at_midnight_is_the_day_befores_last_half_hour(tmp_path, conn):
+    run(tmp_path, conn, esb([("14-01-2026 00:00", 1.0), ("14-01-2026 00:30", 0.5)]))
+    payload = meter.readings(conn)
+    before, day = payload["days"]
+    assert before[:2] == ["2026-01-13", "b"]
+    assert before[2] == [meter.NOT_A_HALF_HOUR] * 47 + [1000]
+    assert day[:2] == ["2026-01-14", "p"]
+    assert day[2] == [500] + [meter.NOT_A_HALF_HOUR] * 47
+    assert (payload["file"]["first"], payload["file"]["last"]) == ("2026-01-13 23:30", "2026-01-14 00:00")
+
+
+def test_the_half_hours_either_side_of_the_clock_changes(tmp_path, conn):
+    spring, autumn = whole_days(SPRING), whole_days(AUTUMN)
+    assert (spring[1][0], autumn[5][0]) == ("29-03-2026 02:00", "25-10-2026 02:00")
+    spring[1] = (spring[1][0], 1.25)  # 00:30 to 01:00, when the clocks go forward to 02:00.
+    autumn[5] = (autumn[5][0], 1.75)  # 01:30 to 02:00 in winter time, after the clocks went back.
+    run(tmp_path, conn, esb(spring + autumn))
+    days = {day: (slots, twice) for day, _, slots, twice in meter.readings(conn)["days"]}
+    assert days["2026-03-29"][0][1:5] == [1250, meter.NOT_A_HALF_HOUR, meter.NOT_A_HALF_HOUR, 500]
+    assert days["2026-10-25"][1] == [[2, 500, 500], [3, 500, 1750]]
+
+
 def test_a_file_that_starts_and_stops_partway_through_a_day(tmp_path, conn):
-    readings = half_hours(WINTER, WINTER + ONE_DAY, WINTER + 2 * ONE_DAY)[10:-20]
+    readings = whole_days(WINTER, WINTER + ONE_DAY, WINTER + 2 * ONE_DAY)[10:-20]
     del readings[40:43]  # Three half-hours missing on the second day, from 01:00.
     run(tmp_path, conn, esb(readings))
     payload = meter.readings(conn)
@@ -435,7 +478,7 @@ def test_a_file_that_starts_and_stops_partway_through_a_day(tmp_path, conn):
 
 
 def test_days_missing_altogether_are_there_with_no_readings(tmp_path, conn):
-    run(tmp_path, conn, esb(half_hours(WINTER, WINTER + 3 * ONE_DAY)))
+    run(tmp_path, conn, esb(whole_days(WINTER, WINTER + 3 * ONE_DAY)))
     payload = meter.readings(conn)
     assert [day[0] for day in payload["days"]] == ["2026-01-14", "2026-01-15", "2026-01-16", "2026-01-17"]
     assert payload["days"][1][2] == [None] * 48
@@ -445,7 +488,7 @@ def test_days_missing_altogether_are_there_with_no_readings(tmp_path, conn):
 
 def test_gaps_past_the_listed_ones_are_only_counted(tmp_path, conn, monkeypatch):
     monkeypatch.setattr(meter, "MAX_GAPS", 2)
-    readings = half_hours(WINTER)
+    readings = whole_days(WINTER)
     del readings[30], readings[20], readings[10]
     run(tmp_path, conn, esb(readings))
     file = meter.readings(conn)["file"]
@@ -454,9 +497,10 @@ def test_gaps_past_the_listed_ones_are_only_counted(tmp_path, conn, monkeypatch)
 
 
 def test_the_clock_change_days_are_marked(tmp_path, conn):
+    # In time order, from 01:00 summer time: 01:00 and 01:30, then the same again in winter time.
     values = {2: 1.0, 3: 1.5, 4: 2.0, 5: 2.5}
-    autumn = [(label, values.get(n, 0.5)) for n, label in enumerate(labels(AUTUMN))]
-    run(tmp_path, conn, esb(half_hours(SPRING) + autumn))
+    autumn = [(label, values.get(n, 0.5)) for n, (label, _) in enumerate(whole_days(AUTUMN))]
+    run(tmp_path, conn, esb(whole_days(SPRING) + autumn))
     payload = meter.readings(conn)
     days = {day: (flags, slots, twice) for day, flags, slots, twice in payload["days"]}
     flags, slots, twice = days["2026-03-29"]
@@ -564,7 +608,7 @@ def test_the_route_shows_a_meter_file_as_soon_as_it_is_imported(call, conn):
     preview = call("POST", "/api/import", content=esb(half_hours(WINTER)), headers=BINARY)
     assert preview.json()["applied"] is False
     assert call("GET", "/api/meter").json()["days"] == []
-    call("POST", "/api/import?apply=true", content=esb(half_hours(WINTER)), headers=BINARY)
+    call("POST", "/api/import?apply=true", content=esb(whole_days(WINTER)), headers=BINARY)
     body = call("GET", "/api/meter").json()
     assert [day[0] for day in body["days"]] == ["2026-01-14"]
     assert body["file"]["readings"] == 48

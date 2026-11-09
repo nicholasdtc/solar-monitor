@@ -55,10 +55,11 @@ setting_writes.csv  Every change this app sent to Backup mode (backup, 1 is on) 
                     limits in %: min_soc and reserve_soc stop discharging on-grid and in a power
                     cut, max_soc stops charging. Outcomes are as in inverter_writes.csv.
 meter_readings.csv  The electricity meter's half-hours, as imported from ESB Networks. day and
-                    slot are on Irish clock time: slot 0 starts at midnight, slot 47 at 23:30.
-                    occurrence is 1 for the second half-hour with the same label when the
-                    clocks go back. kw is the average drawn from the grid over the half-hour,
-                    so its kWh is half of it.
+                    slot are its labels, on Irish clock time, and each is when the half-hour
+                    ends: slot 1 ends at 00:30, slot 47 at 23:30, and slot 0 at midnight, so
+                    it's the day before's last. occurrence is 1 for the earlier of two
+                    half-hours with the same label when the clocks go back. kw is the average
+                    drawn from the grid over the half-hour, so its kWh is half of it.
 
 The other readings from each poll are only in the full database export.
 """

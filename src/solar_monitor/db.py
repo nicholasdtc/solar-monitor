@@ -72,10 +72,11 @@ CREATE TABLE IF NOT EXISTS setting_writes (
 );
 
 -- The electricity meter's half-hours, imported from ESB Networks. Kept by the meter's own labels,
--- in Irish clock time, so nothing is lost or merged when the clocks change.
+-- in Irish clock time, so nothing is lost or merged when the clocks change. Each label is when the
+-- half-hour ends: slot 0 is the one ending at midnight, so it belongs to the day before.
 CREATE TABLE IF NOT EXISTS meter_readings (
     day        TEXT NOT NULL,           -- YYYY-MM-DD, on the meter's clock
-    slot       INTEGER NOT NULL,        -- the half-hour from midnight, 0 to 47
+    slot       INTEGER NOT NULL,        -- the label's half-hour from midnight, 0 to 47
     occurrence INTEGER NOT NULL,        -- 0, or 1 for the second half-hour with this label when the
                                         -- clocks go back. ESB lists the newest first, so 1 is the earlier.
     kw         REAL NOT NULL,           -- the average kW taken from the grid over the half-hour

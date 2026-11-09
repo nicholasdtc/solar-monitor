@@ -1,8 +1,11 @@
 """The electricity meter's half-hours, as imported from ESB Networks, shaped for the Grid meter tab.
 
-They stay on the meter's own labels, in Irish clock time, so a day is always slots 0 to 47 from
-midnight. The day the clocks go forward has no 01:00 or 01:30, and the day they go back has both
-twice. Comparing with this app's own readings is done by whole days, which both count on the clock.
+They're kept on the meter's own labels, in Irish clock time. Each label is when its half-hour
+ends, so the one at 00:00 ends the day before. The page shows each half-hour from its start
+instead, so a day is slots 0 to 47 from midnight, and a rate band takes the half-hours that start
+in it. The day the clocks go forward has no 01:00 or 01:30, and the day they go back has both
+twice, as labels and as starts. Comparing with this app's own readings is done by whole days,
+which both count on the clock.
 """
 
 from __future__ import annotations
@@ -50,26 +53,61 @@ def _label(day: str, slot: int) -> str:
     return f"{day} {slot // 2:02d}:{slot % 2 * 30:02d}"
 
 
+def _in_time_order(when: date) -> list[tuple[int, int]]:
+    """A day's half-hours in time order, as (slot, occurrence): the labels, and the starts too.
+
+    Occurrence 1 is the earlier of a half-hour that comes twice.
+    """
+    if when == last_sunday(when.year, 3):
+        return [(slot, 0) for slot in range(SLOTS) if slot not in SKIPPED_SLOTS]
+    order = [(slot, 0) for slot in range(SLOTS)]
+    if when == last_sunday(when.year, 10):
+        order[REPEATED_SLOTS[0]:REPEATED_SLOTS[0]] = [(slot, 1) for slot in REPEATED_SLOTS]
+    return order
+
+
+def _by_start(labelled: dict[str, dict[tuple[int, int], float]]) -> dict[str, dict[int, list[float]]]:
+    """The readings by the day and slot each half-hour starts in, from the labels where they end.
+
+    A half-hour starts where the one before it in the day's time order ends, and the first of a day
+    starts at 23:30 the day before. A slot that comes twice has the earlier reading first.
+    """
+    held: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for day, readings_here in labelled.items():
+        when = date.fromisoformat(day)
+        before = (when - timedelta(days=1)).isoformat()
+        order = _in_time_order(when)
+        starts = [(before, SLOTS - 1), *((day, slot) for slot, _ in order[:-1])]
+        left = dict(readings_here)
+        for (start_day, start_slot), label in zip(starts, order):
+            if label in left:
+                held[start_day][start_slot].append(left.pop(label))
+        # A label the clock doesn't have, like 01:00 the day the clocks go forward: half an hour back.
+        for (slot, _), kw in left.items():
+            start_day, start_slot = (day, slot - 1) if slot else (before, SLOTS - 1)
+            held[start_day][start_slot].append(kw)
+    return held
+
+
 def readings(conn: sqlite3.Connection) -> dict[str, object]:
     """Every day from the first reading to the last, and what the imported files covered.
 
-    Each day is [day, flags, slots, twice]. slots has the 48 half-hours' average draw in whole
-    watts, None where the file has a gap, and NOT_A_HALF_HOUR where there's nothing to have.
-    twice is [slot, earlier W, later W] for each half-hour that came twice, whose slot holds their
-    average. flags has "s" for the day the clocks go forward, "a" for one with half-hours twice,
-    "b" if the readings start partway through and "p" if they stop partway through.
+    Each day is [day, flags, slots, twice], by when the half-hours start. slots has the 48
+    half-hours' average draw in whole watts, None where the file has a gap, and NOT_A_HALF_HOUR
+    where there's nothing to have. twice is [slot, earlier W, later W] for each half-hour that came
+    twice, whose slot holds their average. flags has "s" for the day the clocks go forward, "a" for
+    one with half-hours twice, "b" if the readings start partway through and "p" if they stop
+    partway through.
     """
-    held: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
+    labelled: dict[str, dict[tuple[int, int], float]] = defaultdict(dict)
     count = zeros = 0
-    # Occurrence 1 is the earlier of a repeated half-hour, so descending puts them in time order.
-    for day, slot, _, kw in conn.execute(
-        "SELECT day, slot, occurrence, kw FROM meter_readings ORDER BY day, slot, occurrence DESC"
-    ):
-        held[day][slot].append(kw)
+    for day, slot, occurrence, kw in conn.execute("SELECT day, slot, occurrence, kw FROM meter_readings"):
+        labelled[day][(slot, occurrence)] = kw
         count += 1
         zeros += kw == 0
-    if not held:
+    if not labelled:
         return {"days": [], "file": None}
+    held = _by_start(labelled)
 
     first_day, last_day = min(held), max(held)
     first_slot, last_slot = min(held[first_day]), max(held[last_day])
