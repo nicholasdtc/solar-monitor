@@ -11,6 +11,9 @@ HTTP 429 waits for the next hour.
 
 With a provider that has a record of past weather, weather_hours is filled from it for every hour
 the app has a log for: a month at a time, newest first, then once a night for the day before.
+
+The expected solar output is refitted to the log once a night, and at once when the panels or their
+rating change, and each forecast saved keeps what it expects for tomorrow (see solar_forecast.py).
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from solar_monitor import db, weather
+from solar_monitor import db, solar_forecast, weather
 from solar_monitor.collector import log
 from solar_monitor.weather.base import HOUR, Fetch, FetchError, Location, NotModified, RateLimited
 
@@ -51,6 +54,7 @@ class State:
     forecast: Job = field(default_factory=Job)
     warnings: Job = field(default_factory=Job)
     past: Job = field(default_factory=Job)
+    solar: Job = field(default_factory=Job)  # refitting the expected output
     # Hours of past weather already asked for since the last night, so ones the provider doesn't
     # have aren't asked for again and again.
     past_tried: set[int] = field(default_factory=set)
@@ -201,14 +205,37 @@ async def _fill_past(conn: sqlite3.Connection, now: float, fetch: Fetch, state: 
     return job.due
 
 
+def _refit_solar(conn: sqlite3.Connection, now: float, state: State, settings: dict[str, object], where: Location) -> float:
+    """Refit the expected output if it's due, and say when it's next due."""
+    panels = panels_of(where)
+    key = (panels, settings.get("pv_capacity_kwp"))
+    job = state.solar
+    if _is_due(job, key, now):  # Due at the start too.
+        try:
+            solar_forecast.refit(conn, int(now), panels)
+            job.failures = 0
+        except sqlite3.Error as error:
+            log(f"Solar forecast fit failed, will try again: {error}")
+            job.failures += 1
+            job.due = now + _backoff(job.failures)
+            return job.due
+        job.due = next_night(now, state.minute)
+    return job.due
+
+
+def _save_forecast(conn: sqlite3.Connection, at: int, name: str, hours: list[object], panels: str | None) -> None:
+    fetch_id = db.save_forecast(conn, at, name, hours, panels)
+    solar_forecast.record_day_ahead(conn, fetch_id, at, hours, solar_forecast.load_fit(conn))
+
+
 async def run_once(conn: sqlite3.Connection, now: float, fetch: Fetch, state: State) -> float:
     """Fetch whatever is due, and return when to look again."""
     settings = db.get_settings(conn)
     where = location(settings)
     if where is None:  # Nothing is fetched until there's a location.
-        state.forecast.key = state.warnings.key = state.past.key = None
+        state.forecast.key = state.warnings.key = state.past.key = state.solar.key = None
         return now + CHECK_SECONDS
-    wakes = [now + CHECK_SECONDS]
+    wakes = [now + CHECK_SECONDS, _refit_solar(conn, now, state, settings, where)]
 
     name = str(settings.get("forecast_provider") or weather.DEFAULT_FORECAST)
     forecaster = weather.FORECASTS.get(name)
@@ -223,7 +250,7 @@ async def run_once(conn: sqlite3.Connection, now: float, fetch: Fetch, state: St
                 forecaster.min_interval,
                 state.minute,
                 lambda: forecaster.forecast(where, fetch),
-                lambda at, hours: db.save_forecast(conn, at, name, hours, panels_of(where)),
+                lambda at, hours: _save_forecast(conn, at, name, hours, panels_of(where)),
             )
         wakes.append(state.forecast.due)
         if forecaster.has_past:

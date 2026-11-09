@@ -33,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 from starlette.background import BackgroundTask
 
-from solar_monitor import accounts, auth, config, control, db, export, importer, meter, planning, weather
+from solar_monitor import accounts, auth, config, control, db, export, importer, meter, planning, solar_forecast, weather
 from solar_monitor.collector import Collector
 from solar_monitor.inputs import ApplianceIn, DisplayPrefsIn, SettingsIn
 from solar_monitor.weather import service as weather_service
@@ -568,15 +568,19 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
     async def api_weather() -> dict[str, object]:
         """The latest forecast from the start of this hour on, the chosen warnings that haven't
         ended, the sources' credits, how each kind's last fetch went, and the sunrises and sunsets
-        from two days ago to nine days ahead. Not the location itself."""
+        from two days ago to nine days ahead, and the expected solar output: for each forecast hour,
+        and as expected the day before for yesterday and today, with how well that has done. Not the
+        location itself."""
         now = int(time.time())
         settings = db.get_settings(collector.conn)
         where = weather_service.location(settings)
         forecaster = weather.FORECASTS.get(str(settings["forecast_provider"] or weather.DEFAULT_FORECAST))
         warner = weather.WARNINGS.get(str(settings["warnings_provider"])) if settings["warnings_provider"] else None
+        forecast = db.latest_forecast(collector.conn, now - now % HOUR)
         return {
             "located": where is not None,
-            "forecast": db.latest_forecast(collector.conn, now - now % HOUR),
+            "forecast": forecast,
+            "solar": solar_forecast.summary(collector.conn, now, forecast["hours"] if forecast else None),  # type: ignore[arg-type]
             "warnings": db.current_warnings(collector.conn, warner.name, now) if warner else [],
             "credits": [_credit(p) for p in (forecaster, warner) if p is not None],
             "fetches": db.last_weather_fetches(collector.conn),

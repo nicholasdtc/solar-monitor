@@ -275,6 +275,20 @@ The aim is expected PV per hour in kWh.
 
 This lives in `solar_forecast.py`, with tests on made-up logs.
 
+**As built in W5:**
+
+- One model for both cases: each hour's expected output is its sunshine times a factor in W per W/m². The sunshine is on the panels (`gti_wm2`) when the tilt is set, otherwise on flat ground (`ghi_wm2`). With a tilt only the hours kept for the same tilt and facings are used, so changing them starts the learning again.
+- The factor is learned for each hour of the day (UTC), so panels facing two ways, or shaded at one end of the day, are learned as they are. Each hour's factor leans on the factor for all hours until it has data of its own, and that one leans on the rating × 0.8 when the rating is set. With neither the rating nor any usable data there's no fit, and the page says nothing about expected solar.
+- Hours used: the last 60 days, where the readings span at least 45 minutes of the hour, the sun is at least 50 W/m², and the output is under 90% of the ceiling (above that it was most likely held down by it). The ceiling is the lower of the rating and the most the log has seen.
+- The fit is redone at startup, each night, and when the tilt, facings or rating change. It's kept in `solar_fit`. It's "learning" until 14 days have at least 3 usable hours each, then "ready".
+- Day-ahead: after each forecast is saved, the expected output for each hour of tomorrow is kept in `solar_expected`, so the last forecast before midnight is the one each day is scored against.
+- Scoring: the last 30 whole days with a day-ahead figure for every hour and the inverter's daily count. The error is the sum of the misses over the sum made, per day and per hour; the bias is the same with the sign kept, positive when the forecast was high.
+- `/api/weather` carries a `solar` block: the status and fit, `expected_w` on each forecast hour, the day-ahead figures for yesterday and today, yesterday's comparison and the 30-day score.
+- Weather tab: a Solar chart (expected and made, W) above Sun, which loses its bars of solar made then. Hours gone show what was expected the day before, hours to come the latest forecast. A "Solar (kWh)" column in the hour by hour and next days tables (a day only when every hour has a figure). A "Solar forecast" pane after the next days: learning or learned, yesterday expected against made, the 30-day errors and bias, and the ratio and ceiling.
+- Dashboard: once "ready", "Expected 4.1 kWh more today, 7.8 kWh tomorrow" replaces the sunshine hours; the hour under way counts for what's left of it, and once the day's sun is done only tomorrow is said. While learning, the sunshine hours stay.
+- `solar_fit` and `solar_expected` aren't in the export: the fit is remade from the log, and the day-ahead figures only matter where they were made.
+- Known limit: an hour's factor averages over the seasons it has seen, while the sun's place at that hour moves with them. Learning from the last 60 days keeps that small; a fit by sun position would remove it if the error shows it's needed.
+
 ## W6: automation stub
 
 The shape of the automation, so the data, the screens and the log are ready before anything acts. It recommends and logs, and **never writes**.

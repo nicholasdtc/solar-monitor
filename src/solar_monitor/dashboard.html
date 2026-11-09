@@ -452,6 +452,8 @@
   .wx-folded { color: var(--ink-2); }
   .wx-credits { list-style: none; margin: 0; padding: 0; }
   .wx-foot { gap: 4px; }
+  .wx-solar { display: grid; gap: 4px; }
+  .wx-solar p { margin: 0; }
 
   /* A sub-tab's page: its panes one under another, the last taking up the rest of the screen. */
   .page { display: flex; flex-direction: column; }
@@ -1215,6 +1217,10 @@
           <tbody id="wx-days"></tbody>
         </table>
       </div>
+    </div>
+    <div class="pane" id="wx-solar-pane" hidden>
+      <h2>Solar forecast <button type="button" class="help" aria-label="About the solar forecast" data-tip="Learned from the log&#10;Error: share of made">?</button></h2>
+      <div class="wx-solar" id="wx-solar"></div>
     </div>
     <div class="pane wx-foot">
       <ul class="meta wx-credits" id="wx-credits"></ul>
@@ -5461,6 +5467,7 @@
     let data = null; // /api/weather's answer.
     let hours = []; // Each hour from the start of today or 12 hours back, recorded then forecast, by hour_start.
     let solar = new Map(); // What the panels made, average W, by hour_start.
+    let dayAhead = new Map(); // Expected solar as recorded the day before, W, by hour_start.
     let request = 0;
     const openFolds = new Set(); // The first hour of each run of night hours opened.
 
@@ -5549,6 +5556,14 @@
       return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
     }
 
+    /* Expected solar, W, for an hour: as expected the day before for hours gone, from the latest forecast for the rest. */
+    function expectedAt(h) {
+      const now = Date.now() / 1000;
+      const ahead = dayAhead.get(h.hour_start);
+      return h.hour_start + HOUR <= now ? (ahead ?? h.expected_w ?? null) : (h.expected_w ?? ahead ?? null);
+    }
+    const learned = () => Boolean(data?.solar && data.solar.status !== "none");
+
     /* The icon and the words, side by side, in a table cell or a tile. */
     function condition(h, size = 24) {
       const span = el("span", "wx-cond");
@@ -5570,7 +5585,7 @@
           const from = Math.min(hourStart - BACK_HOURS * HOUR, zonedMs(shownZone(), today.year, today.month, today.day) / 1000);
           const [past, history] = await Promise.all([
             hourStart > from ? getJson(`/api/weather/history?start=${from}&end=${hourStart}`).catch(() => null) : null,
-            getJson(`/api/history?start=${hourStart - BACK_HOURS * HOUR}&end=${now}&bucket=${HOUR}`).catch(() => null),
+            getJson(`/api/history?start=${from}&end=${now}&bucket=${HOUR}`).catch(() => null),
           ]);
           if (mine !== request) return;
           recorded = past?.hours ?? [];
@@ -5581,6 +5596,7 @@
         for (const h of next.forecast?.hours ?? []) byHour.set(h.hour_start, h);
         hours = [...byHour.values()].sort((a, b) => a.hour_start - b.hour_start);
         solar = made;
+        dayAhead = new Map((next.solar?.day_ahead ?? []).map((x) => [x.hour_start, x.expected_w]));
         $("wx-now-note").textContent = "";
         redraw();
       } catch {
@@ -5596,10 +5612,12 @@
       $("wx-unset").hidden = located;
       $("wx-now-pane").hidden = !located;
       for (const id of ["wx-charts-pane", "wx-hours-pane", "wx-days-pane"]) $(id).hidden = !located || !forecast.length;
+      $("wx-solar-pane").hidden = !located || !learned();
       drawWarnings();
       drawFoot();
       if (!located) return;
       drawNow(forecast);
+      drawSolar();
       if (!forecast.length) return;
       drawCharts();
       drawHours(forecast);
@@ -5639,6 +5657,7 @@
         const last = data.forecast?.fetched_at;
         main.replaceChildren(el("p", "dash-wx-empty", isNum(last) ? `No forecast. The last is from ${ago(now - last)}.` : "No forecast yet."));
         $("dash-wx-sun").textContent = "";
+        $("dash-wx-sun").dataset.tip = "";
         return;
       }
 
@@ -5674,15 +5693,64 @@
       }));
       main.replaceChildren(nowBlock, strip);
 
-      // Sunshine to come, from the forecast's direct sun.
+      // Expected solar to come once learned, sunshine hours until then.
       const todayDay = isoDay(Date.now());
       const tomorrowDay = isoDay(zonedMs(zone, today.year, today.month, today.day + 1, 12));
-      const sunny = (list) => list.filter((x) => x.direct_wm2 >= SUNSHINE_WM2).length;
       const rest = forecast.filter((x) => x.hour_start + HOUR > now && isoDay(ms(x.hour_start)) === todayDay);
       const tomorrow = forecast.filter((x) => isoDay(ms(x.hour_start)) === tomorrowDay);
-      $("dash-wx-sun").textContent = forecast.some((x) => isNum(x.direct_wm2))
+      const sun = $("dash-wx-sun");
+      if (data.solar?.status === "ready" && rest.concat(tomorrow).some((x) => isNum(x.expected_w))) {
+        // The hour under way counts for what's left of it.
+        const kwhLeft = rest.reduce((total, x) => total + (x.expected_w ?? 0) * Math.min(1, (x.hour_start + HOUR - now) / HOUR), 0) / 1000;
+        const kwhTomorrow = tomorrow.reduce((total, x) => total + (x.expected_w ?? 0), 0) / 1000;
+        const whole = tomorrow.length >= 23;
+        // Once the day's sun is done, only tomorrow is worth saying.
+        sun.textContent = `Expected ${[
+          kwhLeft >= 0.05 || !whole ? `${kwh(kwhLeft)} more today` : "",
+          whole ? `${kwh(kwhTomorrow)} tomorrow` : "",
+        ].filter(Boolean).join(", ")}`;
+        const error = data.solar.score?.day_error_pct;
+        sun.dataset.tip = ["From the forecast", isNum(error) ? `Day error ${percent(error)}` : ""].filter(Boolean).join("\n");
+        return;
+      }
+      const sunny = (list) => list.filter((x) => x.direct_wm2 >= SUNSHINE_WM2).length;
+      sun.textContent = forecast.some((x) => isNum(x.direct_wm2))
         ? `Sunshine ${sunny(rest)} h more today${tomorrow.length >= 12 ? `, ${sunny(tomorrow)} h tomorrow` : ""}`
         : "";
+      sun.dataset.tip = "Direct sun ≥ 120 W/m²\nWMO measure";
+    }
+
+    /* How the solar forecast is learning, and how it did. */
+    function drawSolar() {
+      const box = $("wx-solar");
+      const s = data.solar;
+      if (!s || s.status === "none") return box.replaceChildren();
+      const kwhOf = (x) => `${number(x, 1)} kWh`;
+      const signedPct = (x) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${number(Math.abs(Math.round(x)), 0)}%`;
+      const lines = [];
+      lines.push(s.status === "ready"
+        ? `Learned from ${number(s.days, 0)} days of the log.`
+        : `Learning: ${number(Math.min(s.days, s.ready_days), 0)} of ${number(s.ready_days, 0)} days. Until then, expect rough figures.`);
+      const y = s.yesterday;
+      if (y && y.made_kwh > 0) {
+        lines.push(`Yesterday: expected ${kwhOf(y.expected_kwh)}, made ${kwhOf(y.made_kwh)} (${signedPct((100 * (y.expected_kwh - y.made_kwh)) / y.made_kwh)}).`);
+      }
+      const score = s.score ?? {};
+      if (score.days > 0 && isNum(score.day_error_pct)) {
+        const over = score.bias_pct > 0 ? "high" : "low";
+        lines.push(`Over ${number(score.days, 0)} day${score.days === 1 ? "" : "s"}: off by ${percent(score.day_error_pct)} a day`
+          + `${isNum(score.hour_error_pct) ? `, ${percent(score.hour_error_pct)} an hour` : ""}`
+          + `${isNum(score.bias_pct) && Math.round(score.bias_pct) !== 0 ? `, ${percent(Math.abs(score.bias_pct))} ${over} on the whole` : ""}.`);
+      } else {
+        lines.push("Scoring starts once a whole day has been forecast the day before.");
+      }
+      const basis = s.basis === "gti" ? "sun on the panels" : "sun on flat ground";
+      lines.push([
+        `From the ${basis}`,
+        isNum(s.ratio) ? `performance ratio ${number(s.ratio, 2)}` : "",
+        isNum(s.ceiling_w) ? `capped at ${number(s.ceiling_w / 1000, 1)} kW` : "",
+      ].filter(Boolean).join(", ") + ".");
+      box.replaceChildren(...lines.map((line) => el("p", "meta", line)));
     }
 
     function drawWarnings() {
@@ -5761,7 +5829,7 @@
     function chartPoint(h) {
       return {
         ts: h.hour_start,
-        gti: h.gti_wm2, ghi: h.ghi_wm2, pv_w: solar.get(h.hour_start) ?? null,
+        gti: h.gti_wm2, ghi: h.ghi_wm2, pv_w: solar.get(h.hour_start) ?? null, expected: learned() ? expectedAt(h) : null,
         cloud: h.cloud_pct, cloud_low: h.cloud_low_pct, cloud_mid: h.cloud_mid_pct, cloud_high: h.cloud_high_pct,
         chance: h.precipitation_chance_pct, rain: rainIn(h.precipitation_mm),
         temp: tempIn(h.temperature_c), feels: tempIn(h.feels_like_c),
@@ -5784,11 +5852,22 @@
       const sun = keep([has("gti")
         ? { key: "gti", label: "Sun on panels", unit: "W/m²", color: "--flow-solar" }
         : { key: "ghi", label: "Sun", unit: "W/m²", color: "--flow-solar" }]);
+      const solarChart = has("expected");
+      if (solarChart) {
+        charts.push({
+          title: "Solar", unit: "W", height: 200, floor: 0,
+          series: keep([
+            { key: "expected", label: "Expected", unit: "W", color: "--muted" },
+            { key: "pv_w", label: "Made", unit: "W", color: "--flow-solar" },
+          ]),
+        });
+      }
       if (sun.length) {
+        const bars = has("pv_w") && !solarChart;
         charts.push({
           title: sun[0].label, unit: "W/m²", height: 200, floor: 0, series: sun,
-          strip: has("pv_w") ? { key: "pv_w", label: "Solar made", unit: "W", color: "--flow-solar" } : undefined,
-          aria: "Sun (W/m²)" + (has("pv_w") ? " and solar made (W)" : ""),
+          strip: bars ? { key: "pv_w", label: "Solar made", unit: "W", color: "--flow-solar" } : undefined,
+          aria: "Sun (W/m²)" + (bars ? " and solar made (W)" : ""),
         });
       }
       const cloud = keep([
@@ -5826,7 +5905,7 @@
           ]),
         });
       }
-      $("wx-charts-help").dataset.tip = ["Dashed line: now", "Left: recorded", "Right: forecast", has("pv_w") ? "Bars under Sun: solar made" : ""].filter(Boolean).join("\n");
+      $("wx-charts-help").dataset.tip = ["Dashed line: now", "Left: recorded", "Right: forecast", solarChart ? "Solar: expected, made" : has("pv_w") ? "Bars under Sun: solar made" : ""].filter(Boolean).join("\n");
       if (!charts.length) return box.replaceChildren(el("p", "no-value", "Nothing to chart."));
       const visible = points.filter((point) => point.ts >= start && point.ts < end);
       drawTimeCharts(box, { charts, points, visible, bucket: HOUR, start, end, zoomable: false, marks: [{ ts: now, label: "Now" }], prefix: "weather" });
@@ -5858,6 +5937,7 @@
         { head: "Gusts", num: true, cell: (h) => windText(h.gust_ms), show: has((h) => h.gust_ms) },
         { head: "From", cell: (h) => compass(h.wind_from_deg), show: has((h) => h.wind_from_deg) },
         { head: has((h) => h.gti_wm2) ? "On panels (W/m²)" : "Sun (W/m²)", num: true, cell: (h) => (isNum(sunWm2(h)) ? number(Math.round(sunWm2(h)), 0) : "—"), show: has(sunWm2) },
+        { head: "Solar (kWh)", num: true, cell: (h) => (isNum(h.expected_w) ? number(h.expected_w / 1000, 1) : "—"), show: learned() && has((h) => h.expected_w) },
       ].filter((column) => column.show);
       const width = columns.length + 1;
 
@@ -5970,6 +6050,8 @@
         rain: sum(list, "precipitation_mm"),
         chance: extreme(list, "precipitation_chance_pct", Math.max),
         sunshine: list.some((h) => isNum(h.direct_wm2)) ? list.filter((h) => h.direct_wm2 >= SUNSHINE_WM2).length : null,
+        // Only when every hour of the day has a figure, so a part day isn't taken for a dull one.
+        expected: learned() && list.every((h) => isNum(expectedAt(h))) ? list.reduce((total, h) => total + expectedAt(h), 0) / 1000 : null,
         rise: sunOn(data.sun?.rises, day),
         set: sunOn(data.sun?.sets, day),
       }));
@@ -5981,6 +6063,7 @@
         { head: `Rain (${rainUnit()})`, num: true, cell: (r) => rainText(r.rain), show: has("rain") },
         { head: "Chance", num: true, cell: (r) => percent(r.chance), show: has("chance") },
         { head: "Sunshine", num: true, cell: (r) => (isNum(r.sunshine) ? `${r.sunshine} h` : "—"), show: has("sunshine") },
+        { head: "Solar (kWh)", num: true, cell: (r) => (isNum(r.expected) ? number(r.expected, 1) : "—"), show: has("expected") },
         { head: "Sunrise", num: true, cell: (r) => (isNum(r.rise) ? clockTime(ms(r.rise)) : "—"), show: has("rise") },
         { head: "Sunset", num: true, cell: (r) => (isNum(r.set) ? clockTime(ms(r.set)) : "—"), show: has("set") },
       ].filter((column) => column.show);

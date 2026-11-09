@@ -184,6 +184,22 @@ CREATE TABLE IF NOT EXISTS weather_warnings (
     last_seen   INTEGER NOT NULL,
     PRIMARY KEY (provider, id)
 ) WITHOUT ROWID;
+
+-- What output is expected for the weather: the factors learned from the log, refitted each night
+-- (see solar_forecast.py). A single row, its fit as JSON.
+CREATE TABLE IF NOT EXISTS solar_fit (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    fitted_at  INTEGER NOT NULL,        -- Unix seconds
+    fit        TEXT NOT NULL
+);
+
+-- The output expected for each hour by the last forecast of the day before, to score against
+-- what was made. Labelled by when the hour starts, in Unix seconds.
+CREATE TABLE IF NOT EXISTS solar_expected (
+    hour_start INTEGER PRIMARY KEY,
+    fetch_id   INTEGER NOT NULL,        -- the weather_fetches id of the forecast
+    expected_w REAL NOT NULL            -- the hour's mean
+) WITHOUT ROWID;
 """.replace("{hour_columns}", _HOUR_COLUMNS)
 
 # Our name -> the inverter's lifetime kWh reading. Lifetime rather than "today" readings,
