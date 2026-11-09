@@ -179,6 +179,19 @@ def test_outage_plan_is_held_to_the_limit():
     assert start["spare_w"] == 100
 
 
+def test_outage_plan_shows_its_working():
+    plan = plan_outage(limit_w=600)
+    assert plan["reserve_soc"] == 10
+    assert plan["standby_w"] == planning.TYPICAL_OVERHEAD.standby_w
+    assert plan["efficiency"] == planning.TYPICAL_OVERHEAD.efficiency
+    start = plan["from_now"]
+    assert start["soc"] == 60
+    assert start["energy_kwh"] == pytest.approx(5)  # 60% down to 10% of 10 kWh.
+    assert start["max_battery_w"] == pytest.approx(1000)  # Over 5 hours.
+    assert start["energy_w"] == pytest.approx(892.8)  # Before the 600 W limit holds it.
+    assert plan["from_full"]["soc"] == 100
+
+
 def test_outage_plan_needs_a_capacity_and_a_charge_level():
     assert plan_outage(capacity_kwh=None)["from_full"] is None
     no_soc = plan_outage(soc=None)

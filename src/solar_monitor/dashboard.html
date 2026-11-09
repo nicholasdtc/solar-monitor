@@ -1125,18 +1125,19 @@
 
   <section class="view page" id="view-appliances-outage" data-tab="appliances" data-sub="outage" data-label="Outage plan" data-perm="appliances" aria-label="Appliances: Outage plan" hidden>
     <div class="pane">
-      <h2>Plan for a power cut <button type="button" class="help" aria-label="About this plan" data-tip="The biggest steady load the battery could carry this long, with no sun or grid, down to its reserve.&#10;Compared with the ticked appliances at their typical draw.">?</button></h2>
+      <h2>Plan for a power cut <button type="button" class="help" aria-label="About this plan" data-tip="Steady load, no sun or grid&#10;Down to the reserve&#10;Vs ticked, typical">?</button></h2>
       <p class="meta limits-line"></p>
       <p class="alert appliances-error" role="alert"></p>
       <form class="edit settings" id="outage-settings">
-        <label>Length of power cut (hours) <input name="outage_hours" type="number" min="0.1" max="8760" step="any"></label>
+        <label for="outage-hours"><span>Length of power cut (hours) <button type="button" class="help" aria-label="About the length" data-tip="Shorter cut, bigger load&#10;Half the hours, about twice the W">?</button></span><input id="outage-hours" name="outage_hours" type="number" min="0.1" max="8760" step="any"></label>
       </form>
       <div class="scroll" id="outage-plan-card" tabindex="0" role="region" aria-label="Power cut plan">
         <table>
-          <thead><tr><th>Starting from</th><th class="num">Most it can carry</th><th class="num">Ticked, typical</th><th>Does it fit?</th></tr></thead>
+          <thead><tr><th>Starting from</th><th class="num"><span tabindex="0" data-tip="Energy above reserve ÷ hours&#10;Less inverter overhead&#10;Capped at current limit">Most it can carry</span></th><th class="num"><span tabindex="0" data-tip="Ticked appliances, typical W">Ticked, typical</span></th><th>Does it fit?</th></tr></thead>
           <tbody id="outage-plan"></tbody>
         </table>
       </div>
+      <p class="note">Most it can carry is the battery's energy above its reserve, spread evenly over the power cut, less what the inverter uses and loses. Your current limit, such as a breaker's rating, caps it only if it's lower. So a shorter power cut allows a bigger load: halve the hours and it roughly doubles. Hover over or tap a figure to see the working.</p>
     </div>
   </section>
 
@@ -4798,6 +4799,19 @@
   }
 
   const heldToLimit = (plan) => (plan?.capped ? "Held to your current limit" : "");
+  const hoursText = (h) => `${number(h, Number.isInteger(h) ? 0 : 1)} h`;
+
+  // The working behind one start's figure, a figure per line.
+  function outageWorking(plan, start) {
+    const loss = number((1 / plan.efficiency - 1) * 100, 1);
+    return [
+      `${kwh(start.energy_kwh)} above ${number(plan.reserve_soc, 0)}%`,
+      `÷ ${hoursText(plan.hours)} = ${watts(start.max_battery_w)}`,
+      `− ${watts(plan.standby_w)} standby, ${loss}% loss`,
+      `= ${watts(start.energy_w)}`,
+      isNum(plan.limit_w) ? `Limit ${watts(plan.limit_w)}${start.capped ? ", used" : ""}` : "No current limit",
+    ].join("\n");
+  }
 
   function renderOutagePlan() {
     const plan = overview.outage_plan;
@@ -4810,7 +4824,8 @@
       const row = el("tr");
       const fit = el("td");
       fit.append(fits(start?.spare_w));
-      const most = el("td", "num", watts(start?.max_w));
+      const most = el("td", "num");
+      most.append(start ? tipped(el("span", "", watts(start.max_w)), outageWorking(plan, start)) : watts(null));
       const held = heldToLimit(start);
       if (held) most.append(el("span", "why", held));
       row.append(loadCell(label, why), most, el("td", "num", watts(plan.selected_w)), fit);

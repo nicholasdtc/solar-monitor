@@ -254,7 +254,7 @@ def _allowance(
     load_w = max_load_w(energy_wh, hours, overhead)
     capped = limit_w is not None and load_w > limit_w
     most_w = limit_w if capped else load_w
-    return {"max_w": most_w, "capped": capped, "spare_w": most_w - selected_w}
+    return {"max_w": most_w, "energy_w": load_w, "capped": capped, "spare_w": most_w - selected_w}
 
 
 def outage_plan(
@@ -266,17 +266,30 @@ def outage_plan(
     limit_w: float | None,
     overhead: Overhead = TYPICAL_OVERHEAD,
 ) -> dict[str, object]:
-    """The most the battery could carry through a power cut this long, from now and from full."""
+    """The most the battery could carry through a power cut this long, from now and from full.
+
+    Each start also has the working: the energy above the reserve, and that spread over the hours before
+    the inverter's overhead comes off it (`energy_w` is the load after it, before any limit).
+    """
 
     def starting_at(start_soc: float | None) -> dict[str, object] | None:
         if start_soc is None or capacity_kwh is None:
             return None
-        return _allowance(available_wh(capacity_kwh, start_soc, reserve_soc), hours, limit_w, selected_w, overhead)
+        energy_wh = available_wh(capacity_kwh, start_soc, reserve_soc)
+        return {
+            **_allowance(energy_wh, hours, limit_w, selected_w, overhead),
+            "soc": start_soc,
+            "energy_kwh": energy_wh / 1000,
+            "max_battery_w": energy_wh / hours,
+        }
 
     return {
         "hours": hours,
         "selected_w": selected_w,
         "limit_w": limit_w,
+        "reserve_soc": reserve_soc,
+        "standby_w": overhead.standby_w,
+        "efficiency": overhead.efficiency,
         "from_now": starting_at(soc),
         "from_full": starting_at(100),
     }
