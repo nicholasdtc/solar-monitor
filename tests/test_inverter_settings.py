@@ -5,7 +5,7 @@ import asyncio
 import httpx
 import pytest
 
-from solar_monitor import config, control, db
+from solar_monitor import auth, config, control, db
 from solar_monitor.api import create_app
 from solar_monitor.auth import COOKIE, LoginRequired
 from solar_monitor.collector import Collector
@@ -357,13 +357,18 @@ def test_the_home_network_cannot_change_it_without_a_login(send, collector, monk
     assert collector.inverter.writes == []
 
 
-def test_on_the_network_only_a_logged_in_request_reaches_the_inverter(collector, monkeypatch):
+def behind_the_login(collector, monkeypatch, permissions):
+    """The app as main.py builds it on the network, with one account that has these permissions."""
     monkeypatch.setattr(config, "load_dotenv", lambda *_: None)
     monkeypatch.setenv("BIND_HOST", "0.0.0.0")
-    monkeypatch.setenv("DASHBOARD_USER", "user")
-    monkeypatch.setenv("DASHBOARD_PASSWORD", "password")
+    db.add_user(collector.conn, "user", auth.hash_password("a long password"), False, permissions)
     app = create_app(collector)
-    app.add_middleware(LoginRequired, username="user", password="password")
+    app.add_middleware(LoginRequired, conn=collector.conn, open_without_accounts=False)
+    return app
+
+
+def test_on_the_network_only_a_logged_in_request_reaches_the_inverter(collector, monkeypatch):
+    app = behind_the_login(collector, monkeypatch, ["inverter"])
     body = {"expected": 0, "value": 1}
 
     async def send():
@@ -372,7 +377,7 @@ def test_on_the_network_only_a_logged_in_request_reaches_the_inverter(collector,
             no_session = await client.put("/api/inverter-settings/backup", json=body)
             made_up = await client.put("/api/inverter-settings/backup", json=body, headers={"Cookie": f"{COOKIE}=made-up"})
             sent_before_login = list(collector.inverter.writes)
-            await client.post("/login", data={"username": "user", "password": "password"})
+            await client.post("/login", data={"username": "user", "password": "a long password"})
             sent = await client.put("/api/inverter-settings/backup", json=body)
         return no_session, made_up, sent_before_login, sent
 
@@ -381,6 +386,24 @@ def test_on_the_network_only_a_logged_in_request_reaches_the_inverter(collector,
     assert sent_before_login == []
     assert sent.status_code == 200
     assert collector.inverter.writes == [("backup_mode_enable", 1)]
+    assert [write["username"] for write in db.list_setting_writes(collector.conn)] == ["user"]
+
+
+def test_an_account_without_write_to_inverter_cannot_change_a_setting(collector, monkeypatch):
+    app = behind_the_login(collector, monkeypatch, ["schedule", "edit"])
+
+    async def send():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://solar.lan:8000") as client:
+            await client.post("/login", data={"username": "user", "password": "a long password"})
+            seen = await client.get("/api/inverter-settings/writes")
+            sent = await client.put("/api/inverter-settings/backup", json={"expected": 0, "value": 1})
+        return seen, sent
+
+    seen, sent = asyncio.run(send())
+    assert seen.status_code == 200
+    assert sent.status_code == 403
+    assert collector.inverter.writes == []
 
 
 def test_a_refused_change_still_refreshes_what_the_page_shows(collector):

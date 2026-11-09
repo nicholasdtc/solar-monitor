@@ -10,9 +10,8 @@ import zipfile
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
-from solar_monitor import db, export, importer, planning
+from solar_monitor import auth, db, export, importer, planning
 from solar_monitor.api import create_app
 from solar_monitor.auth import LoginRequired
 from solar_monitor.collector import Collector
@@ -331,6 +330,16 @@ def test_the_inverter_logs_are_left_out_and_say_so(tmp_path, conn, source, name)
     report = run(tmp_path, conn, exported(source, name))
     assert contents(conn)["inverter_writes"] == contents(conn)["setting_writes"] == []
     assert any("inverter" in note and "2" in note for note in report["notes"])
+
+
+def test_the_accounts_and_the_history_are_left_out(tmp_path, conn, source):
+    carol = db.add_user(source, "carol", auth.hash_password("a long password"), True, ())
+    db.add_action(source, (carol, "carol"), "data", "Added Kettle to the appliances")
+    with source:
+        source.execute("UPDATE setting_writes SET user_id = ?, username = 'carol'", (carol,))
+    for name in ("csv", "sqlite"):
+        run(tmp_path, conn, exported(source, name))
+        assert conn.execute("SELECT (SELECT COUNT(*) FROM users), (SELECT COUNT(*) FROM actions)").fetchone() == (0, 0)
 
 
 def test_exports_from_before_the_inverter_log_still_work(tmp_path, conn, source):
@@ -708,12 +717,49 @@ def test_a_second_import_while_one_runs_is_refused_at_once(collector, source, mo
     assert table(first.json(), "samples")["new"] == 2
 
 
-def test_importing_needs_the_login(collector, conn, source):
+def logged_in_import(collector, permissions, apply):
+    """An import sent by an account with these permissions, or by no one if None, through the login as main.py builds it."""
+    db.add_user(collector.conn, "someone", auth.hash_password("a long password"), False, permissions or [])
     app = create_app(collector)
-    app.add_middleware(LoginRequired, username="someone", password="something")
-    response = TestClient(app, follow_redirects=False).post("/api/import?apply=true", content=exported(source, "sqlite"), headers=BINARY)
+    app.add_middleware(LoginRequired, conn=collector.conn, open_without_accounts=False)
+
+    async def send(content):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            if permissions is not None:
+                await client.post("/login", data={"username": "someone", "password": "a long password"})
+            return await client.post(f"/api/import?apply={apply}", content=content, headers=BINARY)
+
+    return lambda content: asyncio.run(send(content))
+
+
+def test_importing_needs_the_login(collector, conn, source):
+    response = logged_in_import(collector, None, "true")(exported(source, "sqlite"))
     assert response.status_code == 401
     assert contents(conn)["samples"] == []
+
+
+@pytest.mark.parametrize("apply", ["true", "1", "yes", "on", "TRUE", "anything"])
+def test_applying_an_import_needs_edit_data(collector, conn, source, apply):
+    response = logged_in_import(collector, ["app-data"], apply)(exported(source, "sqlite"))
+    assert response.status_code == 403
+    assert contents(conn)["samples"] == []
+
+
+def test_checking_an_import_needs_only_the_app_data_tab(collector, conn, source):
+    response = logged_in_import(collector, ["app-data"], "false")(exported(source, "sqlite"))
+    assert response.status_code == 200
+    assert table(response.json(), "samples")["new"] == 2
+    assert contents(conn)["samples"] == []
+
+
+def test_an_applied_import_is_on_record_under_who_did_it(collector, conn, source):
+    response = logged_in_import(collector, ["app-data", "edit"], "true")(exported(source, "sqlite"))
+    assert response.status_code == 200
+    data = [row for row in db.list_history(conn) if row["kind"] == "data"]
+    assert len(data) == 1
+    assert data[0]["username"] == "someone"
+    assert data[0]["summary"].startswith("Imported ")
 
 
 def test_measurements_are_taken_afresh_only_after_something_was_imported(call, source, monkeypatch):

@@ -30,10 +30,12 @@ CSV_QUERIES = {
     "appliances": "SELECT id, name, typical_w, peak_w, surge_w, use_in_outage, notes FROM appliances ORDER BY id",
     "settings": "SELECT key, value FROM settings ORDER BY key",
     "inverter_writes": "SELECT id, ts, datetime(ts, 'unixepoch', 'localtime') AS local_time, slot, old_percent, new_percent, "
-    "outcome, old_bytes, new_bytes, held_bytes FROM inverter_writes ORDER BY id",
+    "outcome, old_bytes, new_bytes, held_bytes, username FROM inverter_writes ORDER BY id",
     "setting_writes": "SELECT id, ts, datetime(ts, 'unixepoch', 'localtime') AS local_time, setting, old_value, new_value, "
-    "outcome, held_value FROM setting_writes ORDER BY id",
+    "outcome, held_value, username FROM setting_writes ORDER BY id",
     "meter_readings": "SELECT day, slot, occurrence, kw FROM meter_readings ORDER BY day, slot, occurrence",
+    "actions": "SELECT id, ts, datetime(ts, 'unixepoch', 'localtime') AS local_time, username, kind, summary "
+    "FROM actions ORDER BY id",
 }
 
 CSV_LAYOUT = "Solar monitor export, CSV layout 1"  # Importing reads this, so a change of layout needs a new number.
@@ -51,16 +53,21 @@ appliances.csv      Your appliances, in watts. use_in_outage is 1 if ticked for 
 settings.csv        Your planning choices. Unset ones aren't listed.
 inverter_writes.csv Every change this app sent to the inverter. Confirmed means it read the change
                     back. The bytes are the whole TOU programme in hex, before and after.
+                    username is who asked for it, empty from before there were accounts.
 setting_writes.csv  Every change this app sent to Backup mode (backup, 1 is on) or the battery's
                     limits in %: min_soc and reserve_soc stop discharging on-grid and in a power
-                    cut, max_soc stops charging. Outcomes are as in inverter_writes.csv.
+                    cut, max_soc stops charging. outcome and username are as in inverter_writes.csv.
 meter_readings.csv  The electricity meter's half-hours, as imported from ESB Networks. day and
                     slot are its labels, on Irish clock time, and each is when the half-hour
                     ends: slot 1 ends at 00:30, slot 47 at 23:30, and slot 0 at midnight, so
                     it's the day before's last. occurrence is 1 for the earlier of two
                     half-hours with the same label when the clocks go back. kw is the average
                     drawn from the grid over the half-hour, so its kWh is half of it.
+actions.csv         The Action history tab: what people did here other than change the
+                    inverter. kind is data, users or login. An empty username is a log-in
+                    with an unknown name.
 
+Accounts and their passwords aren't exported.
 The other readings from each poll are only in the full database export.
 """
 
@@ -86,6 +93,13 @@ def _write_sqlite(source: sqlite3.Connection, path: Path) -> None:
     copy = sqlite3.connect(path)
     try:
         source.backup(copy)
+        # Accounts stay behind: a password hash can be guessed at offline, and a session logs
+        # someone in. secure_delete and VACUUM leave no trace of them in the file's free space.
+        copy.execute("PRAGMA secure_delete = ON")
+        with copy:
+            copy.execute("DELETE FROM sessions")
+            copy.execute("DELETE FROM users")
+        copy.execute("VACUUM")
     finally:
         copy.close()
 
@@ -110,15 +124,15 @@ class Format:
 FORMATS = {
     "csv": Format(
         "Spreadsheets (CSV files in a ZIP)",
-        "For Excel or Google Sheets. Each poll's main readings, daily counters, appliances, settings, inverter changes "
-        "and the meter's half-hours.",
+        "For Excel or Google Sheets. Each poll's main readings, daily counters, appliances, settings, inverter changes, "
+        "the meter's half-hours and the history.",
         "zip",
         "application/zip",
         _write_csv_zip,
     ),
     "sqlite": Format(
         "Full database (SQLite)",
-        "A complete backup, including every reading from every poll. Needs a database tool to open.",
+        "A complete backup, including every reading from every poll, but not the accounts. Needs a database tool to open.",
         "db",
         "application/vnd.sqlite3",
         _write_sqlite,

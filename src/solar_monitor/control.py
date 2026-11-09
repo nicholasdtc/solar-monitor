@@ -201,10 +201,12 @@ async def _read_back(inverter: goodwe.Inverter, slot: int, wanted: bytes) -> byt
     return held
 
 
-async def send_period(inverter: goodwe.Inverter, conn: sqlite3.Connection, slot: int, old: bytes, new: bytes) -> None:
+async def send_period(
+    inverter: goodwe.Inverter, conn: sqlite3.Connection, slot: int, old: bytes, new: bytes, by: db.Who | None = None
+) -> None:
     """Log, send and read back. Raises Unconfirmed unless the inverter ends up holding `new`."""
     write_id = db.add_inverter_write(
-        conn, slot, old.hex(), new.hex(), abs(decode(old).get_power()), abs(decode(new).get_power())
+        conn, slot, old.hex(), new.hex(), abs(decode(old).get_power()), abs(decode(new).get_power()), by
     )
     failure = ""
     try:
@@ -233,9 +235,15 @@ async def send_period(inverter: goodwe.Inverter, conn: sqlite3.Connection, slot:
 
 
 async def set_period(
-    inverter: goodwe.Inverter, conn: sqlite3.Connection, slot: int, wanted: Wanted, expected: str
+    inverter: goodwe.Inverter,
+    conn: sqlite3.Connection,
+    slot: int,
+    wanted: Wanted,
+    expected: str,
+    by: db.Who | None = None,
 ) -> dict[str, object]:
-    """Change one period to what's wanted. `expected` is its bytes in hex, as the person saw them."""
+    """Change one period to what's wanted. `expected` is its bytes in hex, as the person saw them.
+    `by` is who asked, for the record."""
     group = await read_setting(inverter, f"eco_mode_{slot}")
     state = describe_period(slot, group)["state"]
     if state == "unreadable":
@@ -258,7 +266,7 @@ async def set_period(
         return {"outcome": "unchanged", "changes": []}
     _double_check(old, new, wanted)
     await _check_overlaps(inverter, slot, old, new)
-    await send_period(inverter, conn, slot, old, new)
+    await send_period(inverter, conn, slot, old, new, by)
     return {"outcome": "confirmed", "changes": describe_changes(old, new)}
 
 
@@ -326,9 +334,11 @@ async def _read_back_number(inverter: goodwe.Inverter, name: str, wanted: int) -
     return held
 
 
-async def send_setting(inverter: goodwe.Inverter, conn: sqlite3.Connection, name: str, old: int, new: int) -> None:
+async def send_setting(
+    inverter: goodwe.Inverter, conn: sqlite3.Connection, name: str, old: int, new: int, by: db.Who | None = None
+) -> None:
     """Log, send and read back. Raises Unconfirmed unless the inverter ends up holding `new`."""
-    write_id = db.add_setting_write(conn, name, old, new)
+    write_id = db.add_setting_write(conn, name, old, new, by)
     failure = ""
     try:
         await inverter.write_setting(SETTINGS[name].register, new)
@@ -357,9 +367,14 @@ async def send_setting(inverter: goodwe.Inverter, conn: sqlite3.Connection, name
 
 
 async def set_setting(
-    inverter: goodwe.Inverter, conn: sqlite3.Connection, name: str, value: int, expected: int
+    inverter: goodwe.Inverter,
+    conn: sqlite3.Connection,
+    name: str,
+    value: int,
+    expected: int,
+    by: db.Who | None = None,
 ) -> dict[str, object]:
-    """Change one setting to `value`. `expected` is what the person saw it hold."""
+    """Change one setting to `value`. `expected` is what the person saw it hold. `by` is who asked, for the record."""
     if name not in SETTINGS:
         raise KeyError(name)
     label = SETTINGS[name].label
@@ -375,5 +390,5 @@ async def set_setting(
     problem = await _setting_problem(inverter, name, value)
     if problem:
         raise Refused(f"{problem}, so nothing was sent.")
-    await send_setting(inverter, conn, name, old, value)
+    await send_setting(inverter, conn, name, old, value, by)
     return {"outcome": "confirmed", "old": old, "new": value}

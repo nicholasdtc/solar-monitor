@@ -32,6 +32,11 @@ def log(message: str) -> None:
     print(f"{timestamp()} {message}", flush=True)
 
 
+def _by(by: db.Who | None) -> str:
+    """Who asked for a change, for the journal."""
+    return f" by {by[1]}" if by else ""
+
+
 def device_info(inverter: goodwe.Inverter) -> dict[str, object]:
     """Identifying details that are safe to print (no serial number)."""
     return {
@@ -96,35 +101,37 @@ class Collector:
         self.storage["error"] = None
         self.buffer.clear()
 
-    async def set_period(self, slot: int, wanted: control.Wanted, expected: str) -> dict[str, object]:
+    async def set_period(
+        self, slot: int, wanted: control.Wanted, expected: str, by: db.Who | None = None
+    ) -> dict[str, object]:
         """Change one TOU period, between polls. Whatever happens, `latest` then shows what it holds."""
         async with self.talking:
             if self.inverter is None:
                 raise control.Refused("The inverter isn't connected at the moment, so nothing was sent.")
             try:
-                result = await control.set_period(self.inverter, self.conn, slot, wanted, expected)
+                result = await control.set_period(self.inverter, self.conn, slot, wanted, expected, by)
                 if result["outcome"] == "confirmed":
                     changes = "; ".join(f"{c['field']} {c['old']} to {c['new']}" for c in result["changes"] or [])
-                    log(f"TOU period {slot} changed: {changes}")
+                    log(f"TOU period {slot} changed{_by(by)}: {changes}")
                 return result
             except control.Unconfirmed as problem:
-                log(f"TOU period {slot} change wasn't confirmed: {problem}")
+                log(f"TOU period {slot} change{_by(by)} wasn't confirmed: {problem}")
                 raise
             finally:
                 self.latest["schedule"] = {**await read_schedule(self.inverter), "read_at": timestamp()}
 
-    async def set_setting(self, name: str, value: int, expected: int) -> dict[str, object]:
+    async def set_setting(self, name: str, value: int, expected: int, by: db.Who | None = None) -> dict[str, object]:
         """Change Backup mode or a battery limit, between polls. Whatever happens, `latest` then shows what it holds."""
         async with self.talking:
             if self.inverter is None:
                 raise control.Refused("The inverter isn't connected at the moment, so nothing was sent.")
             try:
-                result = await control.set_setting(self.inverter, self.conn, name, value, expected)
+                result = await control.set_setting(self.inverter, self.conn, name, value, expected, by)
                 if result["outcome"] == "confirmed":
-                    log(f"Setting {name} changed: {result['old']} to {result['new']}")
+                    log(f"Setting {name} changed{_by(by)}: {result['old']} to {result['new']}")
                 return result
             except control.Unconfirmed as problem:
-                log(f"Setting {name} change wasn't confirmed: {problem}")
+                log(f"Setting {name} change{_by(by)} wasn't confirmed: {problem}")
                 raise
             finally:
                 self.latest["battery_limits"] = await read_battery_limits(self.inverter)

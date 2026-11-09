@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from solar_monitor import db, export
+from solar_monitor import auth, db, export
 from solar_monitor.api import create_app
 from solar_monitor.collector import Collector
 
@@ -73,8 +73,8 @@ def write(collector, name):
 def test_csv_zip_holds_each_table(filled, temp_folder):
     with zipfile.ZipFile(write(filled, "csv")) as archive:
         assert sorted(archive.namelist()) == [
-            "README.txt", "appliances.csv", "daily_counters.csv", "inverter_writes.csv", "meter_readings.csv",
-            "samples.csv", "setting_writes.csv", "settings.csv",
+            "README.txt", "actions.csv", "appliances.csv", "daily_counters.csv", "inverter_writes.csv",
+            "meter_readings.csv", "samples.csv", "setting_writes.csv", "settings.csv",
         ]
         samples = read_csv(archive, "samples.csv")
         counters = read_csv(archive, "daily_counters.csv")
@@ -109,6 +109,52 @@ def test_csv_zip_holds_the_changes_sent_to_the_inverter(collector, temp_folder):
         row = read_csv(archive, "inverter_writes.csv")[0]
     assert (row["slot"], row["old_percent"], row["new_percent"]) == ("1", "40", "30")
     assert (row["outcome"], row["old_bytes"], row["new_bytes"], row["held_bytes"]) == ("confirmed", "aa", "bb", "bb")
+    assert row["username"] == ""  # From before there were accounts.
+
+
+def test_csv_zip_says_who_did_what(collector, temp_folder):
+    carol = db.add_user(collector.conn, "carol", auth.hash_password("a long password"), True, ())
+    db.add_inverter_write(collector.conn, 1, "aa", "bb", 40, 30, by=(carol, "carol"))
+    db.add_setting_write(collector.conn, "min_soc", 20, 10, by=(carol, "carol"))
+    db.add_action(collector.conn, (carol, "carol"), "data", "Added Kettle to the appliances")
+    db.add_action(collector.conn, (None, ""), "login", "Failed log-in")
+    with zipfile.ZipFile(write(collector, "csv")) as archive:
+        inverter = read_csv(archive, "inverter_writes.csv")
+        settings = read_csv(archive, "setting_writes.csv")
+        actions = read_csv(archive, "actions.csv")
+        readme = archive.read("README.txt").decode()
+    assert inverter[0]["username"] == settings[0]["username"] == "carol"
+    assert [(row["username"], row["kind"], row["summary"]) for row in actions] == [
+        ("carol", "data", "Added Kettle to the appliances"),
+        ("", "login", "Failed log-in"),
+    ]
+    assert list(actions[0]) == ["id", "ts", "local_time", "username", "kind", "summary"]
+    assert readme.startswith("Solar monitor export, CSV layout 1\n")  # Older copies of the app can still read it.
+
+
+def test_sqlite_export_leaves_the_accounts_behind(filled, temp_folder):
+    conn = filled.conn
+    password_hash = auth.hash_password("a long password")
+    carol = db.add_user(conn, "carol", password_hash, True, ())
+    token_hash = auth.token_hash("a session token")
+    db.add_session(conn, token_hash, carol, 2_000_000_000)
+    db.add_action(conn, (carol, "carol"), "login", "Logged in")
+    path = write(filled, "sqlite")
+    content = path.read_bytes()
+    salt, key = password_hash.split("$")[-2:]
+    for secret in (password_hash, salt, key, token_hash):
+        assert secret.encode() not in content
+        assert bytes.fromhex(secret.split("$")[-1]) not in content
+    assert [item.name for item in path.parent.iterdir()] == [path.name]  # No journal or WAL beside it.
+    copy = sqlite3.connect(path)
+    try:
+        assert copy.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert copy.execute("SELECT (SELECT COUNT(*) FROM users), (SELECT COUNT(*) FROM sessions)").fetchone() == (0, 0)
+        assert [row["username"] for row in db.list_history(copy)] == ["carol"]  # The history stays.
+        assert db.list_appliances(copy)[0]["name"] == "Crème fridge"
+    finally:
+        copy.close()
+    assert db.find_user(conn, "carol") is not None  # The app's own accounts are untouched.
 
 
 def test_sqlite_export_is_a_complete_working_copy(filled, temp_folder):

@@ -5,10 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Solar monitor</title>
 <meta name="server-time-zone" content="">
+<meta name="session-user" content="">
 <script>
   // The theme and motion picked in Settings go on <html> before the page paints, so it never shows the others first.
+  // Each account's are kept under its name, as PREFS_KEY below.
   try {
-    const { theme, motion } = JSON.parse(localStorage.getItem("solar-monitor.prefs") || "{}");
+    const user = JSON.parse(document.querySelector('meta[name="session-user"]').content || "null");
+    const key = user && !user.local && typeof user.name === "string" ? `solar-monitor.prefs:${user.name}` : "solar-monitor.prefs";
+    const { theme, motion } = JSON.parse(localStorage.getItem(key) || "{}");
     if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
     if (motion === "reduce" || motion === "full") document.documentElement.dataset.motion = motion;
   } catch {}
@@ -126,6 +130,8 @@
 
   .alert, #error { padding: 10px var(--gutter); background: #b02a2a; color: #fff; font-weight: 500; }
   #error:empty, .alert:empty { display: none; }
+  .alert[hidden] { display: none; }
+  .alert button { padding: 0; background: none; border: 0; color: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 
   /*
     Sticky bar: the app's name, the sections, the connection state and the user menu. Where there's room the
@@ -141,7 +147,7 @@
   .menu a { display: flex; align-items: center; color: var(--ink-2); font-weight: 500; text-decoration: none; }
   .menu a:hover { background: var(--page); color: var(--ink); }
   .menu a[aria-current="page"] { background: var(--ink); color: var(--surface); font-weight: 600; }
-  @media (max-width: 1339px) {
+  @media (max-width: 1439px) {
     .menu-button {
       flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0 16px;
       cursor: pointer; background: none; border: 0; border-left: 1px solid var(--rule); color: var(--ink); font-weight: 600; text-align: left;
@@ -172,7 +178,7 @@
     .menu { width: 100%; border-inline: 0; }
   }
   @media (max-width: 400px) { .menu-button .bars { display: none; } }
-  @media (min-width: 1340px) {
+  @media (min-width: 1440px) {
     .menu-button { display: none; }
     .menu, .menu ul { flex: 1; min-width: 0; display: flex; }
     .menu ul { overflow-x: auto; scrollbar-width: none; }
@@ -201,6 +207,8 @@
     box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
   }
   .user-menu .label { padding: 0 var(--gutter); font-size: 13px; color: var(--muted); }
+  .user-menu .who { margin: -4px 0 14px; padding: 0 var(--gutter) 14px; border-bottom: 1px solid var(--rule); color: var(--ink-2); overflow-wrap: anywhere; }
+  .user-menu .who strong { color: var(--ink); font-weight: 600; }
   .user-menu .seg { display: flex; padding: 6px var(--gutter) 14px; }
   .user-menu .seg button { flex: 1; }
   .user-menu .item {
@@ -237,6 +245,27 @@
   }
   .modal::backdrop { background: rgb(0 0 0 / 0.5); }
   .modal form { margin: 0; padding: 20px var(--gutter); display: grid; gap: 14px; }
+  .modal .fields { display: grid; gap: 14px; }
+  .modal.wide { width: min(1240px, calc(100vw - 32px)); }
+  .modal-body { padding: 20px var(--gutter); display: grid; gap: 14px; }
+  .modal .users-add { padding: 14px 0 0; border-top: 1px solid var(--rule); gap: 10px; }
+  .users-add .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+  .users-add .row label { flex: 1 1 180px; }
+  .users-add .row .btn { min-height: 40px; }
+  /* The table scrolls sideways in its own box, with the names kept in view. */
+  .users-box { overflow-x: auto; }
+  .users-box[hidden], .users-add[hidden] { display: none; }
+  .users-box thead th { top: 0; }
+  .users-box tbody th, .users-box thead th:first-child { position: sticky; left: 0; z-index: 2; background: var(--surface); }
+  .users-box th small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+  .users-box .tick { text-align: center; padding-inline: 6px; }
+  .users-box .tick input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: var(--ink); }
+  .users-box .tick input:disabled { opacity: 0.55; }
+  .users-box td.buttons, .users-box td.when { white-space: nowrap; }
+  .users-box td.buttons button { margin-left: 6px; }
+  .users-box td.buttons button:first-child { margin-left: 0; }
+  .users-box td.buttons button:disabled { color: var(--muted); cursor: default; background: var(--surface); }
+  .modal .fields[hidden] { display: none; }
   .modal h2 { font-size: 22px; }
   .modal h3 { margin: 6px 0 0; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 15px; font-weight: 600; }
   .modal h3:first-of-type { margin-top: 0; padding-top: 0; border-top: 0; }
@@ -247,6 +276,11 @@
   .modal .about dt { color: var(--muted); }
   .modal .about dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .modal select { width: 100%; min-height: 40px; padding: 6px 8px; background: var(--page); color: var(--ink); border: 1px solid var(--rule-strong); }
+  .modal input:is([type="text"], [type="password"]) {
+    width: 100%; min-height: 40px; padding: 6px 8px; background: var(--page); color: var(--ink); border: 1px solid var(--rule-strong);
+  }
+  .modal .alert { margin: 0; padding: 10px 12px; }
+  .modal .done { color: var(--ink); }
   .modal .note { font-size: 13px; color: var(--muted); }
   .modal .now { padding: 10px 12px; background: var(--page); border: 1px solid var(--rule); font-variant-numeric: tabular-nums; }
   .modal .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
@@ -524,7 +558,10 @@
   /* TOU */
   /* On a phone the log's change text keeps room to read, and its box scrolls sideways for the rest. */
   #tou-writes td:first-child { white-space: nowrap; }
-  #tou-writes td:nth-child(3) { min-width: 14em; }
+  #tou-writes td:nth-child(4) { min-width: 14em; }
+  #actions-rows td:first-child { white-space: nowrap; }
+  #actions-rows td:nth-child(4) { min-width: 14em; }
+  .actions-more:empty { display: none; }
   .tou-change { display: grid; gap: 14px; justify-items: start; padding: 12px; border: 1px solid var(--rule-strong); }
   .tou-change label { display: flex; flex-direction: column; gap: 4px; color: var(--ink-2); }
   .tou-change .fields { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; }
@@ -625,6 +662,7 @@
           <li><a href="#schedule">Battery schedule</a></li>
           <li><a href="#fields">All fields</a></li>
           <li><a href="#app-data">App Data</a></li>
+          <li><a href="#history">Action history</a></li>
         </ul>
       </div>
     </nav>
@@ -634,6 +672,7 @@
         <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>
       </button>
       <div class="user-menu" id="user-menu">
+        <p class="who" id="signed-in" hidden>Logged in as <strong id="signed-in-name"></strong></p>
         <p class="label" id="theme-label">Theme</p>
         <div class="seg" id="theme" role="group" aria-labelledby="theme-label">
           <button type="button" data-theme="system" aria-pressed="true">System</button>
@@ -641,10 +680,12 @@
           <button type="button" data-theme="dark" aria-pressed="false">Dark</button>
         </div>
         <button type="button" class="item" id="open-prefs">Settings…</button>
+        <button type="button" class="item" id="open-users" hidden>Users…</button>
         <button type="button" class="item" id="kiosk" aria-pressed="false">
           <span>Kiosk mode<small id="kiosk-note">Full screen, screen kept on</small></span><span class="switch" aria-hidden="true"></span>
         </button>
         <button type="button" class="item" id="open-about">About…</button>
+        <button type="button" class="item" id="open-password" hidden>Change password…</button>
         <button type="button" class="item" id="open-logout" hidden>Log out…</button>
       </div>
     </div>
@@ -741,7 +782,81 @@
     </div>
   </form>
 </dialog>
+<dialog class="modal" id="password" aria-labelledby="password-title">
+  <form id="password-form">
+    <h2 id="password-title">Change password</h2>
+    <input type="text" name="username" id="password-username" autocomplete="username" hidden>
+    <div class="fields" id="password-fields">
+      <label>Current password
+        <input type="password" name="current" autocomplete="current-password" required>
+      </label>
+      <label>New password
+        <input type="password" name="new" autocomplete="new-password" minlength="8" required>
+      </label>
+      <label>New password again
+        <input type="password" name="again" autocomplete="new-password" minlength="8" required>
+      </label>
+      <p class="note">At least 8 characters. Your other devices will be logged out.</p>
+    </div>
+    <p class="alert" id="password-error" role="alert"></p>
+    <p class="done" id="password-done" role="status" hidden></p>
+    <div class="actions">
+      <button type="button" class="btn" id="password-cancel">Cancel</button>
+      <button class="btn primary" id="password-send">Change</button>
+    </div>
+  </form>
+</dialog>
+<dialog class="modal wide" id="users" aria-labelledby="users-title">
+  <div class="modal-body">
+    <h2 id="users-title">Users</h2>
+    <p class="note" id="users-note"></p>
+    <p class="alert" id="users-error" role="alert"></p>
+    <div class="users-box edit" id="users-box" tabindex="0" role="region" aria-label="Users table" hidden>
+      <table>
+        <thead><tr id="users-head"></tr></thead>
+        <tbody id="users-rows"></tbody>
+      </table>
+    </div>
+    <p class="done" id="users-status" role="status"></p>
+    <form class="users-add" id="users-add" hidden>
+      <h3>Add someone</h3>
+      <div class="row">
+        <label>Username
+          <input type="text" name="username" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="32" required>
+        </label>
+        <label>Password
+          <input type="password" name="password" autocomplete="new-password" minlength="8" required>
+        </label>
+        <button class="btn" id="users-add-send">Add</button>
+      </div>
+      <p class="note">They start with the Dashboard only. Tick what else they can use once they're added. Each tick is saved at once.</p>
+    </form>
+    <div class="actions">
+      <button type="button" class="btn primary" id="users-close">Close</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="modal" id="user-password" aria-labelledby="user-password-title">
+  <form id="user-password-form">
+    <h2 id="user-password-title">Set password</h2>
+    <input type="text" name="username" autocomplete="username" hidden>
+    <label>New password
+      <input type="password" name="new" autocomplete="new-password" minlength="8" required>
+    </label>
+    <label>New password again
+      <input type="password" name="again" autocomplete="new-password" minlength="8" required>
+    </label>
+    <p class="note">At least 8 characters. They'll be logged out everywhere.</p>
+    <p class="alert" id="user-password-error" role="alert"></p>
+    <div class="actions">
+      <button type="button" class="btn" id="user-password-cancel">Cancel</button>
+      <button class="btn primary" id="user-password-send">Set password</button>
+    </div>
+  </form>
+</dialog>
 <p id="error" role="alert"></p>
+<p class="alert" id="access-note" role="alert" hidden>What your account can use has changed. <button type="button" id="access-reload">Reload</button> to see it.</p>
 <p class="alert" id="storage-error" role="alert"></p>
 
 <main>
@@ -953,13 +1068,14 @@
     <div class="pane span-all">
       <h2>Your appliances <button type="button" class="help" aria-label="About this table" data-tip="Saved as you type. Tick what you&#39;d keep running in a power cut.">?</button></h2>
       <p class="alert" id="appliances-error" role="alert"></p>
+      <p class="note" id="appliances-view-only" hidden>Viewing only: changes need Edit data.</p>
       <div class="scroll edit" tabindex="0" role="region" aria-label="Appliances table">
         <table>
           <thead><tr><th><span tabindex="0" data-tip="Ticked: kept running in a power cut.">Power cut</span></th><th>Name</th><th class="num"><span tabindex="0" data-tip="What it usually draws.">Typical W</span></th><th class="num"><span tabindex="0" data-tip="The most it draws once running. Blank if the same as typical.">Peak W</span></th><th class="num"><span tabindex="0" data-tip="The brief kick when a motor starts.">Surge W</span></th><th class="num"><span tabindex="0" data-tip="At its peak.">Amps</span></th><th class="num"><span tabindex="0" data-tip="Its peak, as a share of your current limit.">Of limit</span></th><th><span tabindex="0" data-tip="Whether it fits on top of the ticked appliances at their peak.">Can add</span></th><th>Notes</th><th aria-label="Delete"></th></tr></thead>
           <tbody id="appliance-rows"></tbody>
         </table>
       </div>
-      <p class="no-value" id="appliances-empty" hidden>No appliances yet. Add your first one below.</p>
+      <p class="no-value" id="appliances-empty" hidden>No appliances yet. <span id="appliances-add-note">Add your first one below.</span></p>
       <form class="edit add" id="add-appliance">
         <label class="grow">Name <input name="name" required maxlength="100"></label>
         <label>Typical W <input name="typical_w" type="number" min="0" step="any" required></label>
@@ -1059,6 +1175,7 @@
       </div>
       <p class="meta" id="tou-read-at"></p>
       <p class="note" id="tou-restart" hidden>Restart the dashboard to change programmes from here.</p>
+      <p class="note" id="tou-view-only" hidden>Viewing only: changing the inverter needs Write to inverter.</p>
       <form class="edit tou-change" id="tou-change" hidden>
         <h3 id="tou-change-title"></h3>
         <label class="tick"><input id="tou-on" type="checkbox"> On</label>
@@ -1092,7 +1209,7 @@
       <h2>Changes made from this app <button type="button" class="help" aria-label="About this list" data-tip="Every change sent to the inverter, latest first. Changes made in SEMS+ aren't listed.">?</button></h2>
       <div class="scroll edit" tabindex="0" role="region" aria-label="Changes made from this app">
         <table>
-          <thead><tr><th>When</th><th class="num">#</th><th>Change</th><th>Result</th><th></th></tr></thead>
+          <thead><tr><th>When</th><th><span tabindex="0" data-tip="—: from before accounts">Who</span></th><th class="num">#</th><th>Change</th><th>Result</th><th></th></tr></thead>
           <tbody id="tou-writes"></tbody>
         </table>
       </div>
@@ -1156,26 +1273,57 @@
         <div class="edit" id="import-actions" hidden>
           <button type="button" id="import-button">Import</button>
           <button type="button" id="import-cancel">Cancel</button>
+          <span class="note" id="import-view-only" hidden>Adding it needs Edit data.</span>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section class="view" id="view-history" aria-label="Action history" hidden>
+    <div class="pane">
+      <h2>Action history <button type="button" class="help" aria-label="About this list" data-tip="Who changed what, latest first&#10;Display choices not listed">?</button></h2>
+      <div class="range">
+        <label>Who
+          <select id="actions-user"><option value="">Everyone</option></select>
+        </label>
+        <label>What
+          <select id="actions-kind">
+            <option value="">Everything</option>
+            <option value="inverter">Inverter</option>
+            <option value="data">Data</option>
+            <option value="users">Accounts</option>
+            <option value="login">Log-ins</option>
+          </select>
+        </label>
+      </div>
+      <p class="alert" id="actions-error" role="alert"></p>
+      <div class="scroll" tabindex="0" role="region" aria-label="Action history table">
+        <table>
+          <thead><tr><th>When</th><th>Who</th><th>What</th><th>Change</th><th>Result</th></tr></thead>
+          <tbody id="actions-rows"></tbody>
+        </table>
+      </div>
+      <div class="edit"><button type="button" id="actions-older" hidden>Show older</button></div>
     </div>
   </section>
 </main>
 <div id="chart-tip" role="status" hidden></div>
 
 <script>
-  // Only used when a login is set: a 401 means the session has ended, and /api/session
-  // only exists behind the login, so there's nothing to log out of without one.
+  /*
+    A 401 means the session has ended. A 403 marked X-Not-Allowed means the account has lost a permission
+    since the page loaded, so the page offers a reload to show what it can use now. A route's own refusals,
+    such as a wrong current password, aren't marked.
+  */
   {
     const plainFetch = window.fetch;
     window.fetch = async (...args) => {
       const response = await plainFetch(...args);
       if (response.status === 401) location.assign("/login");
+      if (response.status === 403 && response.headers.get("X-Not-Allowed")) document.getElementById("access-note").hidden = false;
       return response;
     };
-    fetch("/api/session").then((response) => {
-      document.getElementById("open-logout").hidden = !response.ok;
-    }).catch(() => {});
+    document.getElementById("access-reload").addEventListener("click", () => location.reload());
   }
 </script>
 <script>
@@ -1205,6 +1353,20 @@
   const BATTERY_CURRENT_NOISE_W = 400;
 
   const $ = (id) => document.getElementById(id);
+  /*
+    Who's logged in, and what they may use, from the server. With no accounts it's "local", allowed everything.
+    A page from a server without accounts has no user at all, and is allowed everything too: the server decides.
+  */
+  const SESSION_USER = (() => {
+    try {
+      const user = JSON.parse(document.querySelector('meta[name="session-user"]')?.content || "null");
+      return user && typeof user.name === "string" && Array.isArray(user.permissions) ? user : null;
+    } catch {
+      return null;
+    }
+  })();
+  const ACCOUNT = SESSION_USER && !SESSION_USER.local ? SESSION_USER : null;
+  const may = (permission) => !SESSION_USER || SESSION_USER.admin || SESSION_USER.permissions.includes(permission);
   let latest = null;
   let values = {};
 
@@ -1260,7 +1422,7 @@
   */
   const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const PREFS_KEY = "solar-monitor.prefs";
+  const PREFS_KEY = ACCOUNT ? `solar-monitor.prefs:${ACCOUNT.name}` : "solar-monitor.prefs";
   const PREF_CHOICES = {
     theme: ["system", "light", "dark"],
     date: ["auto", "dmy", "mdy", "dd/mm", "mm/dd", "iso"],
@@ -1338,7 +1500,7 @@
     }
     if (edits !== prefsEdits || !stored || typeof stored !== "object") return;
     if (!Object.keys(stored).length) {
-      // Nothing kept on the monitor yet: the choices made in this browser, before they were kept there, become everyone's.
+      // Nothing kept on the monitor for this account yet: the choices made in this browser become its own.
       if (JSON.stringify(prefs) !== JSON.stringify(cleanPrefs({}))) savePrefs();
       return;
     }
@@ -2172,7 +2334,7 @@
         help.dataset.tip = BACKUP_TIP;
         head.append(" ", help);
       }
-      if (settingsChangeable && name && settingValue(name) !== null) {
+      if (settingsChangeable && may("inverter") && name && settingValue(name) !== null) {
         if (name === "backup") cell.replaceChildren(backupSwitch());
         else if (limitRange(name)) {
           const edit = touButton("Edit", () => openLimitChange(name, settingValue(name)));
@@ -2357,7 +2519,7 @@
   };
   // Only a programme the page can describe in full can be changed: one with a direction, from a dashboard new enough.
   const touChangeable = (period) =>
-    Boolean(period.raw) && period.power_pct > 0 && Number.isInteger(period.day_bits) && Number.isInteger(period.cutoff_soc);
+    may("inverter") && Boolean(period.raw) && period.power_pct > 0 && Number.isInteger(period.day_bits) && Number.isInteger(period.cutoff_soc);
   // The server gives times as 24-hour, and the page shows them in the chosen format.
   const changeValue = (field, value) => field === "start" || field === "end" ? wallTime(value) : value;
   const changeText = (change) => change.field === "state"
@@ -2460,7 +2622,7 @@
   function settingWriteRow(write, undone) {
     const undo = el("td");
     const { setting } = write;
-    if (!undone.has(setting) && write.outcome === "confirmed" && settingsChangeable && settingValue(setting) === write.new_value
+    if (!undone.has(setting) && write.outcome === "confirmed" && settingsChangeable && may("inverter") && settingValue(setting) === write.new_value
         && (setting === "backup" || limitRange(setting))) {
       const revert = touButton(`Revert to ${settingText(setting, write.old_value)}`, () => setting === "backup"
         ? sendSetting("backup", write.new_value, write.old_value)
@@ -2489,7 +2651,7 @@
       result.append(status(kind, label));
       if (write.kind === "setting") {
         const [slot, change, undo] = settingWriteRow(write, undone);
-        row.append(el("td", "", when), slot, change, result, undo);
+        row.append(el("td", "", when), el("td", "", write.username || "—"), slot, change, result, undo);
         return row;
       }
       const undo = el("td");
@@ -2503,13 +2665,13 @@
       }
       undone.add(write.slot);
       const change = write.changes ? write.changes.map(changeText).join(", ") : `Power ${write.old_percent}% to ${write.new_percent}%`;
-      row.append(el("td", "", when), el("td", "num", String(write.slot)), el("td", "", change || "Nothing"), result, undo);
+      row.append(el("td", "", when), el("td", "", write.username || "—"), el("td", "num", String(write.slot)), el("td", "", change || "Nothing"), result, undo);
       return row;
     });
     if (!rows.length) {
       const placeholder = el("tr");
       const cell = el("td", "no-value", "None yet.");
-      cell.colSpan = 5;
+      cell.colSpan = 6;
       placeholder.append(cell);
       rows.push(placeholder);
     }
@@ -3150,6 +3312,8 @@
   function showHelp(node) {
     if (!node.dataset.tip) return;
     const tip = $("chart-tip");
+    const host = node.closest("dialog[open]") ?? document.body;
+    if (tip.parentElement !== host) host.append(tip);
     tip.classList.add("help-tip");
     tip.replaceChildren(...node.dataset.tip.split("\n").map((line) => el("p", "", line)));
     tip.hidden = false;
@@ -4244,6 +4408,10 @@
       wrap(fields.use_in_outage), wrap(fields.name), wrap(fields.typical_w, "num"), wrap(fields.peak_w, "num"), wrap(fields.surge_w, "num"),
       cells.amps, cells.share, cells.canAdd, wrap(fields.notes), wrap(remove),
     );
+    if (!may("edit")) {
+      for (const field of Object.values(fields)) field.disabled = true;
+      remove.hidden = true;
+    }
     row.addEventListener("change", () => sendOverview("PUT", `/api/appliances/${id}`, {
       name: fields.name.value,
       typical_w: optionalNumber(fields.typical_w),
@@ -4562,6 +4730,15 @@
     $("import-notes").replaceChildren(...(report?.notes ?? []).map((note) => el("li", "", note)));
   }
 
+  $("appliances-view-only").hidden = may("edit");
+  $("tou-view-only").hidden = may("inverter");
+  if (!may("edit")) {
+    for (const field of $("view-appliances").querySelectorAll(".edit input, .edit textarea, .edit select")) field.disabled = true;
+    $("add-appliance").hidden = true;
+    $("appliances-add-note").hidden = true;
+    $("import-button").hidden = true;
+    $("import-view-only").hidden = false;
+  }
   function setImportBusy(message) {
     for (const id of ["import-file", "import-button", "import-cancel"]) $(id).disabled = Boolean(message);
     if (message) $("import-status").textContent = message;
@@ -4609,7 +4786,7 @@
     if (apply && report) {
       refreshExport();
       refreshDaily();
-      gridMeter.refresh();
+      if (may("grid-meter")) gridMeter.refresh();
     }
   }
 
@@ -5849,13 +6026,20 @@
     "#schedule": "view-schedule",
     "#fields": "view-fields",
     "#app-data": "view-app-data",
+    "#history": "view-history",
   };
+  // The Dashboard is always open. The others each need their permission; the server refuses them anyway.
+  for (const hash of Object.keys(TABS)) {
+    if (hash === "#dashboard" || may(hash.slice(1))) continue;
+    delete TABS[hash];
+    $("tab-links").querySelector(`a[href="${hash}"]`)?.parentElement.remove();
+  }
 
   /*
     Where they fit, the sections are a row of tabs in the bar. Narrower, they're listed in a menu
     under the bar, which closes once one is chosen. The width is the CSS's.
   */
-  const TAB_ROW = matchMedia("(min-width: 1340px)");
+  const TAB_ROW = matchMedia("(min-width: 1440px)");
   const menuOpen = () => $("menu-button").getAttribute("aria-expanded") === "true";
   function setMenu(open) {
     $("menu-button").setAttribute("aria-expanded", String(open));
@@ -5978,9 +6162,14 @@
   showKiosk();
   keepAwake();
 
-  // A click on the dimmed page around a dialog closes it.
+  // A click on the dimmed page around a dialog closes it. A tooltip put up in it goes back to the page.
   for (const dialog of document.querySelectorAll("dialog.modal")) {
     dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+    dialog.addEventListener("close", () => {
+      if (!dialog.contains($("chart-tip"))) return;
+      dropTip();
+      document.body.append($("chart-tip"));
+    });
   }
 
   /*
@@ -6113,12 +6302,356 @@
   });
 
   // Log out asks first. The form posts to /logout, which ends the session, or every one, and goes to the login page.
+  $("open-logout").hidden = !ACCOUNT;
   $("open-logout").addEventListener("click", () => {
     setUserMenu(false);
     $("logout-confirm").querySelector("form").elements.everywhere.checked = false;
     $("logout-confirm").showModal();
   });
   $("logout-cancel").addEventListener("click", () => $("logout-confirm").close());
+
+  // Sends JSON, or nothing, and gives back the answer. A refusal throws with the server's reason.
+  async function sendJson(method, url, body) {
+    let response;
+    try {
+      response = await fetch(url, {
+        method,
+        cache: "no-store",
+        headers: body === undefined ? {} : { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    } catch {
+      throw new Error(method === "GET" ? "Can't reach the monitor." : "Can't reach the monitor, so nothing changed.");
+    }
+    const answer = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(typeof answer?.detail === "string" ? answer.detail : `Couldn't do that: the server answered ${response.status}.`);
+    }
+    return answer;
+  }
+
+  /* The account's own items in the user menu. Without accounts there's no one to name and nothing to log out of. */
+  if (ACCOUNT) {
+    $("signed-in-name").textContent = ACCOUNT.name;
+    $("signed-in").hidden = false;
+  }
+  $("open-users").hidden = !SESSION_USER?.admin;
+  $("open-password").hidden = !ACCOUNT;
+
+  /*
+    What an account may use can change while its page is open. A request refused for want of a permission
+    shows the note (see the fetch wrapper), and coming back to the page checks, so a newly allowed tab shows too.
+  */
+  async function checkAccess() {
+    if (!SESSION_USER || document.hidden) return;
+    let now;
+    try {
+      now = (await sendJson("GET", "/api/session")).user;
+    } catch {
+      return;
+    }
+    const held = (user) => JSON.stringify([user?.name, Boolean(user?.admin), [...(user?.permissions ?? [])].sort()]);
+    if (held(now) !== held(SESSION_USER)) $("access-note").hidden = false;
+  }
+  document.addEventListener("visibilitychange", checkAccess);
+
+  /* Changing your own password. The server logs out your other devices, and says how many. */
+  const passwordForm = $("password-form");
+  $("open-password").addEventListener("click", () => {
+    setUserMenu(false);
+    passwordForm.reset();
+    passwordForm.elements.username.value = ACCOUNT?.name ?? "";
+    $("password-fields").hidden = false;
+    $("password-error").textContent = "";
+    $("password-done").hidden = true;
+    $("password-send").hidden = false;
+    $("password-cancel").textContent = "Cancel";
+    $("password").showModal();
+  });
+  $("password-cancel").addEventListener("click", () => $("password").close());
+  passwordForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = passwordForm.elements;
+    $("password-error").textContent = "";
+    if (form.new.value !== form.again.value) {
+      $("password-error").textContent = "The two new passwords don't match.";
+      return;
+    }
+    $("password-send").disabled = true;
+    try {
+      const { ended } = await sendJson("PUT", "/api/password", { current: form.current.value, new: form.new.value });
+      for (const name of ["current", "new", "again"]) form[name].value = "";
+      $("password-fields").hidden = true;
+      $("password-send").hidden = true;
+      $("password-cancel").textContent = "Close";
+      $("password-done").textContent = ended ? `Changed. ${ended === 1 ? "1 other login" : `${ended} other logins`} ended.` : "Changed.";
+      $("password-done").hidden = false;
+    } catch (error) {
+      $("password-error").textContent = error.message;
+    }
+    $("password-send").disabled = false;
+  });
+
+  /*
+    Users, for admins: everyone's account and what it may use. A tick is saved at once, and the table is drawn
+    again from the server's answer. Admin covers everything, and Write to inverter opens Battery schedule, so
+    those boxes show ticked and can't be changed. The owner's row and your own aren't changed here.
+  */
+  const USER_HEADINGS = {
+    inverter: "Inverter", edit: "Edit", statistics: "Stats", "grid-meter": "Meter", counters: "Counters",
+    appliances: "Appliances", schedule: "Schedule", fields: "Fields", "app-data": "Data", history: "History",
+  };
+  const USER_TIPS = {
+    admin: "Everything\nManages users",
+    inverter: "Write to inverter\nOpens Battery schedule",
+    edit: "Edit data\nAppliances, tariffs, imports",
+  };
+  let usersListing = null;
+  let usersBusy = false;
+  function renderUsers() {
+    const listing = usersListing;
+    const columns = [{ id: "admin", label: "Admin" }, ...listing.permissions];
+    const focused = document.activeElement?.closest("#users-rows") ? document.activeElement.dataset.key : null;
+    const heading = (text, className) => {
+      const cell = el("th", className);
+      cell.scope = "col";
+      if (text) cell.append(text);
+      return cell;
+    };
+    $("users-head").replaceChildren(
+      heading("Name"),
+      ...columns.map(({ id, label }) => {
+        const tab = Object.hasOwn(USER_HEADINGS, id) && !Object.hasOwn(USER_TIPS, id);
+        return heading(tipped(el("span", "", id === "admin" ? "Admin" : USER_HEADINGS[id] ?? label), USER_TIPS[id] ?? (tab ? `${label} tab` : label)), "tick");
+      }),
+      heading("Last in"), heading("Logins", "num"), heading(""),
+    );
+    $("users-rows").replaceChildren(...listing.users.map((user) => {
+      const row = el("tr");
+      const mine = user.id === listing.you;
+      const name = el("th", "", user.username);
+      name.scope = "row";
+      if (user.owner || mine) name.append(el("small", "", [user.owner && "Owner", mine && "You"].filter(Boolean).join(", ")));
+      row.append(name);
+      const stored = new Set(user.permissions);
+      for (const { id, label } of columns) {
+        const box = el("input");
+        box.type = "checkbox";
+        box.dataset.key = `${user.id}:${id}`;
+        box.setAttribute("aria-label", `${label}, ${user.username}`);
+        const implied = id !== "admin" && (user.admin || (id === "schedule" && stored.has("inverter")));
+        box.checked = id === "admin" ? user.admin : implied || stored.has(id);
+        box.disabled = usersBusy || user.owner || implied || (id === "admin" && mine);
+        box.addEventListener("change", () => {
+          const permissions = new Set(stored);
+          if (id !== "admin") {
+            if (box.checked) permissions.add(id);
+            else permissions.delete(id);
+          }
+          changeUsers("PUT", `/api/users/${user.id}`, { admin: id === "admin" ? box.checked : user.admin, permissions: [...permissions] });
+        });
+        const cell = el("td", "tick");
+        cell.append(box);
+        row.append(cell);
+      }
+      row.append(el("td", user.last_login ? "when" : "when no-value", user.last_login ? dateTime(user.last_login * 1000) : "Never"));
+      row.append(el("td", "num", String(user.sessions)));
+      const buttons = el("td", "buttons");
+      if (!user.owner && !mine) {
+        const button = (text, key, action) => {
+          const node = touButton(text, action);
+          node.dataset.key = `${user.id}:${key}`;
+          node.disabled = usersBusy;
+          return node;
+        };
+        const logOut = button("Log out", "logout", () => {
+          if (confirm(`Log ${user.username} out on every device?`)) changeUsers("DELETE", `/api/users/${user.id}/sessions`, undefined, `Logged ${user.username} out.`);
+        });
+        logOut.disabled ||= !user.sessions;
+        buttons.append(
+          button("Password…", "password", () => openUserPassword(user)),
+          logOut,
+          button("Remove", "remove", () => {
+            if (confirm(`Remove ${user.username}? What they did stays in the Action history.`)) {
+              changeUsers("DELETE", `/api/users/${user.id}`, undefined, `Removed ${user.username}.`);
+            }
+          }),
+        );
+      }
+      row.append(buttons);
+      return row;
+    }));
+    $("users-add-send").disabled = usersBusy;
+    // Keyboard focus stays on the box or button that was used, if it's still there.
+    if (focused) $("users-rows").querySelector(`[data-key="${focused}"]:not(:disabled)`)?.focus();
+  }
+  // Sends a change, and shows the listing the server answers with. A refusal shows why, and the last good listing.
+  async function changeUsers(method, url, body, done = "") {
+    usersBusy = true;
+    for (const node of $("users").querySelectorAll("#users-rows input, #users-rows button, #users-add-send")) node.disabled = true;
+    $("users-error").textContent = "";
+    $("users-status").textContent = "";
+    let ok = false;
+    try {
+      usersListing = await sendJson(method, url, body);
+      $("users-status").textContent = done;
+      ok = true;
+    } catch (error) {
+      $("users-error").textContent = error.message;
+      usersListing = await sendJson("GET", "/api/users").catch(() => usersListing);
+    }
+    usersBusy = false;
+    renderUsers();
+    return ok;
+  }
+  async function showUsers() {
+    $("users-error").textContent = "";
+    $("users-status").textContent = "";
+    $("users-note").textContent = "Loading…";
+    try {
+      usersListing = await sendJson("GET", "/api/users");
+      $("users-note").textContent = "";
+    } catch (error) {
+      usersListing = null;
+      $("users-note").textContent = error.message; // Without accounts, how to make the first.
+    }
+    $("users-box").hidden = $("users-add").hidden = !usersListing;
+    if (usersListing) renderUsers();
+  }
+  $("open-users").addEventListener("click", () => {
+    setUserMenu(false);
+    $("users-add").reset();
+    $("users").showModal();
+    showUsers();
+  });
+  $("users-close").addEventListener("click", () => $("users").close());
+  $("users-add").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = $("users-add").elements;
+    const username = form.username.value.trim().toLowerCase();
+    const added = await changeUsers("POST", "/api/users", { username, password: form.password.value, admin: false, permissions: [] },
+      `Added ${username}. Tick what they can use.`);
+    if (added) $("users-add").reset();
+  });
+
+  let passwordFor = null;
+  function openUserPassword(user) {
+    passwordFor = user;
+    const form = $("user-password-form");
+    form.reset();
+    form.elements.username.value = user.username;
+    $("user-password-title").textContent = `Set ${user.username}'s password`;
+    $("user-password-error").textContent = "";
+    $("user-password").showModal();
+  }
+  $("user-password-cancel").addEventListener("click", () => $("user-password").close());
+  $("user-password-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = $("user-password-form").elements;
+    $("user-password-error").textContent = "";
+    if (form.new.value !== form.again.value) {
+      $("user-password-error").textContent = "The two passwords don't match.";
+      return;
+    }
+    const user = passwordFor;
+    $("user-password-send").disabled = true;
+    try {
+      usersListing = await sendJson("PUT", `/api/users/${user.id}/password`, { password: form.new.value });
+      form.new.value = form.again.value = "";
+      $("user-password").close();
+      $("users-error").textContent = "";
+      $("users-status").textContent = `Set ${user.username}'s password, and logged them out everywhere.`;
+      renderUsers();
+    } catch (error) {
+      $("user-password-error").textContent = error.message;
+    }
+    $("user-password-send").disabled = false;
+  });
+
+  /*
+    Action history: who changed what, latest first, a page at a time. An older page is asked for with `before`,
+    which includes that second, so the rows already shown are dropped by source and id. A page that adds
+    nothing, from a second with more rows than a page, is asked for again from the second before.
+  */
+  const ACTIONS_PAGE = 100;
+  const ACTION_KINDS = { inverter: "Inverter", data: "Data", users: "Accounts", login: "Log-in" };
+  const actionKey = (row) => `${row.source}:${row.id}`;
+  let actionRows = [];
+  let actionNames = [];
+  let actionsMore = false;
+  let actionsLoad = 0; // A slow answer for an older filter mustn't replace a newer one.
+  async function refreshActions(older = false) {
+    const load = ++actionsLoad;
+    const kept = older ? actionRows : [];
+    const seen = new Set(kept.map(actionKey));
+    const query = new URLSearchParams({ limit: String(ACTIONS_PAGE) });
+    if ($("actions-user").value) query.set("user", $("actions-user").value);
+    if ($("actions-kind").value) query.set("kind", $("actions-kind").value);
+    let before = kept.length ? kept.at(-1).ts : null;
+    $("actions-older").disabled = true;
+    try {
+      for (let tries = 0; ; tries++) {
+        if (before !== null) query.set("before", String(before));
+        const answer = await sendJson("GET", `/api/actions?${query}`);
+        if (load !== actionsLoad) return;
+        const fresh = answer.rows.filter((row) => !seen.has(actionKey(row)));
+        actionNames = answer.names;
+        if (fresh.length || !answer.more || tries === 3) {
+          actionRows = [...kept, ...fresh];
+          actionsMore = answer.more;
+          break;
+        }
+        before = Math.min(...answer.rows.map((row) => row.ts)) - 1;
+      }
+      $("actions-error").textContent = "";
+    } catch (error) {
+      if (load !== actionsLoad) return;
+      $("actions-error").textContent = error.message;
+      if (!older) {
+        actionRows = [];
+        actionsMore = false;
+      }
+    }
+    renderActions();
+  }
+  function renderActions() {
+    // Everyone on record or with an account, keeping the one chosen.
+    const who = $("actions-user");
+    const chosen = who.value;
+    const names = [...new Set([...actionNames, chosen].filter(Boolean))].sort();
+    who.replaceChildren(new Option("Everyone", ""), ...names.map((name) => new Option(name, name)));
+    who.value = chosen;
+    const rows = actionRows.map((action) => {
+      const row = el("tr");
+      const result = el("td");
+      if (action.source !== "action" && action.outcome) {
+        const [kind, label] = WRITE_RESULTS[action.outcome] ?? ["warning", action.outcome];
+        result.append(status(kind, label));
+      }
+      row.append(
+        el("td", "", dateTime(action.ts * 1000)),
+        el("td", action.username ? "" : "no-value", action.username || "—"),
+        el("td", "", ACTION_KINDS[action.kind] ?? action.kind),
+        el("td", "", action.summary),
+        result,
+      );
+      return row;
+    });
+    if (!rows.length) {
+      const placeholder = el("tr");
+      const filtered = $("actions-user").value || $("actions-kind").value;
+      const cell = el("td", "no-value", $("actions-error").textContent ? "" : filtered ? "Nothing matches." : "Nothing yet.");
+      cell.colSpan = 5;
+      placeholder.append(cell);
+      rows.push(placeholder);
+    }
+    $("actions-rows").replaceChildren(...rows);
+    $("actions-older").hidden = !actionsMore;
+    $("actions-older").disabled = false;
+  }
+  $("actions-user").addEventListener("change", () => refreshActions());
+  $("actions-kind").addEventListener("change", () => refreshActions());
+  $("actions-older").addEventListener("click", () => refreshActions(true));
 
   function showTab() {
     // Links saved when the first tab was called Live still open it.
@@ -6142,6 +6675,7 @@
     if (tab === "#appliances") refreshOverview();
     if (tab === "#app-data") refreshExport();
     if (tab === "#grid-meter") gridMeter.refresh();
+    if (tab === "#history") refreshActions();
     if (tab === "#schedule") {
       refreshTouWrites();
       refreshSettingWrites();

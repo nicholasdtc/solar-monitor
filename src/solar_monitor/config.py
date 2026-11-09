@@ -43,19 +43,14 @@ def is_local(host: str) -> bool:
         return False
 
 
-def login() -> tuple[str, str] | None:
-    """The dashboard's username and password from .env, or None if neither is set.
+def old_login() -> tuple[str, str]:
+    """DASHBOARD_USER and DASHBOARD_PASSWORD from .env, each blank if unset.
 
-    Setting only one is a mistake that would leave the app open, so it's an error.
+    From before accounts, when they were the one login. The password is used once, to make the
+    owner's account, and after that only prompts a reminder to remove it.
     """
     load_dotenv(REPO_ROOT / ".env")
-    username = os.environ.get("DASHBOARD_USER", "").strip()
-    password = os.environ.get("DASHBOARD_PASSWORD", "").strip()
-    if not username and not password:
-        return None
-    if not username or not password:
-        raise ValueError("Set both DASHBOARD_USER and DASHBOARD_PASSWORD in .env, or neither.")
-    return username, password
+    return os.environ.get("DASHBOARD_USER", "").strip(), os.environ.get("DASHBOARD_PASSWORD", "").strip()
 
 
 def discover_host() -> str | None:

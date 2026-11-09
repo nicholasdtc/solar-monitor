@@ -4,6 +4,9 @@ The serial number is never sent to the page. The routes that change the inverter
 programme one and the one for Backup mode and the battery's limits, which both hand over to control.py. PUT, JSON bodies and the content type an import insists
 on can't be sent cross-site without a preflight, which no other site passes, so a web page
 elsewhere can't change anything here.
+
+Who may use which route is decided in auth.py, before a request gets here. Changes to the data are
+recorded in the actions table under the person's name, as changes to the inverter are in its logs.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -30,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 from starlette.background import BackgroundTask
 
-from solar_monitor import config, control, db, export, importer, meter, planning
+from solar_monitor import accounts, auth, config, control, db, export, importer, meter, planning
 from solar_monitor.collector import Collector
 from solar_monitor.inputs import ApplianceIn, DisplayPrefsIn, SettingsIn
 from solar_monitor.schedule import (
@@ -174,14 +177,96 @@ def _positive(*candidates: object) -> float | None:
 
 
 def _may_change_inverter(request: Request) -> bool:
-    """With a login, the login has already let this request through. Without one, only this machine may.
+    """With accounts, the account needs Write to inverter, which auth.py has already checked.
+    Without any, only this machine may.
 
     Checking the name it was reached by stops a web page that points its own domain name at this
     machine, which would count as the same site and so pass the browser's cross-site protection.
     """
-    if config.login() is not None:
-        return True
+    user = auth.current_user(request)
+    if not user.local:
+        return user.may("inverter")
     return config.is_local(config.bind_host()) and request.url.hostname in LOOPBACK_NAMES
+
+
+# How the actions table names the planning settings, as the page labels them.
+SETTING_LABELS = {
+    "capacity_kwh": "Starting battery capacity (kWh)",
+    "limit_amps": "Current limit (A)",
+    "surge_limit_w": "Surge limit (W)",
+    "outage_hours": "Length of power cut (hours)",
+    "run_until_minutes": "Run until",
+    "tariff_day": "Day rate",
+    "tariff_peak": "Peak rate",
+    "tariff_night": "Night rate",
+    "tariff_export": "Export rate",
+    "band_night_start_minutes": "Night starts",
+    "band_night_end_minutes": "Night ends",
+    "band_peak_start_minutes": "Peak starts",
+    "band_peak_end_minutes": "Peak ends",
+}
+APPLIANCE_LABELS = {
+    "name": "name",
+    "typical_w": "typical W",
+    "peak_w": "peak W",
+    "surge_w": "surge W",
+    "use_in_outage": "in a power cut",
+    "notes": "notes",
+}
+
+
+def _shown(name: str, value: object) -> str:
+    if value is None or value == "":
+        return "blank"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if name.endswith("_minutes") and isinstance(value, (int, float)):
+        return f"{int(value) // 60:02d}:{int(value) % 60:02d}"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _settings_changes(old: dict[str, object], new: dict[str, object]) -> list[str]:
+    return [
+        f"{SETTING_LABELS.get(name, name)} {_shown(name, old.get(name))} → {_shown(name, value)}"
+        for name, value in new.items()
+        if old.get(name) != value
+    ]
+
+
+def _appliance_changes(old: dict[str, object], new: dict[str, object]) -> list[str]:
+    changes = []
+    for name, label in APPLIANCE_LABELS.items():
+        if old.get(name) == new.get(name):
+            continue
+        # Notes can be long, so only that they changed.
+        changes.append(f"{label} changed" if name == "notes" else f"{label} {_shown(name, old.get(name))} → {_shown(name, new.get(name))}")
+    return changes
+
+
+def _import_summary(report: dict[str, object]) -> str:
+    added = [f"{table['new']} {str(table['label']).lower()}" for table in report["tables"] if table["new"]]
+    return f"Imported {report['label']}: {', '.join(added) or 'nothing new'}"
+
+
+def _history_summary(row: dict[str, object]) -> str:
+    """What a row of the history says. Writes to the inverter are described here, from their log."""
+    if row["source"] == "tou":
+        changes = None
+        try:
+            changes = describe_changes(bytes.fromhex(row["old"]), bytes.fromhex(row["new"]))
+        except (TypeError, ValueError):
+            pass
+        described = "; ".join(f"{c['field']} {c['old']} → {c['new']}" for c in changes) if changes else "changed"
+        return f"TOU programme {row['slot']}: {described}"
+    if row["source"] == "setting":
+        setting = control.SETTINGS.get(row["setting"])
+        label = setting.label.removeprefix("The ").capitalize() if setting else str(row["setting"])
+        if row["setting"] == "backup":
+            return f"{label} {'on' if row['old'] else 'off'} → {'on' if row['new'] else 'off'}"
+        return f"{label} {row['old']}% → {row['new']}%"
+    return str(row["summary"])
 
 
 def create_app(collector: Collector) -> FastAPI:
@@ -344,11 +429,15 @@ def create_app(collector: Collector) -> FastAPI:
             "overhead": known_overhead,
         }
 
+    # Not async, as it reads a file, so it mustn't touch the database: the user was read by auth.py.
     @app.get("/")
-    def page() -> HTMLResponse:
+    def page(request: Request) -> HTMLResponse:
         zone = html.escape(system_time_zone() or "")
+        user = html.escape(json.dumps(auth.current_user(request).public()))
         body = PAGE.read_text(encoding="utf-8")
-        return HTMLResponse(body.replace('<meta name="server-time-zone" content="">', f'<meta name="server-time-zone" content="{zone}">', 1))
+        body = body.replace('<meta name="server-time-zone" content="">', f'<meta name="server-time-zone" content="{zone}">', 1)
+        body = body.replace('<meta name="session-user" content="">', f'<meta name="session-user" content="{user}">', 1)
+        return HTMLResponse(body, headers={"Cache-Control": "no-store"})
 
     # async so it runs on the event loop, never mid-way through a change by the collector.
     @app.get("/api/latest")
@@ -400,37 +489,57 @@ def create_app(collector: Collector) -> FastAPI:
     async def api_appliances() -> dict[str, object]:
         return overview()
 
+    def find_appliance(appliance_id: int) -> dict[str, object] | None:
+        return next((row for row in db.list_appliances(collector.conn) if row["id"] == appliance_id), None)
+
+    def record(request: Request, summary: str) -> None:
+        db.add_action(collector.conn, auth.current_user(request).who, "data", summary)
+
     @app.post("/api/appliances", status_code=201)
-    async def api_add_appliance(appliance: ApplianceIn) -> dict[str, object]:
+    async def api_add_appliance(appliance: ApplianceIn, request: Request) -> dict[str, object]:
         db.add_appliance(collector.conn, appliance.model_dump())
+        record(request, f"Added appliance {appliance.name}")
         return overview()
 
     @app.put("/api/appliances/{appliance_id}")
-    async def api_update_appliance(appliance_id: int, appliance: ApplianceIn) -> dict[str, object]:
-        if not db.update_appliance(collector.conn, appliance_id, appliance.model_dump()):
+    async def api_update_appliance(appliance_id: int, appliance: ApplianceIn, request: Request) -> dict[str, object]:
+        old = find_appliance(appliance_id)
+        if old is None or not db.update_appliance(collector.conn, appliance_id, appliance.model_dump()):
             raise HTTPException(status_code=404, detail="no such appliance")
+        changes = _appliance_changes(old, appliance.model_dump())
+        if changes:
+            record(request, f"Changed appliance {old['name']}: {'; '.join(changes)}")
         return overview()
 
     @app.delete("/api/appliances/{appliance_id}")
-    async def api_delete_appliance(appliance_id: int) -> dict[str, object]:
-        if not db.delete_appliance(collector.conn, appliance_id):
+    async def api_delete_appliance(appliance_id: int, request: Request) -> dict[str, object]:
+        old = find_appliance(appliance_id)
+        if old is None or not db.delete_appliance(collector.conn, appliance_id):
             raise HTTPException(status_code=404, detail="no such appliance")
+        record(request, f"Removed appliance {old['name']}")
         return overview()
 
     @app.put("/api/settings")
-    async def api_settings(settings: SettingsIn) -> dict[str, object]:
-        db.save_settings(collector.conn, settings.model_dump(exclude_unset=True))
+    async def api_settings(settings: SettingsIn, request: Request) -> dict[str, object]:
+        old = db.get_settings(collector.conn)
+        new = settings.model_dump(exclude_unset=True)
+        db.save_settings(collector.conn, new)
+        changes = _settings_changes(old, new)
+        if changes:
+            record(request, f"Changed {'; '.join(changes)}")
         return overview()
 
+    # Each person's own. Not recorded: they change nothing anyone else sees.
     @app.get("/api/prefs")
-    async def api_prefs() -> dict[str, object]:
-        return {"prefs": db.get_display_prefs(collector.conn)}
+    async def api_prefs(request: Request) -> dict[str, object]:
+        return {"prefs": db.get_display_prefs(collector.conn, auth.current_user(request).id)}
 
     @app.put("/api/prefs")
-    async def api_save_prefs(prefs: DisplayPrefsIn) -> dict[str, object]:
+    async def api_save_prefs(prefs: DisplayPrefsIn, request: Request) -> dict[str, object]:
         """Replaces the whole set, so the page always sends every choice."""
-        db.save_display_prefs(collector.conn, prefs.model_dump(exclude_none=True))
-        return {"prefs": db.get_display_prefs(collector.conn)}
+        user_id = auth.current_user(request).id
+        db.save_display_prefs(collector.conn, user_id, prefs.model_dump(exclude_none=True))
+        return {"prefs": db.get_display_prefs(collector.conn, user_id)}
 
     @app.get("/api/about")
     async def api_about() -> dict[str, object]:
@@ -472,7 +581,7 @@ def create_app(collector: Collector) -> FastAPI:
         if not 1 <= slot <= TIME_PERIODS:
             raise HTTPException(status_code=404, detail="no such programme")
         try:
-            result = await collector.set_period(slot, change.wanted(), change.expected)
+            result = await collector.set_period(slot, change.wanted(), change.expected, auth.current_user(request).who)
         except control.Refused as refused:
             raise HTTPException(status_code=409, detail=str(refused)) from None
         except control.Unconfirmed as problem:
@@ -490,7 +599,7 @@ def create_app(collector: Collector) -> FastAPI:
         if name not in control.SETTINGS:
             raise HTTPException(status_code=404, detail="no such setting")
         try:
-            result = await collector.set_setting(name, change.value, change.expected)
+            result = await collector.set_setting(name, change.value, change.expected, auth.current_user(request).who)
         except control.Refused as refused:
             raise HTTPException(status_code=409, detail=str(refused)) from None
         except control.Unconfirmed as problem:
@@ -522,12 +631,13 @@ def create_app(collector: Collector) -> FastAPI:
         }
 
     @app.get("/api/export/download")
-    async def api_export_download(format: str) -> FileResponse:
+    async def api_export_download(format: str, request: Request) -> FileResponse:
         choice = export.FORMATS.get(format)
         if choice is None:
             raise HTTPException(status_code=404, detail="no such format")
         collector.flush()  # So the file reaches the latest reading. It's saved early, nothing more.
         path = await asyncio.to_thread(export.write, choice, export.database_path(collector.conn))
+        record(request, f"Exported {choice.label}")
         return FileResponse(
             path,
             media_type=choice.media_type,
@@ -566,7 +676,37 @@ def create_app(collector: Collector) -> FastAPI:
             measured_at = measured_overhead_at = None  # So the measurements include what just arrived.
             finished_flows.clear()
             meter_readings = None
+            record(request, _import_summary(report))
         return report
+
+    @app.get("/api/actions")
+    async def api_actions(
+        before: int | None = None,
+        user: str | None = Query(default=None, max_length=64),
+        kind: Literal["inverter", "data", "users", "login"] | None = None,
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, object]:
+        """The Action history tab: what each person did, latest first. `before` includes that second, so
+        the page drops the rows it already has, by source and id."""
+        rows = db.list_history(collector.conn, before=before, limit=limit, username=user, kind=kind)
+        return {
+            "rows": [
+                {
+                    "source": row["source"],
+                    "id": row["id"],
+                    "ts": row["ts"],
+                    "username": row["username"],
+                    "kind": row["kind"],
+                    "summary": _history_summary(row),
+                    "outcome": row["outcome"],
+                }
+                for row in rows
+            ],
+            "more": len(rows) == limit,
+            "names": db.history_names(collector.conn),
+        }
+
+    accounts.add_routes(app, collector.conn)
 
     app.mount("/fonts", StaticFiles(directory=FONTS), name="fonts")
 

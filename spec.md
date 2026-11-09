@@ -17,7 +17,7 @@ Runs on a Raspberry Pi 5 (8GB, wired Ethernet). Developed on Windows.
 ## Hard rules
 
 - **Read-only first.** No writes to the inverter until phase 6. A wrong write to a battery schedule is harder to undo than a missing data point.
-- **Never expose the inverter or the app to the public internet.** The inverter's local protocol has no authentication. On the local Wi-Fi no VPN is needed, as long as the app has a login and the router forwards nothing to it or the inverter. Reaching the app from the internet would require a VPN first (Tailscale, see issue #2).
+- **Never expose the inverter or the app to the public internet.** The inverter's local protocol has no authentication. On the local Wi-Fi no VPN is needed, as long as the app has accounts and the router forwards nothing to it or the inverter. Reaching the app from the internet would require a VPN first (Tailscale, see issue #2).
 - **Poll gently** (10-30s). Check the GoodWe app still updates while polling (the Wi-Fi dongle can get overloaded).
 - **No secrets in git.** Inverter IP, tokens and passwords live in `.env` (gitignored). Commit `.env.example` only.
 
@@ -45,7 +45,8 @@ solar-monitor/
   stop-dashboard.bat     # saves and stops every running copy, including one in the background
   src/solar_monitor/
     config.py            # loads .env
-    auth.py              # login page and session cookie around the whole app
+    auth.py              # login page, session cookie and each route's permissions, around the whole app
+    accounts.py          # the Users screen's API, and changing your own password
     login.html           # the login page
     collector.py         # poll loop: read_runtime_data -> buffer -> batched SQLite writes
     db.py                # schema, migrations, queries
@@ -58,7 +59,7 @@ solar-monitor/
     api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings, /api/tou, /api/export, /api/import
     dashboard.html       # the dashboard page
     fonts/               # the page's fonts, served locally so it works without internet
-    main.py              # runs collector + API
+    main.py              # runs collector + API; reset-password sets an account's password
     stop.py              # asks every running copy to save and stop, for stop-dashboard.bat
   scripts/probe.py       # one-off read of the inverter
   deploy/
@@ -100,7 +101,7 @@ solar-monitor/
 - Reflash the card with Raspberry Pi Imager: hostname, user, SSH key, SSH enabled. Remove the SD card before fitting the Pi in the case.
 - Reserve fixed IPs for the Pi and the inverter in the router. Use a wired connection.
 - Copy the code, create a venv, run as a `systemd` service (`Restart=always`). Steps are in `deploy/pi-setup.md`.
-- The app listens on localhost unless `BIND_HOST` in `.env` says otherwise. Opening it to the home network is allowed, and requires a login (`DASHBOARD_USER` and `DASHBOARD_PASSWORD`, through the app's own login page). Forwarding it at the router never is: plain HTTP doesn't encrypt the password or the session cookie.
+- The app listens on localhost unless `BIND_HOST` in `.env` says otherwise. Opening it to the home network is allowed, and requires accounts (see Accounts below), logged in to through the app's own login page. Forwarding it at the router never is: plain HTTP doesn't encrypt the password or the session cookie.
 
 **Phase 5: remote access + backup**
 - Only if access from the internet is ever wanted (issue #2): install Tailscale on the Pi, PC and phone, and access the dashboard at `http://<pi-name>:<port>`. It isn't needed on the local Wi-Fi.
@@ -108,12 +109,21 @@ solar-monitor/
 - Keep the config and service files in git. Write the restore steps in `deploy/restore.md`: flash a new card, reinstall, copy back config and database, enable the service.
 
 **Phase 6: control (optional)**
-- Battery schedule and settings writes behind login, on the local Wi-Fi with nothing forwarded at the router (see the hard rules and issue #1).
+- Battery schedule and settings writes behind the login, for accounts allowed to write to the inverter, on the local Wi-Fi with nothing forwarded at the router (see the hard rules and issue #1).
 - Log every write. Show the current value before changing it. Make it easy to revert.
 - Protecting the equipment comes first. Double check every write before it runs: read the current value again, compare the exact value to be written with what was read, and keep the old value for undo. Read it back afterwards and compare. Start with the smallest harmless change, and leave out any setting that can't be written safely.
 - Done so far: the Battery schedule tab shows the settings. TOU has its own on/off switch, separate from the working mode. Don't use the library's `set_operation_mode` for the Eco modes: it overwrites the first time period and disables the others. Each period's on/off byte also marks its type, so write the matching value for that type rather than a plain 0 or 1.
-- The same tab changes one thing: a TOU programme's power, through `control.py`. A change has to name the bytes the page was showing, and is refused if the inverter holds anything else. Only the power bytes differ in what's sent, keeping the direction and the type's units. It's logged in `inverter_writes` before sending, read back byte for byte afterwards, and never retried by itself. Without a login, only the machine the app runs on can send one.
+- The same tab changes one thing: a TOU programme's power, through `control.py`. A change has to name the bytes the page was showing, and is refused if the inverter holds anything else. Only the power bytes differ in what's sent, keeping the direction and the type's units. It's logged in `inverter_writes` before sending, with who asked for it, read back byte for byte afterwards, and never retried by itself. Without accounts, only the machine the app runs on can send one.
 - From the first real change (50% to 30%, mid-charge): the inverter acted on it straight away, and the older copy of the period at 47515 caught up by itself within about 25 seconds. SEMS+ still showed 50% a few minutes later and showed 30% within about 48 minutes, so it lags and isn't an immediate check on what the inverter holds. Whether saving there while it's behind sends the old value back isn't known.
+
+**Accounts**
+- Each person has their own account, kept in the database: a username (lower case, can't be changed) and a salted scrypt hash of a password of at least 8 characters. Sessions are kept as a SHA-256 of the cookie's token, and each request reads the account afresh, so a change of permissions applies at once.
+- Permissions are ticks on the Users screen, which only admins see. Admin allows everything. Write to inverter allows changing the battery schedule and settings, and opens the Battery schedule tab. Edit data allows changing appliances, tariffs and planning choices, and applying an import. Each other tab has its own tick; the Dashboard is always open. The server checks every route against a table in `auth.py`, and a route missing from it is for admins only.
+- The owner's account is named `admin`. It can't be removed or lose admin, and only the owner can change its password, from the menu. On the machine that runs the app, `solar-monitor reset-password <name>` sets any account's password, and makes the owner's account if there isn't one: that's how accounts start, and how a lost password is recovered.
+- Changing your own password logs you out everywhere else. An admin setting someone's password, or removing them, logs them out everywhere.
+- Without any accounts there's no login, and only the machine the app runs on can open it, as before.
+- The Action history tab lists what each person did: changes to the inverter from its two logs, and data, account and log-in changes from `actions`. Changes of display choices, which are each person's own, aren't listed.
+- Exports leave the accounts and sessions out. The full database export deletes them from the copy securely, so no password hash is left in it.
 
 ## Open questions
 

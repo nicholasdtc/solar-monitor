@@ -65,21 +65,14 @@ def set_login(monkeypatch, username, password):
     monkeypatch.setenv("DASHBOARD_PASSWORD", password)
 
 
-def test_login_is_off_when_neither_setting_is_filled_in(monkeypatch):
+def test_the_old_login_reads_blank_when_neither_setting_is_filled_in(monkeypatch):
     set_login(monkeypatch, " ", "")
-    assert config.login() is None
+    assert config.old_login() == ("", "")
 
 
-def test_login_reads_both_settings(monkeypatch):
-    set_login(monkeypatch, "some:one", "p:ss")
-    assert config.login() == ("some:one", "p:ss")
-
-
-@pytest.mark.parametrize("username, password", [("someone", ""), ("", "secret")])
-def test_half_a_login_is_an_error(monkeypatch, username, password):
-    set_login(monkeypatch, username, password)
-    with pytest.raises(ValueError):
-        config.login()
+def test_the_old_login_reads_both_settings(monkeypatch):
+    set_login(monkeypatch, "some:one", " p:ss ")
+    assert config.old_login() == ("some:one", "p:ss")
 
 
 def test_discovery_survives_a_missed_reply(monkeypatch):

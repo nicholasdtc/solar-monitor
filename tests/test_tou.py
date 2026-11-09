@@ -8,7 +8,7 @@ from goodwe.protocol import ProtocolResponse
 from goodwe.sensor import EcoModeV2
 
 from solar_monitor import collector as collector_module
-from solar_monitor import config, control, db
+from solar_monitor import auth, config, control, db
 from solar_monitor.api import create_app
 from solar_monitor.auth import COOKIE, LoginRequired
 from solar_monitor.collector import Collector
@@ -269,22 +269,36 @@ def test_the_home_network_cannot_change_it_without_a_login(tou, collector, monke
     assert collector.inverter.writes == []
 
 
-def test_a_login_lets_the_home_network_change_it(tou, collector, monkeypatch):
+def behind_the_login(collector, monkeypatch, permissions):
+    """Built as main.py builds it, with one account. The login is the only thing guarding this
+    route when BIND_HOST opens the app up."""
+    monkeypatch.setattr(config, "load_dotenv", lambda *_: None)
     monkeypatch.setenv("BIND_HOST", "0.0.0.0")
-    monkeypatch.setenv("DASHBOARD_USER", "user")
-    monkeypatch.setenv("DASHBOARD_PASSWORD", "password")
-    assert tou(base_url="http://solar.lan:8000").status_code == 200
-    assert len(collector.inverter.writes) == 1
+    db.add_user(collector.conn, "user", auth.hash_password("a long password"), False, permissions)
+    app = create_app(collector)
+    app.add_middleware(LoginRequired, conn=collector.conn, open_without_accounts=False)
+    return app
+
+
+def test_an_account_without_write_to_inverter_cannot_change_it(collector, monkeypatch):
+    app = behind_the_login(collector, monkeypatch, ["schedule"])
+
+    async def send():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://solar.lan:8000") as client:
+            await client.post("/login", data={"username": "user", "password": "a long password"})
+            seen = await client.get("/api/tou/writes")
+            sent = await client.put("/api/tou/1", json={**SHOWN_40, "percent": 30})
+        return seen, sent
+
+    seen, sent = asyncio.run(send())
+    assert seen.status_code == 200
+    assert sent.status_code == 403
+    assert collector.inverter.writes == []
 
 
 def test_on_the_network_only_a_logged_in_request_reaches_the_inverter(collector, monkeypatch):
-    # Built as main.py builds it. The login is the only thing guarding this route when BIND_HOST opens the app up.
-    monkeypatch.setattr(config, "load_dotenv", lambda *_: None)
-    monkeypatch.setenv("BIND_HOST", "0.0.0.0")
-    monkeypatch.setenv("DASHBOARD_USER", "user")
-    monkeypatch.setenv("DASHBOARD_PASSWORD", "password")
-    app = create_app(collector)
-    app.add_middleware(LoginRequired, username="user", password="password")
+    app = behind_the_login(collector, monkeypatch, ["inverter"])
     change = {**SHOWN_40, "percent": 30}
 
     async def send():
@@ -293,7 +307,7 @@ def test_on_the_network_only_a_logged_in_request_reaches_the_inverter(collector,
             no_session = await client.put("/api/tou/1", json=change)
             made_up = await client.put("/api/tou/1", json=change, headers={"Cookie": f"{COOKIE}=made-up"})
             sent_before_login = list(collector.inverter.writes)
-            logged_in = await client.post("/login", data={"username": "user", "password": "password"})
+            logged_in = await client.post("/login", data={"username": "user", "password": "a long password"})
             sent = await client.put("/api/tou/1", json=change)
         return no_session, made_up, sent_before_login, logged_in, sent
 
@@ -303,6 +317,7 @@ def test_on_the_network_only_a_logged_in_request_reaches_the_inverter(collector,
     assert logged_in.status_code == 303
     assert sent.status_code == 200
     assert collector.inverter.writes == [("eco_mode_1", bytes.fromhex(TOU_30))]
+    assert [write["username"] for write in db.list_inverter_writes(collector.conn)] == ["user"]
 
 
 def test_the_battery_schedule_tab_is_where_programmes_change(collector):

@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS inverter_writes (
     old_bytes   TEXT NOT NULL,          -- the period in hex, as read just before: what undo goes back to
     new_bytes   TEXT NOT NULL,          -- what was sent, in hex
     outcome     TEXT NOT NULL,          -- sent (nothing recorded since), confirmed, not_applied, mismatch or unknown
-    held_bytes  TEXT                    -- what the read-back found, in hex
+    held_bytes  TEXT,                   -- what the read-back found, in hex
+    user_id     INTEGER,                -- who asked for it: a users id, or NULL without accounts or before them
+    username    TEXT                    -- their name then, kept after they're removed. NULL before accounts.
 );
 
 -- Changes to one of the inverter's single-number settings: Backup mode and the battery's limits.
@@ -68,7 +70,9 @@ CREATE TABLE IF NOT EXISTS setting_writes (
     old_value  INTEGER NOT NULL,        -- as read just before: what undo goes back to
     new_value  INTEGER NOT NULL,        -- what was sent
     outcome    TEXT NOT NULL,           -- as in inverter_writes
-    held_value INTEGER                  -- what the read-back found
+    held_value INTEGER,                 -- what the read-back found
+    user_id    INTEGER,                 -- as in inverter_writes
+    username   TEXT
 );
 
 -- The electricity meter's half-hours, imported from ESB Networks. Kept by the meter's own labels,
@@ -84,11 +88,42 @@ CREATE TABLE IF NOT EXISTS meter_readings (
 ) WITHOUT ROWID;
 
 -- How the page shows things, as chosen in its Settings: theme, date format and so on. Kept here
--- rather than in the browser, so the choices follow you to every device.
+-- rather than in the browser, so the choices follow each person to every device.
 CREATE TABLE IF NOT EXISTS display_prefs (
-    name  TEXT PRIMARY KEY,             -- a field of inputs.DisplayPrefsIn
-    value TEXT NOT NULL
+    user_id INTEGER NOT NULL,           -- whose: a users id, or 0 without accounts
+    name    TEXT NOT NULL,              -- a field of inputs.DisplayPrefsIn
+    value   TEXT NOT NULL,
+    PRIMARY KEY (user_id, name)
 ) WITHOUT ROWID;
+
+-- The people who can log in. The account named admin is the owner, which can't be removed.
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY,
+    username      TEXT NOT NULL UNIQUE, -- lower case, see auth.USERNAME
+    password_hash TEXT NOT NULL,        -- see auth.hash_password
+    admin         INTEGER NOT NULL DEFAULT 0,
+    permissions   TEXT NOT NULL DEFAULT '', -- keys of auth.PERMISSIONS, separated by spaces
+    created       INTEGER NOT NULL,     -- Unix seconds
+    last_login    INTEGER
+);
+
+-- Who is logged in where. Only a hash of each cookie's token, so reading this can't log anyone in.
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,        -- SHA-256 of the token, in hex
+    user_id    INTEGER NOT NULL,
+    expires    INTEGER NOT NULL         -- Unix seconds
+) WITHOUT ROWID;
+
+-- What people did, other than changing the inverter, which inverter_writes and setting_writes record.
+CREATE TABLE IF NOT EXISTS actions (
+    id       INTEGER PRIMARY KEY,
+    ts       INTEGER NOT NULL,          -- Unix seconds
+    user_id  INTEGER,                   -- a users id, or NULL without accounts or for an unknown name
+                                        -- (whose username is empty)
+    username TEXT NOT NULL,             -- their name then, kept after they're removed
+    kind     TEXT NOT NULL,             -- data, users or login
+    summary  TEXT NOT NULL
+);
 """
 
 # Our name -> the inverter's lifetime kWh reading. Lifetime rather than "today" readings,
@@ -153,6 +188,10 @@ RETIRED_SETTINGS = (
 _APPLIANCE_FIELDS = ("name", "typical_w", "peak_w", "surge_w", "use_in_outage", "notes")
 
 
+# Who did something: their users id (None without accounts) and their name at the time.
+Who = tuple[int | None, str]
+
+
 @dataclass(frozen=True)
 class Sample:
     ts: int
@@ -170,8 +209,31 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous = NORMAL")  # Safe from corruption under WAL, with fewer writes.
     conn.executescript(SCHEMA)
     with conn:
+        _upgrade(conn)
         conn.executemany("DELETE FROM settings WHERE key = ?", [(key,) for key in RETIRED_SETTINGS])
     return conn
+
+
+def _columns_of(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _upgrade(conn: sqlite3.Connection) -> None:
+    """Bring a database from an older version up to SCHEMA, which only creates what's missing."""
+    for log in ("inverter_writes", "setting_writes"):
+        held = _columns_of(conn, log)
+        for column, kind in (("user_id", "INTEGER"), ("username", "TEXT")):
+            if column not in held:
+                conn.execute(f"ALTER TABLE {log} ADD COLUMN {column} {kind}")
+    if "user_id" not in _columns_of(conn, "display_prefs"):
+        # From before accounts, when there was one set. It becomes the set used without accounts.
+        conn.execute(
+            "CREATE TABLE display_prefs_new (user_id INTEGER NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL, "
+            "PRIMARY KEY (user_id, name)) WITHOUT ROWID"
+        )
+        conn.execute("INSERT INTO display_prefs_new (user_id, name, value) SELECT 0, name, value FROM display_prefs")
+        conn.execute("DROP TABLE display_prefs")
+        conn.execute("ALTER TABLE display_prefs_new RENAME TO display_prefs")
 
 
 def encode_raw(values: dict[str, object]) -> bytes:
@@ -451,15 +513,19 @@ def save_settings(conn: sqlite3.Connection, settings: dict[str, float | None]) -
         )
 
 
-def get_display_prefs(conn: sqlite3.Connection) -> dict[str, str]:
-    return dict(conn.execute("SELECT name, value FROM display_prefs ORDER BY name"))
+def get_display_prefs(conn: sqlite3.Connection, user_id: int) -> dict[str, str]:
+    """One person's choices. User 0 is the set used without accounts."""
+    return dict(conn.execute("SELECT name, value FROM display_prefs WHERE user_id = ? ORDER BY name", (user_id,)))
 
 
-def save_display_prefs(conn: sqlite3.Connection, prefs: dict[str, str]) -> None:
-    """Replace the whole set, so a choice put back to its default is forgotten too."""
+def save_display_prefs(conn: sqlite3.Connection, user_id: int, prefs: dict[str, str]) -> None:
+    """Replace the person's whole set, so a choice put back to its default is forgotten too."""
     with conn:
-        conn.execute("DELETE FROM display_prefs")
-        conn.executemany("INSERT INTO display_prefs (name, value) VALUES (?, ?)", prefs.items())
+        conn.execute("DELETE FROM display_prefs WHERE user_id = ?", (user_id,))
+        conn.executemany(
+            "INSERT INTO display_prefs (user_id, name, value) VALUES (?, ?, ?)",
+            [(user_id, name, value) for name, value in prefs.items()],
+        )
 
 
 def _appliance(row: tuple[object, ...]) -> dict[str, object]:
@@ -502,14 +568,21 @@ def delete_appliance(conn: sqlite3.Connection, appliance_id: int) -> bool:
 
 
 def add_inverter_write(
-    conn: sqlite3.Connection, slot: int, old_bytes: str, new_bytes: str, old_percent: int, new_percent: int
+    conn: sqlite3.Connection,
+    slot: int,
+    old_bytes: str,
+    new_bytes: str,
+    old_percent: int,
+    new_percent: int,
+    by: Who | None = None,
 ) -> int:
     """Called before a write is sent, so it's on record whatever happens next."""
+    user_id, username = by or (None, None)
     with conn:
         cursor = conn.execute(
-            "INSERT INTO inverter_writes (ts, slot, old_percent, new_percent, old_bytes, new_bytes, outcome) "
-            "VALUES (?, ?, ?, ?, ?, ?, 'sent')",
-            (int(time.time()), slot, old_percent, new_percent, old_bytes, new_bytes),
+            "INSERT INTO inverter_writes (ts, slot, old_percent, new_percent, old_bytes, new_bytes, outcome, "
+            "user_id, username) VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, ?)",
+            (int(time.time()), slot, old_percent, new_percent, old_bytes, new_bytes, user_id, username),
         )
     return cursor.lastrowid
 
@@ -523,19 +596,23 @@ def finish_inverter_write(conn: sqlite3.Connection, write_id: int, outcome: str,
 
 def list_inverter_writes(conn: sqlite3.Connection, limit: int = 20) -> list[dict[str, object]]:
     """The latest first."""
-    columns = ("id", "ts", "slot", "old_percent", "new_percent", "old_bytes", "new_bytes", "outcome")
+    columns = ("id", "ts", "slot", "old_percent", "new_percent", "old_bytes", "new_bytes", "outcome", "username")
     rows = conn.execute(
         f"SELECT {', '.join(columns)} FROM inverter_writes ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
     return [dict(zip(columns, row)) for row in rows]
 
 
-def add_setting_write(conn: sqlite3.Connection, setting: str, old_value: int, new_value: int) -> int:
+def add_setting_write(
+    conn: sqlite3.Connection, setting: str, old_value: int, new_value: int, by: Who | None = None
+) -> int:
     """Called before a write is sent, so it's on record whatever happens next."""
+    user_id, username = by or (None, None)
     with conn:
         cursor = conn.execute(
-            "INSERT INTO setting_writes (ts, setting, old_value, new_value, outcome) VALUES (?, ?, ?, ?, 'sent')",
-            (int(time.time()), setting, old_value, new_value),
+            "INSERT INTO setting_writes (ts, setting, old_value, new_value, outcome, user_id, username) "
+            "VALUES (?, ?, ?, ?, 'sent', ?, ?)",
+            (int(time.time()), setting, old_value, new_value, user_id, username),
         )
     return cursor.lastrowid
 
@@ -549,8 +626,188 @@ def finish_setting_write(conn: sqlite3.Connection, write_id: int, outcome: str, 
 
 def list_setting_writes(conn: sqlite3.Connection, limit: int = 20) -> list[dict[str, object]]:
     """The latest first."""
-    columns = ("id", "ts", "setting", "old_value", "new_value", "outcome")
+    columns = ("id", "ts", "setting", "old_value", "new_value", "outcome", "username")
     rows = conn.execute(
         f"SELECT {', '.join(columns)} FROM setting_writes ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
     return [dict(zip(columns, row)) for row in rows]
+
+
+_USER_FIELDS = ("id", "username", "password_hash", "admin", "permissions", "created", "last_login")
+_USER_COLUMNS = ", ".join(f"users.{field}" for field in _USER_FIELDS)
+
+
+def _user(row: tuple[object, ...] | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    user = dict(zip(_USER_FIELDS, row))
+    user["admin"] = bool(user["admin"])
+    user["permissions"] = user["permissions"].split()
+    return user
+
+
+def has_users(conn: sqlite3.Connection) -> bool:
+    return conn.execute("SELECT EXISTS (SELECT 1 FROM users)").fetchone()[0] == 1
+
+
+def get_user(conn: sqlite3.Connection, user_id: int) -> dict[str, object] | None:
+    return _user(conn.execute(f"SELECT {_USER_COLUMNS} FROM users WHERE id = ?", (user_id,)).fetchone())
+
+
+def find_user(conn: sqlite3.Connection, username: str) -> dict[str, object] | None:
+    """Capitals don't matter, as names are kept in lower case."""
+    return _user(conn.execute(f"SELECT {_USER_COLUMNS} FROM users WHERE username = ?", (username.lower(),)).fetchone())
+
+
+def list_users(conn: sqlite3.Connection, owner: str) -> list[dict[str, object]]:
+    """The owner first, then by name."""
+    rows = conn.execute(
+        f"SELECT {_USER_COLUMNS} FROM users ORDER BY username != ?, username", (owner,)
+    ).fetchall()
+    return [_user(row) for row in rows]
+
+
+def add_user(
+    conn: sqlite3.Connection, username: str, password_hash: str, admin: bool, permissions: Iterable[str]
+) -> int:
+    """Raises sqlite3.IntegrityError if the name is taken."""
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO users (username, password_hash, admin, permissions, created) VALUES (?, ?, ?, ?, ?)",
+            (username.lower(), password_hash, int(admin), " ".join(sorted(permissions)), int(time.time())),
+        )
+    return cursor.lastrowid
+
+
+def update_user(conn: sqlite3.Connection, user_id: int, admin: bool, permissions: Iterable[str]) -> bool:
+    """False if there's no such user."""
+    with conn:
+        cursor = conn.execute(
+            "UPDATE users SET admin = ?, permissions = ? WHERE id = ?",
+            (int(admin), " ".join(sorted(permissions)), user_id),
+        )
+    return cursor.rowcount > 0
+
+
+def set_password_hash(conn: sqlite3.Connection, user_id: int, password_hash: str) -> None:
+    with conn:
+        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
+
+
+def delete_user(conn: sqlite3.Connection, user_id: int) -> bool:
+    """With their sessions and display choices. What they did stays on record, under their name."""
+    with conn:
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM display_prefs WHERE user_id = ?", (user_id,))
+        cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    return cursor.rowcount > 0
+
+
+def copy_display_prefs(conn: sqlite3.Connection, from_user: int, to_user: int, leave_out: Iterable[str] = ()) -> None:
+    prefs = {name: value for name, value in get_display_prefs(conn, from_user).items() if name not in set(leave_out)}
+    save_display_prefs(conn, to_user, prefs)
+
+
+def add_session(conn: sqlite3.Connection, token_hash: str, user_id: int, expires: int) -> None:
+    """Also forgets sessions that have expired, and notes when the person logged in."""
+    now = int(time.time())
+    with conn:
+        conn.execute("DELETE FROM sessions WHERE expires <= ?", (now,))
+        conn.execute(
+            "INSERT INTO sessions (token_hash, user_id, expires) VALUES (?, ?, ?)", (token_hash, user_id, expires)
+        )
+        conn.execute("UPDATE users SET last_login = ? WHERE id = ?", (now, user_id))
+
+
+def session_user(conn: sqlite3.Connection, token_hash: str) -> dict[str, object] | None:
+    """Whose session this is, read afresh every time so a change to their account applies at once."""
+    row = conn.execute(
+        f"SELECT {_USER_COLUMNS} FROM sessions JOIN users ON users.id = sessions.user_id "
+        "WHERE sessions.token_hash = ? AND sessions.expires > ?",
+        (token_hash, int(time.time())),
+    ).fetchone()
+    return _user(row)
+
+
+def delete_session(conn: sqlite3.Connection, token_hash: str) -> None:
+    with conn:
+        conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+
+
+def delete_sessions(conn: sqlite3.Connection, user_id: int, keep: str | None = None) -> int:
+    """End all of a person's sessions, except the one whose hash is `keep`. Returns how many ended."""
+    with conn:
+        cursor = conn.execute(
+            "DELETE FROM sessions WHERE user_id = ? AND token_hash IS NOT ? AND expires > ?",
+            (user_id, keep, int(time.time())),
+        )
+    return cursor.rowcount
+
+
+def count_sessions(conn: sqlite3.Connection) -> dict[int, int]:
+    """Each person's live sessions."""
+    return dict(
+        conn.execute(
+            "SELECT user_id, COUNT(*) FROM sessions WHERE expires > ? GROUP BY user_id", (int(time.time()),)
+        )
+    )
+
+
+def add_action(conn: sqlite3.Connection, by: Who, kind: str, summary: str) -> None:
+    user_id, username = by
+    with conn:
+        conn.execute(
+            "INSERT INTO actions (ts, user_id, username, kind, summary) VALUES (?, ?, ?, ?, ?)",
+            (int(time.time()), user_id, username, kind, summary),
+        )
+
+
+_HISTORY_FIELDS = ("source", "id", "ts", "username", "kind", "summary", "slot", "setting", "old", "new", "outcome")
+
+
+def list_history(
+    conn: sqlite3.Connection,
+    before: int | None = None,
+    limit: int = 100,
+    username: str | None = None,
+    kind: str | None = None,
+) -> list[dict[str, object]]:
+    """The actions and both write logs in one list, latest first. A write's summary is left for the
+    caller to describe. `before` includes that second, so a page that ends part-way through one
+    misses nothing: the caller drops what it already has, by source and id."""
+    rows = conn.execute(
+        """
+        SELECT * FROM (
+            SELECT 'action' AS source, id, ts, username, kind, summary,
+                NULL AS slot, NULL AS setting, NULL AS old, NULL AS new, NULL AS outcome
+            FROM actions
+            UNION ALL
+            SELECT 'tou', id, ts, username, 'inverter', NULL, slot, NULL, old_bytes, new_bytes, outcome
+            FROM inverter_writes
+            UNION ALL
+            SELECT 'setting', id, ts, username, 'inverter', NULL, NULL, setting, old_value, new_value, outcome
+            FROM setting_writes
+        )
+        WHERE (:before IS NULL OR ts <= :before)
+            AND (:kind IS NULL OR kind = :kind)
+            AND (:username IS NULL OR username = :username)
+        ORDER BY ts DESC, source, id DESC
+        LIMIT :limit
+        """,
+        {"before": before, "kind": kind, "username": username, "limit": limit},
+    ).fetchall()
+    return [dict(zip(_HISTORY_FIELDS, row)) for row in rows]
+
+
+def history_names(conn: sqlite3.Connection) -> list[str]:
+    """Everyone who has done something on record, including people since removed."""
+    rows = conn.execute(
+        """
+        SELECT username FROM actions WHERE username != ''
+        UNION SELECT username FROM inverter_writes WHERE username IS NOT NULL
+        UNION SELECT username FROM setting_writes WHERE username IS NOT NULL
+        UNION SELECT username FROM users
+        ORDER BY 1
+        """
+    ).fetchall()
+    return [name for (name,) in rows]

@@ -59,10 +59,10 @@ sudo nano /opt/solar-monitor/.env
 - `BIND_HOST`: `0.0.0.0` to open the dashboard from other devices at home. Leave it blank to keep it
   private to the Pi, and reach it from the PC through SSH instead:
   `ssh -L 8000:localhost:8000 <pi-user>@<pi-name>.local`, then open http://localhost:8000.
-- `DASHBOARD_USER` and `DASHBOARD_PASSWORD`: the dashboard's login, required if `BIND_HOST` is `0.0.0.0`.
-  The app won't start without them, and `journalctl` will say why. Use a password you don't use anywhere
-  else, because it isn't encrypted on the way across your network.
 - `DB_PATH`: leave blank. The service sets it to `/var/lib/solar-monitor/solar-monitor.db`.
+
+Accounts aren't set in `.env`. With `BIND_HOST=0.0.0.0` the app won't start until the owner's
+account exists, which step 7 makes.
 
 ## 6. Stop the app on the PC
 
@@ -85,6 +85,18 @@ sudo systemctl enable --now systemd-time-wait-sync
 sudo systemctl daemon-reload && sudo systemctl enable --now solar-monitor
 ```
 
+If `BIND_HOST` is `0.0.0.0`, make the owner's account, named `admin`. Until then the service keeps
+restarting, and `journalctl` says why. Use a password you don't use anywhere else, because it isn't
+encrypted on the way across your network.
+
+```bash
+sudo -u solar-monitor DB_PATH=/var/lib/solar-monitor/solar-monitor.db /opt/solar-monitor/.venv/bin/solar-monitor reset-password admin
+```
+
+Log in as `admin` and add everyone else from the menu, under Users. The same command, with someone's
+username, sets a forgotten password and logs them out everywhere. Run it as the `solar-monitor`
+user, as above, so the database stays the app's.
+
 ## 8. Give it its own name (on the Pi)
 
 This puts the dashboard at http://solar.local, with no port. Skip it if `BIND_HOST` is blank.
@@ -92,7 +104,7 @@ Make sure the router reserves the Pi's address first (step 2), because the name 
 the address the Pi has when it starts.
 
 The app's name is announced alongside the Pi's own one, and Caddy passes requests for it on to the app.
-Keep `BIND_HOST=0.0.0.0`: it's what makes the app refuse to start without a login, and the app
+Keep `BIND_HOST=0.0.0.0`: it's what makes the app refuse to start without accounts, and the app
 can't tell it's behind Caddy. Port 8000 keeps working too, behind the same login.
 
 ```bash
@@ -146,5 +158,8 @@ copy and `daemon-reload` from step 7 before restarting. Likewise, if the `Caddyf
 `solar-monitor-name.service` changed, repeat their commands from step 8, then
 `sudo systemctl restart solar-monitor-name`. A restart saves unsaved readings first,
 but a power cut can lose up to 5 minutes of them. Restarts and reboots keep you logged in, because
-the app saves its logins in `/var/lib/solar-monitor/sessions.json`. Changing the login in `.env`
-logs everyone out.
+the app keeps its logins in its database.
+
+The first version with accounts makes the owner's account, `admin`, from `DASHBOARD_PASSWORD` in
+`.env`, and logs everyone out. Log in as `admin` with that password, then remove `DASHBOARD_USER`
+and `DASHBOARD_PASSWORD` from `.env`: until then, the journal reminds you at every start.
