@@ -414,7 +414,7 @@ def test_without_accounts_the_page_knows_its_this_machine(conn):
     assert (user["local"], user["admin"]) == (True, True)
 
 
-def test_every_page_but_the_dashboard_needs_a_permission(app):
+def test_every_page_but_the_dashboard_and_weather_needs_a_permission(app):
     page = as_(app, "admin").get("/").text
     links = re.search(r'<ul id="tab-links">(.*?)</ul>', page, re.S).group(1)
     tabs = re.findall(r'href="#([\w-]+)"', links)
@@ -424,7 +424,7 @@ def test_every_page_but_the_dashboard_needs_a_permission(app):
     assert {view["data-tab"] for view in views} == set(tabs)
     given = set()
     for view in views:
-        if view["data-tab"] == "dashboard":
+        if view["data-tab"] in ("dashboard", "weather"):  # Their data is open to everyone.
             assert "data-perm" not in view
             continue
         assert view["id"] == f'view-{view["data-tab"]}-{view["data-sub"]}'

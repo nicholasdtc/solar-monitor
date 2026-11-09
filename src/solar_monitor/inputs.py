@@ -94,3 +94,7 @@ class DisplayPrefsIn(BaseModel):
     # The section the page opens on, such as grid-meter.
     section: Annotated[str, StringConstraints(max_length=32, pattern=r"^[a-z]+(?:-[a-z]+)*$")] | None = None
     motion: Literal["system", "reduce", "full"] | None = None
+    # The weather's units.
+    temperature: Literal["c", "f"] | None = None
+    wind: Literal["ms", "kmh", "mph", "kn"] | None = None
+    rain: Literal["mm", "in"] | None = None

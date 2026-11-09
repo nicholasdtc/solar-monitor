@@ -37,6 +37,8 @@
     --good: #0b7f0b;
     --warning: #fab219;
     --critical: #c93434;
+    --wx-severe: #e8710a; /* A weather warning between --warning and --critical: Met Éireann's orange, say. */
+    --wx-temp: #d4572a;
     /* Grid, solar, battery and house: amber against magenta keeps solar and house apart. Checked with the palette
        validator on this surface and the dark one. Solar and battery are under 3:1 here, so every chart of them carries a
        title or key, and a table. */
@@ -72,6 +74,8 @@
       --rule-strong: #4c565c;
       --good: #2f9e2f;
       --critical: #e05a5a;
+      --wx-severe: #f08a2c;
+      --wx-temp: #e5774b;
       --flow-grid: #3987e5;
       --flow-solar: #c98500;
       --flow-battery: #199e70;
@@ -93,6 +97,8 @@
     --rule-strong: #4c565c;
     --good: #2f9e2f;
     --critical: #e05a5a;
+    --wx-severe: #f08a2c;
+    --wx-temp: #e5774b;
     --flow-grid: #3987e5;
     --flow-solar: #c98500;
     --flow-battery: #199e70;
@@ -396,6 +402,27 @@
     .dash { grid-template-columns: minmax(0, 1fr) 800px; }
   }
 
+  /* Weather */
+  .wx-warning-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+  .wx-warning { border-left: 6px solid var(--wx-level, var(--rule-strong)); padding: 4px 0 4px 12px; display: flex; flex-direction: column; gap: 4px; max-width: 86ch; }
+  .wx-warning.minor { --wx-level: var(--rule-strong); }
+  .wx-warning.moderate { --wx-level: var(--warning); }
+  .wx-warning.severe { --wx-level: var(--wx-severe); }
+  .wx-warning.extreme { --wx-level: var(--critical); }
+  .wx-warning-level { font-weight: 600; }
+  .wx-warning p { margin: 0; }
+  .wx-icon { flex: none; vertical-align: middle; }
+  .wx-now-main { display: flex; gap: 10px; align-items: center; }
+  .wx-hours td, .wx-hours th, .wx-days td, .wx-days th { white-space: nowrap; }
+  .wx-cond { display: inline-flex; gap: 8px; align-items: center; }
+  .wx-hours tr.wx-day th { padding-top: 16px; color: var(--ink); font-weight: 600; border-top: 0; }
+  .wx-fold button { padding: 0; background: none; border: 0; color: var(--ink-2); font: inherit; cursor: pointer; min-height: 28px; text-align: left; }
+  .wx-fold button::before { content: "▸ "; }
+  .wx-fold button[aria-expanded="true"]::before { content: "▾ "; }
+  .wx-folded { color: var(--ink-2); }
+  .wx-credits { list-style: none; margin: 0; padding: 0; }
+  .wx-foot { gap: 4px; }
+
   /* A sub-tab's page: its panes one under another, the last taking up the rest of the screen. */
   .page { display: flex; flex-direction: column; }
   .page > :last-child { flex-grow: 1; }
@@ -438,7 +465,7 @@
   /* A ring round a chart only for the keyboard, not when it's clicked or tapped to read. */
   .chart svg:focus:not(:focus-visible) { outline: none; }
   .chart svg:focus-visible { outline: 2px solid var(--flow-grid); outline-offset: 2px; }
-  #history-charts svg, #now-charts svg { cursor: crosshair; }
+  #history-charts svg, #now-charts svg, #weather-charts svg { cursor: crosshair; }
   .charts.compact { gap: 10px; }
   .compact .chart-head { padding-right: 0; }
   .chart-limit { stroke: var(--muted); stroke-dasharray: 4 3; }
@@ -669,6 +696,7 @@
       <div class="menu" id="menu">
         <ul id="tab-links">
           <li><a href="#dashboard" aria-current="page">Dashboard</a></li>
+          <li><a href="#weather">Weather</a></li>
           <li><a href="#statistics">History</a></li>
           <li><a href="#grid-meter">Grid meter</a></li>
           <li><a href="#appliances">Appliances</a></li>
@@ -764,6 +792,27 @@
         <option value="system">This device's setting</option>
         <option value="reduce">Reduced: nothing moves</option>
         <option value="full">Full</option>
+      </select>
+    </label>
+    <h3>Weather</h3>
+    <label>Temperature
+      <select name="temperature">
+        <option value="c">°C</option>
+        <option value="f">°F</option>
+      </select>
+    </label>
+    <label>Wind
+      <select name="wind">
+        <option value="kmh">km/h</option>
+        <option value="ms">m/s</option>
+        <option value="mph">mph</option>
+        <option value="kn">Knots</option>
+      </select>
+    </label>
+    <label>Rain
+      <select name="rain">
+        <option value="mm">mm</option>
+        <option value="in">Inches</option>
       </select>
     </label>
     <p class="note" id="prefs-where">Kept on the monitor, so they follow you to every device. Appliance ratings stay in W.</p>
@@ -893,6 +942,49 @@
       <div class="now-head"><h2>Last 24 hours</h2><a href="#statistics">History →</a></div>
       <div class="charts compact" id="now-charts" data-swipe></div>
       <p class="meta" id="now-note"></p>
+    </div>
+  </section>
+
+  <section class="view page" id="view-weather" data-tab="weather" aria-label="Weather" hidden>
+    <div class="pane" id="wx-unset" hidden>
+      <h2>Weather</h2>
+      <p class="note">Set where the panels are under <a href="#setup/panels">Setup › Panels &amp; weather</a> to see the forecast.</p>
+    </div>
+    <div class="pane wx-warnings" id="wx-warnings" hidden>
+      <h2>Warnings</h2>
+      <ul class="wx-warning-list" id="wx-warning-list"></ul>
+    </div>
+    <div class="pane" id="wx-now-pane">
+      <h2>Now</h2>
+      <div class="tiles" id="wx-now"></div>
+      <p class="meta" id="wx-now-note" aria-live="polite"></p>
+    </div>
+    <div class="pane" id="wx-charts-pane" hidden>
+      <h2>12 hours back, 48 ahead <button type="button" class="help" id="wx-charts-help" aria-label="About these charts" data-tip="">?</button></h2>
+      <div class="charts" id="weather-charts"></div>
+    </div>
+    <div class="pane" id="wx-hours-pane" hidden>
+      <h2>Hour by hour</h2>
+      <div class="scroll" tabindex="0" role="region" aria-label="Hourly forecast">
+        <table class="wx-hours">
+          <thead id="wx-hours-head"></thead>
+          <tbody id="wx-hours"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pane" id="wx-days-pane" hidden>
+      <h2>Next days <button type="button" class="help" aria-label="About sunshine" data-tip="Sunshine: direct sun ≥ 120 W/m²&#10;WMO measure">?</button></h2>
+      <div class="scroll" tabindex="0" role="region" aria-label="Daily forecast">
+        <table class="wx-days">
+          <thead id="wx-days-head"></thead>
+          <tbody id="wx-days"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pane wx-foot">
+      <ul class="meta wx-credits" id="wx-credits"></ul>
+      <p class="meta" id="wx-fetches"></p>
+      <p class="meta" id="wx-backfill"></p>
     </div>
   </section>
 
@@ -1522,10 +1614,14 @@
     week: ["mon", "sun"],
     power: ["auto", "W", "kW"],
     motion: ["system", "reduce", "full"],
+    temperature: ["c", "f"],
+    wind: ["ms", "kmh", "mph", "kn"],
+    rain: ["mm", "in"],
   };
   const PREF_DEFAULTS = {
     theme: "system", date: "auto", time: "auto", zone: "server",
     currency: "none", week: "mon", power: "auto", section: "dashboard", motion: "system",
+    temperature: "c", wind: "kmh", rain: "mm",
   };
   function validZone(zone) {
     if (!zone) return null;
@@ -3601,7 +3697,7 @@
   function formatPoint(point, series) {
     const value = point[series.key];
     if (!isNum(value)) return null;
-    const format = series.unit === "W" ? power : (v) => `${number(v, 0)}${series.unit === "%" ? "" : " "}${series.unit}`;
+    const format = series.format ?? (series.unit === "W" ? power : (v) => `${number(v, 0)}${series.unit === "%" ? "" : " "}${series.unit}`);
     const word = series.above && Math.abs(value) >= FLOW_MIN_W ? (value > 0 ? series.above : series.below) : "";
     return { value: format(value), label: word ? `${series.label}, ${word}` : series.label, color: series.color };
   }
@@ -3681,9 +3777,10 @@
     Charts over time, one under another, read together by one crosshair and tooltip. Everything is
     drawn a view's width either side as well, so it's there to slide in when dragged. `full`: the
     index of the chart filling the screen. `compact`: the dashboard's, shorter, without the lowest
-    to highest shading or a full-screen button. Returns where the plots sit.
+    to highest shading or a full-screen button. `zoomable`: has the full-screen button. `marks`: moments
+    to draw a dashed line at, such as now, each { ts, label }. Returns where the plots sit.
   */
-  function drawTimeCharts(box, { charts, points, visible, bucket, start, end, tou = [], full = null, compact = false, prefix }) {
+  function drawTimeCharts(box, { charts, points, visible, bucket, start, end, tou = [], full = null, compact = false, zoomable = !compact, marks = [], prefix }) {
     const span = end - start;
     const refocus = keepZoomFocus(box);
     box.replaceChildren();
@@ -3698,7 +3795,7 @@
     };
     const shown = charts.map((chart, i) => ({ chart, i })).filter(({ i }) => full === null || i === full);
     const planned = shown.map(({ chart, i }) => {
-      const node = chartShell(chart, chart.series, "lines", full !== null, !compact);
+      const node = chartShell(chart, chart.series, "lines", full !== null, zoomable);
       box.append(node);
       const height = full !== null ? fullHeight(box, node) : (compact && chart.compactHeight) || chart.height;
       const bottom = height - X_AXIS_HEIGHT;
@@ -3706,7 +3803,7 @@
       const stripTop = chart.strip ? bottom - Math.round((bottom - CHART_TOP) * STRIP_SHARE) : bottom;
       const plotBottom = chart.strip ? stripTop - STRIP_GAP : bottom;
       const scale = yScale(...(chart.domain ?? range(chart.series, chart.floor)), CHART_TOP, plotBottom, chart.unit);
-      const strip = chart.strip && { top: stripTop, scale: yScale(...range([chart.strip], -Infinity, false), stripTop, bottom, chart.strip.unit, 18) };
+      const strip = chart.strip && { top: stripTop, scale: yScale(...(chart.strip.domain ?? range([chart.strip], -Infinity, false)), stripTop, bottom, chart.strip.unit, 18) };
       return { chart, i, node, height, bottom, plotBottom, scale, strip };
     });
     const named = shown.filter(({ chart }) => chart.series.length > 1).flatMap(({ chart }) => chart.series.map((s) => textWidth(s.label)));
@@ -3793,6 +3890,12 @@
         const bars = sliding(areas[1].clip);
         bars.append(svgEl("path", { d: barsPath(points, chart.strip.key, atTime, strip.scale.y, plotWidth * bucket / span), style: `fill: var(${chart.strip.color})` }));
         drawInsideLabels(svg, frame, strip.scale, bottom, chart.strip.inside, strip.top, 18);
+      }
+      for (const mark of marks) {
+        const mx = Math.round(atTime(mark.ts)) + 0.5;
+        if (mx < frame.left || mx > frame.left + plotWidth) continue;
+        svg.append(svgEl("line", { x1: mx, x2: mx, y1: CHART_TOP, y2: bottom, class: "chart-limit" }));
+        if (n === 0 && mark.label) svg.append(svgEl("text", { x: mx + 5, y: CHART_TOP + 13, class: "chart-words" }, mark.label));
       }
       if (endLabels) drawEndLabels(svg, chart, visible, x, scale.y, plotBottom);
       drawInsideLabels(svg, frame, scale, plotBottom, chart.inside);
@@ -5155,6 +5258,524 @@
   });
 
   /*
+    Weather: the forecast from the provider picked under Setup › Panels & weather, with the warnings, the
+    last 12 hours as recorded, and how much the panels made in them. Kept in °C, mm, m/s and W/m²; shown in
+    the units picked in Preferences. Nothing here is tied to one provider: the server says what it has.
+  */
+  const weatherTab = (() => {
+    const HOUR = 3600;
+    const BACK_HOURS = 12;
+    const AHEAD_HOURS = 48;
+    const NIGHT_FOLD_HOURS = 3; // A shorter run of night hours stays open.
+    const SUNSHINE_WM2 = 120; // The WMO's measure of sunshine, applied to the direct sun.
+    const LEVELS = ["minor", "moderate", "severe", "extreme"];
+    const WIND_UNITS = { ms: [1, "m/s"], kmh: [3.6, "km/h"], mph: [2.23694, "mph"], kn: [1.94384, "kn"] };
+    const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+    const FETCH_NAMES = { forecast: "Forecast", warnings: "Warnings", past: "Past weather" };
+
+    let data = null; // /api/weather's answer.
+    let hours = []; // Each hour from the start of today or 12 hours back, recorded then forecast, by hour_start.
+    let solar = new Map(); // What the panels made, average W, by hour_start.
+    let request = 0;
+    const openFolds = new Set(); // The first hour of each run of night hours opened.
+
+    const cap = (text) => (text ? text[0].toUpperCase() + text.slice(1) : "");
+    const tempIn = (c) => (isNum(c) ? (prefs.temperature === "f" ? (c * 9) / 5 + 32 : c) : null);
+    const tempUnit = () => (prefs.temperature === "f" ? "°F" : "°C");
+    const degrees = (x) => `${number(Math.round(x), 0)}°`;
+    const tempText = (c) => (isNum(c) ? degrees(tempIn(c)) : "—");
+    const windIn = (ms) => (isNum(ms) ? ms * (WIND_UNITS[prefs.wind] ?? WIND_UNITS.kmh)[0] : null);
+    const windUnit = () => (WIND_UNITS[prefs.wind] ?? WIND_UNITS.kmh)[1];
+    const windText = (ms) => (isNum(ms) ? number(Math.round(windIn(ms)), 0) : "—");
+    const rainIn = (mm) => (isNum(mm) ? (prefs.rain === "in" ? mm / 25.4 : mm) : null);
+    const rainUnit = () => (prefs.rain === "in" ? "in" : "mm");
+    const rainDigits = () => (prefs.rain === "in" ? 2 : 1);
+    const rainText = (mm) => (isNum(mm) ? number(rainIn(mm), rainDigits()) : "—");
+    const percent = (x) => (isNum(x) ? `${number(Math.round(x), 0)}%` : "—");
+    const compass = (deg) => (isNum(deg) ? COMPASS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16] : "—");
+    const sunWm2 = (h) => h.gti_wm2 ?? h.ghi_wm2;
+    const httpLink = (url) => typeof url === "string" && /^https?:\/\//i.test(url);
+    const ms = (seconds) => seconds * 1000;
+
+    /* A picture of the weather, with its name for screen readers. Null shows a dash. */
+    function icon(condition, isDay, size = 32) {
+      if (!condition) return el("span", "no-value", "—");
+      const svg = svgEl("svg", { viewBox: "0 0 32 32", width: size, height: size, class: "wx-icon", role: "img", "aria-label": cap(condition) });
+      svg.append(svgEl("title", {}, cap(condition)));
+      const fill = (token) => `fill: var(${token})`;
+      const stroke = (token, width = 1.6) => `fill: none; stroke: var(${token}); stroke-width: ${width}; stroke-linecap: round; stroke-linejoin: round`;
+      const group = (transform, ...parts) => {
+        const g = svgEl("g", transform ? { transform } : {});
+        g.append(...parts);
+        return g;
+      };
+      const sun = () => {
+        const g = group("", svgEl("circle", { cx: 16, cy: 16, r: 6, style: fill("--flow-solar") }));
+        for (let i = 0; i < 8; i++) {
+          const a = (i * Math.PI) / 4;
+          g.append(svgEl("line", {
+            x1: 16 + 9 * Math.cos(a), y1: 16 + 9 * Math.sin(a), x2: 16 + 12.5 * Math.cos(a), y2: 16 + 12.5 * Math.sin(a),
+            style: stroke("--flow-solar", 2),
+          }));
+        }
+        return g;
+      };
+      const moon = () => svgEl("path", { d: "M19 5a11 11 0 1 0 8 17A9 9 0 1 1 19 5z", style: fill("--muted") });
+      const sky = () => (isDay === false ? moon() : sun());
+      const cloud = () => svgEl("path", {
+        d: "M9 25h15a5 5 0 0 0 .6-10A7 7 0 0 0 11 13.6 5.7 5.7 0 0 0 9 25z",
+        style: `fill: var(--surface); stroke: var(--ink-2); stroke-width: 1.6; stroke-linejoin: round`,
+      });
+      const drops = (count, long = false) => {
+        const g = group("");
+        for (let i = 0; i < count; i++) {
+          const x = 10 + (i * 12) / Math.max(1, count - 1) + (count === 1 ? 6 : 0);
+          g.append(svgEl("line", { x1: x, y1: 23, x2: x - 2, y2: long ? 30 : 28, style: stroke("--flow-grid", 1.8) }));
+        }
+        return g;
+      };
+      const flakes = (xs) => group("", ...xs.map((x, i) => svgEl("circle", { cx: x, cy: i % 2 ? 29 : 26, r: 1.6, style: fill("--ink-2") })));
+      const raised = (...parts) => group("translate(0 -5)", ...parts);
+      const small = (part) => group("translate(1 1) scale(.6)", part);
+      const parts = {
+        clear: () => [sky()],
+        "mostly clear": () => [group("translate(-2 -2) scale(.9)", sky()), group("translate(13 14) scale(.55)", cloud())],
+        "partly cloudy": () => [small(sky()), cloud()],
+        cloudy: () => [cloud()],
+        fog: () => [16, 21, 26].map((y, i) => svgEl("line", { x1: 5 + i * 2, y1: y - 6, x2: 27 - i * 2, y2: y - 6, style: stroke("--muted", 2) }))
+          .concat([svgEl("line", { x1: 8, y1: 26, x2: 24, y2: 26, style: stroke("--muted", 2) })]),
+        drizzle: () => [raised(cloud()), drops(2)],
+        rain: () => [raised(cloud()), drops(3)],
+        "heavy rain": () => [raised(cloud()), drops(4, true)],
+        showers: () => [small(sky()), raised(cloud()), drops(2)],
+        sleet: () => [raised(cloud()), drops(2), flakes([16])],
+        snow: () => [raised(cloud()), flakes([9, 14, 19, 24])],
+        thunder: () => [raised(cloud()), svgEl("path", { d: "M17 18l-5 7h4l-2 6 7-8h-4l2-5z", style: fill("--warning") })],
+      }[condition];
+      svg.append(...(parts ? parts() : [cloud()]));
+      return svg;
+    }
+
+    /* The icon and the words, side by side, in a table cell or a tile. */
+    function condition(h, size = 24) {
+      const span = el("span", "wx-cond");
+      span.append(icon(h.condition, h.is_day, size), h.condition ? cap(h.condition) : "");
+      return span;
+    }
+
+    async function refresh() {
+      const mine = ++request;
+      const now = Math.floor(Date.now() / 1000);
+      const hourStart = now - (now % HOUR);
+      try {
+        const next = await getJson("/api/weather");
+        if (mine !== request) return;
+        let recorded = [];
+        let made = new Map();
+        if (next.located) {
+          const today = partsIn(ms(now), shownZone());
+          const from = Math.min(hourStart - BACK_HOURS * HOUR, zonedMs(shownZone(), today.year, today.month, today.day) / 1000);
+          const [past, history] = await Promise.all([
+            hourStart > from ? getJson(`/api/weather/history?start=${from}&end=${hourStart}`).catch(() => null) : null,
+            getJson(`/api/history?start=${hourStart - BACK_HOURS * HOUR}&end=${now}&bucket=${HOUR}`).catch(() => null),
+          ]);
+          if (mine !== request) return;
+          recorded = past?.hours ?? [];
+          for (const point of history?.points ?? []) if (isNum(point.pv_w)) made.set(point.ts, point.pv_w);
+        }
+        data = next;
+        const byHour = new Map(recorded.map((h) => [h.hour_start, h]));
+        for (const h of next.forecast?.hours ?? []) byHour.set(h.hour_start, h);
+        hours = [...byHour.values()].sort((a, b) => a.hour_start - b.hour_start);
+        solar = made;
+        $("wx-now-note").textContent = "";
+        redraw();
+      } catch {
+        if (mine === request) $("wx-now-note").textContent = data ? "Couldn't load the weather. Showing the last loaded." : "Couldn't load the weather.";
+      }
+    }
+
+    function redraw() {
+      if (!data || $("view-weather").hidden) return;
+      const located = Boolean(data.located);
+      const forecast = data.forecast?.hours ?? [];
+      $("wx-unset").hidden = located;
+      $("wx-now-pane").hidden = !located;
+      for (const id of ["wx-charts-pane", "wx-hours-pane", "wx-days-pane"]) $(id).hidden = !located || !forecast.length;
+      drawWarnings();
+      drawFoot();
+      if (!located) return;
+      drawNow(forecast);
+      if (!forecast.length) return;
+      drawCharts();
+      drawHours(forecast);
+      drawDays();
+    }
+
+    function drawWarnings() {
+      const list = $("wx-warning-list");
+      const warnings = data.warnings ?? [];
+      $("wx-warnings").hidden = !warnings.length;
+      list.replaceChildren(...warnings.map((warning) => {
+        const item = el("li", `wx-warning ${LEVELS.includes(warning.level) ? warning.level : "minor"}`);
+        item.append(el("span", "wx-warning-level", [cap(warning.level), cap(warning.kind)].filter(Boolean).join(" · ")));
+        if (warning.headline) item.append(el("p", "", warning.headline));
+        const when = [
+          isNum(warning.onset) ? `From ${dateTime(ms(warning.onset))}` : "",
+          isNum(warning.expiry) ? `${isNum(warning.onset) ? "to" : "Until"} ${dateTime(ms(warning.expiry))}` : "",
+        ].filter(Boolean).join(" ");
+        if (when) item.append(el("p", "meta", when));
+        // Some providers send HTML. Parsed in a document of its own, nothing in it runs or loads; only its words are shown.
+        const words = warning.description ? new DOMParser().parseFromString(warning.description, "text/html").body.textContent.trim() : "";
+        if (words && words !== warning.headline) {
+          const details = el("details");
+          details.append(el("summary", "", "Details"), el("p", "", words));
+          item.append(details);
+        }
+        if (httpLink(warning.link)) {
+          const link = el("a", "", "Source");
+          link.href = warning.link;
+          link.target = "_blank";
+          link.rel = "noopener";
+          const line = el("p", "meta");
+          line.append(link);
+          item.append(line);
+        }
+        return item;
+      }));
+    }
+
+    function tile(label, value, sub) {
+      const node = el("div", "tile");
+      node.append(el("span", "tile-label", label), value, el("span", "tile-sub", sub));
+      return node;
+    }
+
+    function drawNow(forecast) {
+      const now = Date.now() / 1000;
+      const h = forecast.find((hour) => hour.hour_start <= now && now < hour.hour_start + HOUR) ?? forecast[0];
+      const note = $("wx-now-note");
+      if (!h) {
+        $("wx-now").replaceChildren();
+        note.textContent = "No forecast yet. It's fetched once an hour.";
+        return;
+      }
+      const main = el("span", "tile-value wx-now-main");
+      main.append(icon(h.condition, h.is_day, 40), `${tempText(h.temperature_c)}${isNum(h.temperature_c) ? tempUnit().slice(1) : ""}`);
+      const tiles = [tile(cap(h.condition) || "Now", main, isNum(h.feels_like_c) ? `Feels ${tempText(h.feels_like_c)}` : "")];
+      if (isNum(h.wind_ms)) {
+        tiles.push(tile("Wind", el("span", "tile-value", `${windText(h.wind_ms)} ${windUnit()}`),
+          [isNum(h.gust_ms) ? `Gusts ${windText(h.gust_ms)}` : "", isNum(h.wind_from_deg) ? `from ${compass(h.wind_from_deg)}` : ""].filter(Boolean).join(", ")));
+      }
+      if (isNum(h.precipitation_mm) || isNum(h.precipitation_chance_pct)) {
+        tiles.push(tile("Rain this hour", el("span", "tile-value", `${rainText(h.precipitation_mm)} ${rainUnit()}`),
+          [isNum(h.precipitation_chance_pct) ? `${percent(h.precipitation_chance_pct)} chance` : "", isNum(h.cloud_pct) ? `cloud ${percent(h.cloud_pct)}` : ""].filter(Boolean).join(", ")));
+      }
+      const rise = data.sun?.rises.find((t) => t > now);
+      const set = data.sun?.sets.find((t) => t > now);
+      const sunTimes = [[rise, "Sunrise"], [set, "Sunset"]].filter(([t]) => isNum(t)).sort((a, b) => a[0] - b[0])
+        .map(([t, name]) => `${name} ${clockTime(ms(t))}`).join(", ");
+      if (isNum(sunWm2(h)) || sunTimes) {
+        tiles.push(tile(isNum(h.gti_wm2) ? "Sun on panels" : "Sun", el("span", "tile-value", isNum(sunWm2(h)) ? `${number(Math.round(sunWm2(h)), 0)} W/m²` : "—"), sunTimes));
+      }
+      $("wx-now").replaceChildren(...tiles);
+      const fetched = data.forecast?.fetched_at;
+      const source = data.credits?.[0]?.title;
+      note.textContent = [source ? `Forecast from ${source}` : "Forecast", isNum(fetched) ? `fetched ${dateTime(ms(fetched))}` : ""].filter(Boolean).join(", ") + ".";
+    }
+
+    /* Converted to the units shown, so the charts' scales are in them too. */
+    function chartPoint(h) {
+      return {
+        ts: h.hour_start,
+        gti: h.gti_wm2, ghi: h.ghi_wm2, pv_w: solar.get(h.hour_start) ?? null,
+        cloud: h.cloud_pct, cloud_low: h.cloud_low_pct, cloud_mid: h.cloud_mid_pct, cloud_high: h.cloud_high_pct,
+        chance: h.precipitation_chance_pct, rain: rainIn(h.precipitation_mm),
+        temp: tempIn(h.temperature_c), feels: tempIn(h.feels_like_c),
+      };
+    }
+
+    function drawCharts() {
+      const box = $("weather-charts");
+      if (!data?.forecast || $("view-weather").hidden || !box.clientWidth) return;
+      if (tipOwner && box.contains(tipOwner.node)) dropTip();
+      const now = Math.floor(Date.now() / 1000);
+      const start = now - (now % HOUR) - BACK_HOURS * HOUR;
+      const end = start + (BACK_HOURS + AHEAD_HOURS) * HOUR;
+      const points = hours.filter((h) => h.hour_start >= start && h.hour_start < end).map(chartPoint);
+      const has = (key) => points.some((point) => isNum(point[key]));
+      const keep = (series) => series.filter((s) => has(s.key));
+      const charts = [];
+
+      const sun = keep([
+        { key: "gti", label: "Sun on panels", unit: "W/m²", color: "--flow-solar" },
+        { key: "ghi", label: "Flat ground", unit: "W/m²", color: "--muted" },
+      ]);
+      if (sun.length) {
+        charts.push({
+          title: "Sun", unit: "W/m²", height: 200, floor: 0, series: sun,
+          strip: has("pv_w") ? { key: "pv_w", label: "Solar made", unit: "W", color: "--flow-solar" } : undefined,
+          aria: "Sun (W/m²)" + (has("pv_w") ? " and solar made (W)" : ""),
+        });
+      }
+      const cloud = keep([
+        { key: "cloud", label: "Cloud", unit: "%", color: "--ink-2" },
+        { key: "cloud_low", label: "Low", unit: "%", color: "--heat-6" },
+        { key: "cloud_mid", label: "Mid", unit: "%", color: "--heat-4" },
+        { key: "cloud_high", label: "High", unit: "%", color: "--heat-2" },
+      ]);
+      if (cloud.length) charts.push({ title: "Cloud", unit: "%", height: 164, domain: [0, 100], series: cloud });
+      if (has("chance") || has("rain")) {
+        const unit = rainUnit();
+        const digits = rainDigits();
+        const most = Math.max(0, ...points.map((point) => point.rain).filter(isNum));
+        charts.push({
+          title: "Rain", unit: "%", height: 180, domain: [0, 100],
+          series: keep([{ key: "chance", label: "Chance", unit: "%", color: "--flow-grid" }]),
+          strip: has("rain") ? {
+            key: "rain", label: "Rain", unit, color: "--band-peak", domain: [0, Math.max(most, rainIn(1))],
+            format: (v) => `${number(v, digits)} ${unit}`,
+          } : undefined,
+          aria: `Rain: chance (%) and amount (${unit})`,
+        });
+      }
+      const temps = points.flatMap((point) => [point.temp, point.feels]).filter(isNum);
+      if (temps.length) {
+        const unit = tempUnit();
+        let [low, high] = [Math.floor(Math.min(...temps)), Math.ceil(Math.max(...temps))];
+        if (high - low < 5) [low, high] = [Math.floor((low + high) / 2 - 2.5), Math.ceil((low + high) / 2 + 2.5)];
+        const format = (v) => `${number(Math.round(v), 0)}${unit}`;
+        charts.push({
+          title: "Temperature", unit, height: 164, domain: [low - 1, high + 1],
+          series: keep([
+            { key: "temp", label: "Temperature", unit, color: "--wx-temp", format },
+            { key: "feels", label: "Feels like", unit, color: "--muted", format },
+          ]),
+        });
+      }
+      $("wx-charts-help").dataset.tip = ["Dashed line: now", "Left: recorded", "Right: forecast", has("pv_w") ? "Bars under Sun: solar made" : ""].filter(Boolean).join("\n");
+      if (!charts.length) return box.replaceChildren(el("p", "no-value", "Nothing to chart."));
+      const visible = points.filter((point) => point.ts >= start && point.ts < end);
+      drawTimeCharts(box, { charts, points, visible, bucket: HOUR, start, end, zoomable: false, marks: [{ ts: now, label: "Now" }], prefix: "weather" });
+    }
+
+    /* The day each hour falls on, as a heading: today, tomorrow or a date. */
+    function dayName(seconds) {
+      const day = isoDay(ms(seconds));
+      const today = isoDay(Date.now());
+      const [y, m, d] = today.split("-").map(Number);
+      const tomorrow = isoDay(zonedMs(shownZone(), y, m, d + 1, 12));
+      if (day === today) return "Today";
+      if (day === tomorrow) return "Tomorrow";
+      return dateText(ms(seconds), { weekday: true });
+    }
+
+    function drawHours(forecast) {
+      const now = Date.now() / 1000;
+      const shown = forecast.filter((h) => h.hour_start + HOUR > now).slice(0, AHEAD_HOURS);
+      const has = (pick) => shown.some((h) => isNum(pick(h)));
+      const columns = [
+        { head: "Weather", cell: (h) => condition(h), show: shown.some((h) => h.condition) },
+        { head: `Temp`, num: true, cell: (h) => tempText(h.temperature_c), show: has((h) => h.temperature_c) },
+        { head: "Feels", num: true, cell: (h) => tempText(h.feels_like_c), show: has((h) => h.feels_like_c) },
+        { head: `Rain (${rainUnit()})`, num: true, cell: (h) => rainText(h.precipitation_mm), show: has((h) => h.precipitation_mm) },
+        { head: "Chance", num: true, cell: (h) => percent(h.precipitation_chance_pct), show: has((h) => h.precipitation_chance_pct) },
+        { head: "Cloud", num: true, cell: (h) => percent(h.cloud_pct), show: has((h) => h.cloud_pct) },
+        { head: `Wind (${windUnit()})`, num: true, cell: (h) => windText(h.wind_ms), show: has((h) => h.wind_ms) },
+        { head: "Gusts", num: true, cell: (h) => windText(h.gust_ms), show: has((h) => h.gust_ms) },
+        { head: "From", cell: (h) => compass(h.wind_from_deg), show: has((h) => h.wind_from_deg) },
+        { head: has((h) => h.gti_wm2) ? "On panels (W/m²)" : "Sun (W/m²)", num: true, cell: (h) => (isNum(sunWm2(h)) ? number(Math.round(sunWm2(h)), 0) : "—"), show: has(sunWm2) },
+      ].filter((column) => column.show);
+      const width = columns.length + 1;
+
+      const head = el("tr");
+      head.append(el("th", "", "Time"), ...columns.map((column) => el("th", column.num ? "num" : "", column.head)));
+      $("wx-hours-head").replaceChildren(head);
+
+      const row = (h) => {
+        const tr = el("tr");
+        const time = el("th", "", clockTime(ms(h.hour_start)));
+        time.scope = "row";
+        tr.append(time);
+        for (const column of columns) {
+          const td = el("td", column.num ? "num" : "");
+          td.append(column.cell(h));
+          tr.append(td);
+        }
+        return tr;
+      };
+      // Runs of night hours, each within one day, past the hour now: these fold away.
+      const runs = [];
+      for (let i = 1; i < shown.length; i++) {
+        const h = shown[i];
+        const last = runs.at(-1);
+        const night = h.is_day === false;
+        if (night && last && last.end === i && isoDay(ms(h.hour_start)) === isoDay(ms(shown[i - 1].hour_start))) last.end = i + 1;
+        else if (night) runs.push({ start: i, end: i + 1 });
+      }
+      const folds = new Map(runs.filter((run) => run.end - run.start >= NIGHT_FOLD_HOURS).map((run) => [run.start, run]));
+
+      const body = [];
+      let day = null;
+      for (let i = 0; i < shown.length; i++) {
+        const h = shown[i];
+        const thisDay = isoDay(ms(h.hour_start));
+        if (thisDay !== day) {
+          day = thisDay;
+          const tr = el("tr", "wx-day");
+          const th = el("th", "", dayName(h.hour_start));
+          th.colSpan = width;
+          th.scope = "rowgroup";
+          tr.append(th);
+          body.push(tr);
+        }
+        const run = folds.get(i);
+        if (!run) {
+          body.push(row(h));
+          continue;
+        }
+        const night = shown.slice(run.start, run.end);
+        const key = night[0].hour_start;
+        const open = openFolds.has(key);
+        const temps = night.map((n) => n.temperature_c).filter(isNum);
+        const rain = night.map((n) => n.precipitation_mm).filter(isNum).reduce((sum, x) => sum + x, 0);
+        const button = el("button", "", [
+          `Night ${clockTime(ms(key))}–${clockTime(ms(night.at(-1).hour_start + HOUR))}`,
+          temps.length ? `${tempText(Math.min(...temps))} to ${tempText(Math.max(...temps))}` : "",
+          rain > 0 ? `${rainText(rain)} ${rainUnit()}` : "",
+        ].filter(Boolean).join(" · "));
+        button.type = "button";
+        button.setAttribute("aria-expanded", String(open));
+        const fold = el("tr", "wx-fold");
+        const cell = el("td");
+        cell.colSpan = width;
+        cell.append(button);
+        fold.append(cell);
+        const rows = night.map((n) => {
+          const tr = row(n);
+          tr.classList.add("wx-folded");
+          tr.hidden = !open;
+          return tr;
+        });
+        button.addEventListener("click", () => {
+          const opening = !openFolds.has(key);
+          if (opening) openFolds.add(key);
+          else openFolds.delete(key);
+          button.setAttribute("aria-expanded", String(opening));
+          for (const tr of rows) tr.hidden = !opening;
+        });
+        body.push(fold, ...rows);
+        i = run.end - 1;
+      }
+      $("wx-hours").replaceChildren(...body);
+    }
+
+    function drawDays() {
+      const today = isoDay(Date.now());
+      const days = new Map();
+      for (const h of hours) {
+        const day = isoDay(ms(h.hour_start));
+        if (day < today) continue;
+        if (!days.has(day)) days.set(day, []);
+        days.get(day).push(h);
+      }
+      const shown = [...days.entries()].filter(([day, list]) => day === today || list.length >= 12).slice(0, 7);
+      const sum = (list, key) => {
+        const known = list.map((h) => h[key]).filter(isNum);
+        return known.length ? known.reduce((total, x) => total + x, 0) : null;
+      };
+      const extreme = (list, key, pick) => {
+        const known = list.map((h) => h[key]).filter(isNum);
+        return known.length ? pick(...known) : null;
+      };
+      const usual = (list) => {
+        const daytime = list.filter((h) => h.is_day !== false && h.condition);
+        const counts = new Map();
+        for (const h of daytime.length ? daytime : list.filter((h) => h.condition)) counts.set(h.condition, (counts.get(h.condition) ?? 0) + 1);
+        return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+      };
+      const sunOn = (times, day) => (times ?? []).find((t) => isoDay(ms(t)) === day);
+      const rows = shown.map(([day, list]) => ({
+        day, list,
+        condition: usual(list),
+        low: extreme(list, "temperature_c", Math.min),
+        high: extreme(list, "temperature_c", Math.max),
+        rain: sum(list, "precipitation_mm"),
+        chance: extreme(list, "precipitation_chance_pct", Math.max),
+        sunshine: list.some((h) => isNum(h.direct_wm2)) ? list.filter((h) => h.direct_wm2 >= SUNSHINE_WM2).length : null,
+        rise: sunOn(data.sun?.rises, day),
+        set: sunOn(data.sun?.sets, day),
+      }));
+      const has = (key) => rows.some((r) => isNum(r[key]));
+      const columns = [
+        { head: "Weather", cell: (r) => condition({ condition: r.condition, is_day: true }), show: rows.some((r) => r.condition) },
+        { head: "Low", num: true, cell: (r) => tempText(r.low), show: has("low") },
+        { head: "High", num: true, cell: (r) => tempText(r.high), show: has("high") },
+        { head: `Rain (${rainUnit()})`, num: true, cell: (r) => rainText(r.rain), show: has("rain") },
+        { head: "Chance", num: true, cell: (r) => percent(r.chance), show: has("chance") },
+        { head: "Sunshine", num: true, cell: (r) => (isNum(r.sunshine) ? `${r.sunshine} h` : "—"), show: has("sunshine") },
+        { head: "Sunrise", num: true, cell: (r) => (isNum(r.rise) ? clockTime(ms(r.rise)) : "—"), show: has("rise") },
+        { head: "Sunset", num: true, cell: (r) => (isNum(r.set) ? clockTime(ms(r.set)) : "—"), show: has("set") },
+      ].filter((column) => column.show);
+
+      const head = el("tr");
+      head.append(el("th", "", "Day"), ...columns.map((column) => el("th", column.num ? "num" : "", column.head)));
+      $("wx-days-head").replaceChildren(head);
+      $("wx-days").replaceChildren(...rows.map((r) => {
+        const tr = el("tr");
+        const name = el("th", "", dayName(r.list[0].hour_start));
+        name.scope = "row";
+        tr.append(name);
+        for (const column of columns) {
+          const td = el("td", column.num ? "num" : "");
+          td.append(column.cell(r));
+          tr.append(td);
+        }
+        return tr;
+      }));
+    }
+
+    function drawFoot() {
+      $("wx-credits").replaceChildren(...(data.credits ?? []).map((credit) => {
+        const item = el("li", "", `${credit.title}: ${credit.text}`);
+        if (credit.licence) {
+          item.append(" (");
+          if (httpLink(credit.link)) {
+            const link = el("a", "", credit.licence);
+            link.href = credit.link;
+            link.target = "_blank";
+            link.rel = "noopener";
+            item.append(link);
+          } else {
+            item.append(credit.licence);
+          }
+          item.append(")");
+        }
+        return item;
+      }));
+      $("wx-fetches").textContent = Object.values(data.fetches ?? {})
+        .filter((fetch) => FETCH_NAMES[fetch.kind])
+        .map((fetch) => {
+          const when = isNum(fetch.fetched_at) ? dateTime(ms(fetch.fetched_at)) : "";
+          const how = { ok: "fetched", "not modified": "checked", "rate limited": "rate limited" }[fetch.outcome] ?? "failed";
+          return `${FETCH_NAMES[fetch.kind]} ${how} ${when}`.trim();
+        })
+        .join(" · ");
+      const history = data.history;
+      $("wx-backfill").textContent = history && history.hours > 0
+        ? `Weather kept for ${number(history.filled, 0)} of the log's ${number(history.hours, 0)} hours.`
+        : "";
+    }
+
+    redrawOnWidthChange($("weather-charts"), drawCharts);
+    setInterval(() => {
+      if (!$("view-weather").hidden && !document.hidden) refresh();
+    }, 5 * 60 * 1000);
+
+    return { refresh, redraw };
+  })();
+
+  /*
     Grid meter: the electricity meter's half-hours, imported from ESB Networks under Setup › Data.
     Days are calendar days on the meter's Irish clock, handled as UTC so neither the browser's
     time zone nor the one picked in Preferences moves them. Only the date and time formats apply. A slot is a half-hour from midnight, 0 to 47, and holds the average
@@ -6429,8 +7050,9 @@
   const PAGES = {}; // By hash, such as #appliances/planning: the view, its tab's hash and its name in the sub-tab row.
   for (const view of document.querySelectorAll("main > .view")) {
     const { tab, sub, label = "", perm = "" } = view.dataset;
-    // The Dashboard is always open. The others each need a permission; the server refuses them anyway.
-    if (tab !== "dashboard" && !perm.split(" ").some(may)) continue;
+    // A page with no permission, such as the Dashboard or Weather, is always open. The others each need one; the
+    // server refuses them anyway.
+    if (perm && !perm.split(" ").some(may)) continue;
     PAGES[sub ? `#${tab}/${sub}` : `#${tab}`] = { view, tab: `#${tab}`, label };
   }
   for (const link of [...$("tab-links").querySelectorAll("a")]) {
@@ -6620,7 +7242,7 @@
     A change is saved and shown at once.
   */
   const prefsForm = $("prefs-form");
-  const PREF_FIELDS = ["date", "time", "zone", "week", "currency", "power", "section", "motion"]; // The theme is the user menu's.
+  const PREF_FIELDS = ["date", "time", "zone", "week", "currency", "power", "section", "motion", "temperature", "wind", "rain"]; // The theme is the user menu's.
   let zonesListed = false;
   function listZones() {
     const select = prefsForm.elements.zone;
@@ -6685,6 +7307,7 @@
     renderDaily();
     renderOverview();
     gridMeter.redraw();
+    weatherTab.redraw();
     if (!$("view-setup-data").hidden) refreshExport();
   }
   /* Shows a change of prefs, made here or on another device. */
@@ -6697,7 +7320,10 @@
     if (changed("motion")) showMotion();
     if (changed("week")) orderDayTicks();
     if (changed("date", "time", "zone", "week", "currency", "power")) redrawAll();
-    else showPrefs();
+    else {
+      showPrefs();
+      if (changed("temperature", "wind", "rain")) weatherTab.redraw();
+    }
   }
   prefsForm.addEventListener("change", () => {
     const old = { ...prefs };
@@ -7122,6 +7748,7 @@
     if (page === "#setup/data") refreshExport();
     if (tab === "#grid-meter" || (page === "#system/checks" && may("grid-meter"))) gridMeter.refresh();
     if (page === "#system/activity") refreshActions();
+    if (tab === "#weather") weatherTab.refresh();
     if (tab === "#battery") {
       refreshTouWrites();
       refreshSettingWrites();
@@ -7336,7 +7963,8 @@
       const stale = () => { pin.fresh = false; place(); };
       const sizes = new ResizeObserver(stale);
       sizes.observe(table);
-      for (const cell of table.tHead.rows[0].cells) sizes.observe(cell);
+      // Some tables fill their header later, which the watch on the header below catches.
+      for (const cell of table.tHead.rows[0]?.cells ?? []) sizes.observe(cell);
       new MutationObserver(stale).observe(table.tHead, { subtree: true, childList: true, characterData: true });
       box.addEventListener("scroll", place, { passive: true });
       return pin;
@@ -7361,7 +7989,7 @@
         for (const pin of pins) {
           // A box on a hidden tab measures all zeros, so its copy hides too.
           const area = pin.box.getBoundingClientRect();
-          const show = area.top < top && area.bottom > top + pin.table.tHead.offsetHeight;
+          const show = pin.table.tHead.rows.length > 0 && area.top < top && area.bottom > top + pin.table.tHead.offsetHeight;
           if (show && (!pin.fresh || pin.ghost.hidden)) copyHeader(pin);
           pin.ghost.hidden = !show;
           if (!show) continue;

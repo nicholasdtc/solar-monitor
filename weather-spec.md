@@ -185,7 +185,7 @@ The warnings and the text settings go into the CSV export and the importer like 
 - Cost on Open-Meteo: a 31-day chunk is about 4 calls by its weighting, plus a smaller one for a second facing, so two years of log is about 120 calls, once.
 - `GET /api/weather` has a `history` block: the log's start, the end, the hours and how many are filled. `GET /api/weather/history` serves up to 366 days at once.
 - The CSV and database exports carry the table, and the importer brings it back with the same precedence.
-- Not yet: the Statistics overlays below and the progress line on the Weather tab, with W3.
+- Not yet: the Statistics overlays below, with W3. The progress line is on the Weather tab's footer.
 
 **In Statistics:** the history charts can show weather beside the readings. That means an optional row for irradiance and cloud under the solar chart, temperature beside the load, and the condition icon per day on the daily view. Each is off by default and is a display preference.
 
@@ -209,6 +209,19 @@ From the top:
 8. **Footer**: each source's credit and licence link, the last good fetch of each kind, the backfill's progress, and a note if a fetch failed.
 
 Fields the provider doesn't have are left out, not shown empty. With Yr, for example, there's no irradiance row.
+
+**As built in W3:**
+
+- The Weather tab is one page with no sub-tabs. Like the Dashboard it needs no permission, as the weather routes are open to every account.
+- Warnings: level and type, headline, from and to, the description as plain text under "Details", and a "Source" link only when it's an http or https address.
+- Now: four tiles: the condition and temperature with feels like, wind with gusts and the compass point it comes from, rain this hour with its chance and the cloud, and the sun on the panels (tilted, or flat ground without a facing) with sunrise and sunset. Under them, the provider and when the forecast was fetched.
+- Charts: from 12 hours back (or the start of today, if that's earlier) to 48 hours ahead, with a dashed line at now. The left side draws the hours kept in `weather_hours`, the right side the forecast. Sun: on the panels and flat ground, with the solar made as bars underneath. Cloud: total, low, mid and high. Rain: the chance, with mm as bars. Temperature: the temperature and feels like. A chart with nothing to draw is left out, and the charts don't zoom. Expected PV waits for W5.
+- Hour by hour: 48 rows under a heading for each day. A run of three or more night hours inside a day, other than the current hour, folds into one row, "Night 17:00–00:00 · 6° to 7° · 6.5 mm", that opens on a click. Columns with no values are left out.
+- Next days: one row per day rather than one column, so it fits a phone. Up to 7 days from today; a later day with under 12 hours of forecast is left out. The weather is the commonest daytime condition. Sunshine is the hours with direct sun of at least 120 W/m², the WMO's measure.
+- Footer: each source's credit and licence link, the last fetch of each kind with its outcome, and "Weather kept for X of the log's Y hours" while the log has any.
+- Days, times and the day headings follow the time zone chosen in Preferences, as the rest of the page does. Temperature, wind and rain follow the unit preferences.
+- The tab refreshes when opened and every 5 minutes while it's showing.
+- Not yet, in W3b: the Statistics overlays.
 
 ## W4: the Dashboard
 

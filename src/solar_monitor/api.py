@@ -37,6 +37,7 @@ from solar_monitor import accounts, auth, config, control, db, export, importer,
 from solar_monitor.collector import Collector
 from solar_monitor.inputs import ApplianceIn, DisplayPrefsIn, SettingsIn
 from solar_monitor.weather import service as weather_service
+from solar_monitor.weather import sun
 from solar_monitor.weather.base import HOUR, Fetch
 from solar_monitor.weather.http import HttpFetch
 from solar_monitor.schedule import (
@@ -569,18 +570,23 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
     @app.get("/api/weather")
     async def api_weather() -> dict[str, object]:
         """The latest forecast from the start of this hour on, the chosen warnings that haven't
-        ended, the sources' credits, and how each kind's last fetch went. Not the location."""
+        ended, the sources' credits, how each kind's last fetch went, and the sunrises and sunsets
+        from two days ago to nine days ahead. Not the location itself."""
         now = int(time.time())
         settings = db.get_settings(collector.conn)
+        where = weather_service.location(settings)
         forecaster = weather.FORECASTS.get(str(settings["forecast_provider"] or weather.DEFAULT_FORECAST))
         warner = weather.WARNINGS.get(str(settings["warnings_provider"])) if settings["warnings_provider"] else None
         return {
-            "located": weather_service.location(settings) is not None,
+            "located": where is not None,
             "forecast": db.latest_forecast(collector.conn, now - now % HOUR),
             "warnings": db.current_warnings(collector.conn, warner.name, now) if warner else [],
             "credits": [_credit(p) for p in (forecaster, warner) if p is not None],
             "fetches": db.last_weather_fetches(collector.conn),
             "history": _weather_history_status(settings, forecaster, now),
+            "sun": sun.times(where.latitude, where.longitude, now - 2 * weather_service.DAY, now + 9 * weather_service.DAY)
+            if where
+            else None,
         }
 
     def _weather_history_status(settings: dict[str, object], forecaster: object, now: int) -> dict[str, object] | None:

@@ -312,6 +312,8 @@ def test_the_app_fetches_on_start_and_serves_the_weather(conn, monkeypatch):
     assert providers["default_forecast"] == "open-meteo"
     assert {p["name"] for p in providers["forecasts"]} == set(weather.FORECASTS)
     assert len(providers["warnings"][0]["regions"]) == 26
+    rises, sets = found["sun"]["rises"], found["sun"]["sets"]
+    assert len(rises) == len(sets) == 11 and all(r < s < r + service.DAY for r, s in zip(rises, sets, strict=True))
 
 
 # The record of past weather, with a stub that has one
@@ -512,6 +514,7 @@ def test_the_history_routes(conn, past, monkeypatch):
         return asyncio.run(send())
 
     assert get("/api/weather").json()["history"] is None
+    assert get("/api/weather").json()["sun"] is None
     placed(conn)
     logged(conn, MIDNIGHT - 2 * DAY)
     db.save_past(conn, MIDNIGHT, "stub", [Hour(hour_start=MIDNIGHT - DAY + i * HOUR, is_day=True) for i in range(3)], None)
