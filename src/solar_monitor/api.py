@@ -9,7 +9,10 @@ elsewhere can't change anything here.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
+import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -31,6 +34,28 @@ from solar_monitor.inputs import ApplianceIn, SettingsIn
 from solar_monitor.schedule import TIME_PERIODS, running_charge_period
 
 PAGE = Path(__file__).with_name("dashboard.html")
+ZONE_NAME = re.compile(r"[A-Za-z0-9_+\-]+(?:/[A-Za-z0-9_+\-]+)*")
+
+
+def system_time_zone() -> str | None:
+    """The IANA name of this machine's time zone, such as Europe/Dublin, or None if it can't tell.
+
+    The page shows times in it by default, and needs it for the tariff periods and the history
+    buckets, which follow this machine's clock rather than the viewer's.
+    """
+    candidates = [os.environ.get("TZ", "").lstrip(":")]
+    try:
+        link = os.readlink("/etc/localtime")
+        candidates.append(link.split("zoneinfo/", 1)[1] if "zoneinfo/" in link else "")
+    except OSError:
+        pass
+    try:
+        candidates.append(Path("/etc/timezone").read_text(encoding="utf-8").strip())
+    except OSError:
+        pass
+    return next((name for name in candidates if name and ZONE_NAME.fullmatch(name)), None)
+
+
 # Served from here, not a font service, so the page looks the same on a LAN with no internet.
 FONTS = Path(__file__).with_name("fonts")
 LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
@@ -221,7 +246,9 @@ def create_app(collector: Collector) -> FastAPI:
 
     @app.get("/")
     def page() -> HTMLResponse:
-        return HTMLResponse(PAGE.read_text(encoding="utf-8"))
+        zone = html.escape(system_time_zone() or "")
+        body = PAGE.read_text(encoding="utf-8")
+        return HTMLResponse(body.replace('<meta name="server-time-zone" content="">', f'<meta name="server-time-zone" content="{zone}">', 1))
 
     # async so it runs on the event loop, never mid-way through a change by the collector.
     @app.get("/api/latest")

@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Solar monitor</title>
+<meta name="server-time-zone" content="">
+<script>
+  // The theme picked in the user menu goes on <html> before the page paints, so it never shows the other one first.
+  try {
+    const theme = JSON.parse(localStorage.getItem("solar-monitor.prefs") || "{}").theme;
+    if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+  } catch {}
+</script>
 <style>
   @font-face { font-family: "Barlow"; font-weight: 400; font-display: swap; src: url("/fonts/barlow-latin-400-normal.woff2") format("woff2"); }
   @font-face { font-family: "Barlow"; font-weight: 500; font-display: swap; src: url("/fonts/barlow-latin-500-normal.woff2") format("woff2"); }
@@ -44,8 +52,9 @@
     --tabs-h: 48px;
     --board-max: 1840px;
   }
+  /* Dark follows the device unless the user menu picks a theme, which the script in <head> puts on <html>. */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       color-scheme: dark;
       --page: #0e1316;
       --surface: #171d21;
@@ -65,6 +74,26 @@
       --band-peak: #9ec5f4;
       --heat-0: #0d366b; --heat-1: #184f95; --heat-2: #256abf; --heat-3: #3987e5; --heat-4: #6da7ec; --heat-5: #9ec5f4; --heat-6: #cde2fb;
     }
+  }
+  :root[data-theme="dark"] { /* The same as the block above. */
+    color-scheme: dark;
+    --page: #0e1316;
+    --surface: #171d21;
+    --ink: #e8ecea;
+    --ink-2: #b6bfbf;
+    --muted: #939da0;
+    --rule: #2a3237;
+    --rule-strong: #4c565c;
+    --good: #2f9e2f;
+    --critical: #e05a5a;
+    --flow-grid: #3987e5;
+    --flow-solar: #c98500;
+    --flow-battery: #199e70;
+    --flow-load: #c84fb1;
+    --band-night: #184f95;
+    --band-day: #3987e5;
+    --band-peak: #9ec5f4;
+    --heat-0: #0d366b; --heat-1: #184f95; --heat-2: #256abf; --heat-3: #3987e5; --heat-4: #6da7ec; --heat-5: #9ec5f4; --heat-6: #cde2fb;
   }
 
   * { box-sizing: border-box; }
@@ -98,7 +127,7 @@
   #error:empty, .alert:empty { display: none; }
 
   /*
-    Sticky bar: the app's name, the sections and the connection state. Where there's room the
+    Sticky bar: the app's name, the sections, the connection state and the user menu. Where there's room the
     sections are a row of tabs. Narrower, they're a menu opened from a button named after the open
     section. The menu drops below the bar, over the page, so the bar keeps its height and the table
     header rows and tooltips placed under it stay put. TAB_ROW in the script has the same width.
@@ -108,11 +137,9 @@
   .tabs h1 { flex: none; align-self: center; padding: 0 20px 0 var(--gutter); white-space: nowrap; }
   .sections { flex: 1; min-width: 0; display: flex; }
   .menu ul { list-style: none; margin: 0; padding: 0; }
-  .menu a, .menu form button { display: flex; align-items: center; color: var(--ink-2); font-weight: 500; text-decoration: none; }
-  .menu a:hover, .menu form button:hover { background: var(--page); color: var(--ink); }
+  .menu a { display: flex; align-items: center; color: var(--ink-2); font-weight: 500; text-decoration: none; }
+  .menu a:hover { background: var(--page); color: var(--ink); }
   .menu a[aria-current="page"] { background: var(--ink); color: var(--surface); font-weight: 600; }
-  .menu form { margin: 0; }
-  .menu form button { cursor: pointer; background: none; border: 0; text-align: left; }
   @media (max-width: 1339px) {
     .menu-button {
       flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0 16px;
@@ -133,7 +160,7 @@
       background: var(--surface); border: 1px solid var(--rule-strong); border-top: 0;
       box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
     }
-    .menu a, .menu form button { width: 100%; min-height: 48px; padding: 0 var(--gutter); border-bottom: 1px solid var(--rule); }
+    .menu a { width: 100%; min-height: 48px; padding: 0 var(--gutter); border-bottom: 1px solid var(--rule); }
   }
   /* On a phone the open section's name can take two lines beside the app's name. */
   @media (max-width: 640px) {
@@ -149,15 +176,58 @@
     .menu, .menu ul { flex: 1; min-width: 0; display: flex; }
     .menu ul { overflow-x: auto; scrollbar-width: none; }
     .menu ul::-webkit-scrollbar { display: none; }
-    .menu li, .menu form { flex: none; display: flex; }
-    .menu a, .menu form button { padding: 0 16px; white-space: nowrap; border-left: 1px solid var(--rule); }
-    /* Log out stands apart from the sections, at the far end. */
-    .menu li:last-child { margin-left: auto; }
+    .menu li { flex: none; display: flex; }
+    .menu a { padding: 0 16px; white-space: nowrap; border-left: 1px solid var(--rule); }
   }
-  .conn { flex: none; display: flex; align-items: center; padding: 0 var(--gutter) 0 12px; border-left: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); }
+  .conn { flex: none; display: flex; align-items: center; padding: 0 12px; border-left: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); }
   .conn .long { display: none; }
   /* Wide enough for the tab row and the whole label. */
   @media (min-width: 1500px) { .conn .long { display: inline; } .conn .short { display: none; } }
+
+  /* The user menu, at the far end of the bar: the theme, the settings and logging out. It drops below the bar like the
+     sections menu, across the whole screen on a phone. */
+  .user { flex: none; display: flex; position: relative; }
+  .user-button {
+    display: flex; align-items: center; justify-content: center; width: 52px; padding: 0 2px 0 0;
+    cursor: pointer; background: none; border: 0; border-left: 1px solid var(--rule); color: var(--ink-2);
+  }
+  .user-button:hover, .user-button[aria-expanded="true"] { background: var(--page); color: var(--ink); }
+  .user-button svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+  .user-button[aria-expanded="false"] + .user-menu { display: none; }
+  .user-menu {
+    position: absolute; top: 100%; right: 0; width: 290px; margin-top: 1px; padding-top: 14px;
+    background: var(--surface); border: 1px solid var(--rule-strong); border-top: 0;
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
+  }
+  .user-menu .label { padding: 0 var(--gutter); font-size: 13px; color: var(--muted); }
+  .user-menu .seg { display: flex; padding: 6px var(--gutter) 14px; }
+  .user-menu .seg button { flex: 1; }
+  .user-menu .item {
+    display: flex; align-items: center; width: 100%; min-height: 48px; padding: 0 var(--gutter);
+    cursor: pointer; background: none; border: 0; border-top: 1px solid var(--rule); color: var(--ink-2); font-weight: 500; text-align: left;
+  }
+  .user-menu .item:hover { background: var(--page); color: var(--ink); }
+  @media (max-width: 640px) {
+    .user { position: static; }
+    .user-button { width: 44px; }
+    .user-menu { width: 100%; border-inline: 0; }
+  }
+
+  /* Settings and the log out check open as modal dialogs over the page. */
+  .modal {
+    width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; overflow: auto;
+    background: var(--surface); color: var(--ink); border: 1px solid var(--rule-strong); box-shadow: 0 12px 40px rgb(0 0 0 / 0.3);
+  }
+  .modal::backdrop { background: rgb(0 0 0 / 0.5); }
+  .modal form { margin: 0; padding: 20px var(--gutter); display: grid; gap: 14px; }
+  .modal h2 { font-size: 22px; }
+  .modal label { display: grid; gap: 4px; color: var(--ink-2); font-size: 14px; }
+  .modal select { width: 100%; min-height: 40px; padding: 6px 8px; background: var(--page); color: var(--ink); border: 1px solid var(--rule-strong); }
+  .modal .note { font-size: 13px; color: var(--muted); }
+  .modal .now { padding: 10px 12px; background: var(--page); border: 1px solid var(--rule); font-variant-numeric: tabular-nums; }
+  .modal .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+  .modal .actions .primary { background: var(--ink); border-color: var(--ink); color: var(--surface); font-weight: 600; }
+  .modal .actions .primary:hover { opacity: 0.88; }
 
   .status { display: inline-flex; gap: 6px; align-items: baseline; white-space: nowrap; }
   .icon {
@@ -494,13 +564,73 @@
           <li><a href="#schedule">Battery schedule</a></li>
           <li><a href="#fields">All fields</a></li>
           <li><a href="#app-data">App Data</a></li>
-          <li><form id="logout" method="post" action="/logout" hidden><button>Log out</button></form></li>
         </ul>
       </div>
     </nav>
     <div class="conn" id="conn" tabindex="0" data-tip=""></div>
+    <div class="user">
+      <button type="button" class="user-button" id="user-button" aria-expanded="false" aria-controls="user-menu" aria-label="User menu">
+        <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>
+      </button>
+      <div class="user-menu" id="user-menu">
+        <p class="label" id="theme-label">Theme</p>
+        <div class="seg" id="theme" role="group" aria-labelledby="theme-label">
+          <button type="button" data-theme="system" aria-pressed="true">System</button>
+          <button type="button" data-theme="light" aria-pressed="false">Light</button>
+          <button type="button" data-theme="dark" aria-pressed="false">Dark</button>
+        </div>
+        <button type="button" class="item" id="open-prefs">Settings…</button>
+        <button type="button" class="item" id="open-logout" hidden>Log out…</button>
+      </div>
+    </div>
   </div>
 </header>
+
+<dialog class="modal" id="prefs" aria-labelledby="prefs-title">
+  <form method="dialog" id="prefs-form">
+    <h2 id="prefs-title">Settings</h2>
+    <label>Date format
+      <select name="date">
+        <option value="auto">This device's</option>
+        <option value="dmy">9 Nov 2026</option>
+        <option value="mdy">Nov 9, 2026</option>
+        <option value="dd/mm">09/11/2026</option>
+        <option value="mm/dd">11/09/2026</option>
+        <option value="iso">2026-11-09</option>
+      </select>
+    </label>
+    <label>Time format
+      <select name="time">
+        <option value="auto">This device's</option>
+        <option value="24">24-hour</option>
+        <option value="12">12-hour</option>
+      </select>
+    </label>
+    <label>Time zone
+      <select name="zone" id="prefs-zone">
+        <option value="server">The monitor's</option>
+        <option value="device">This device's</option>
+      </select>
+    </label>
+    <p class="now" id="prefs-now" aria-live="polite"></p>
+    <p class="note">Saved in this browser. The tariff periods and the daily totals keep to the monitor's own clock.</p>
+    <div class="actions">
+      <button type="button" class="btn" id="prefs-reset">Reset</button>
+      <button class="btn primary" value="done">Done</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="logout-confirm" aria-labelledby="logout-title">
+  <form method="post" action="/logout">
+    <h2 id="logout-title">Log out?</h2>
+    <p>You'll need your username and password to get back in.</p>
+    <div class="actions">
+      <button type="button" class="btn" id="logout-cancel">Cancel</button>
+      <button class="btn primary">Log out</button>
+    </div>
+  </form>
+</dialog>
 <p id="error" role="alert"></p>
 <p class="alert" id="storage-error" role="alert"></p>
 
@@ -897,7 +1027,7 @@
       return response;
     };
     fetch("/api/session").then((response) => {
-      document.getElementById("logout").hidden = !response.ok;
+      document.getElementById("open-logout").hidden = !response.ok;
     }).catch(() => {});
   }
 </script>
@@ -950,6 +1080,134 @@
   }
   const watts = (x) => (isNum(x) ? `${number(x, 0)} W` : "—");
   const kwh = (x) => (isNum(x) ? `${number(x, 1)} kWh` : "—");
+
+  /*
+    Dates and times. Settings, in the user menu, picks a date format, a time format and a time zone, kept in this
+    browser in `prefs` with the theme. Times show in that zone, the monitor's own unless another is picked. HOME_ZONE
+    is the monitor's: the tariff periods, the history buckets and the inverter's clock follow it whatever the viewer
+    picks, as the server and the inverter do. Dates given as "YYYY-MM-DD", such as a day's totals, are calendar dates
+    and only take the format.
+  */
+  const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const PREFS_KEY = "solar-monitor.prefs";
+  const PREF_CHOICES = { theme: ["system", "light", "dark"], date: ["auto", "dmy", "mdy", "dd/mm", "mm/dd", "iso"], time: ["auto", "24", "12"] };
+  const PREF_DEFAULTS = { theme: "system", date: "auto", time: "auto", zone: "server" };
+  function validZone(zone) {
+    if (!zone) return null;
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: zone });
+      return zone;
+    } catch {
+      return null;
+    }
+  }
+  const DEVICE_ZONE = validZone(Intl.DateTimeFormat().resolvedOptions().timeZone) ?? "UTC";
+  // The server fills this in. A page from an older server has it empty, and takes this device's zone instead.
+  const HOME_ZONE = validZone(document.querySelector('meta[name="server-time-zone"]')?.content) ?? DEVICE_ZONE;
+  const prefs = { ...PREF_DEFAULTS };
+  try {
+    const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
+    for (const [key, choices] of Object.entries(PREF_CHOICES)) if (choices.includes(saved[key])) prefs[key] = saved[key];
+    if (saved.zone === "device" || validZone(saved.zone)) prefs.zone = saved.zone;
+  } catch {}
+  function savePrefs() {
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+    } catch {}
+  }
+  const shownZone = () => (prefs.zone === "server" ? HOME_ZONE : prefs.zone === "device" ? DEVICE_ZONE : prefs.zone);
+
+  // Intl formatters are slow to make, so each one is kept.
+  const formatters = new Map();
+  function formatter(zone, options, locale) {
+    const key = `${locale} ${zone} ${JSON.stringify(options)}`;
+    if (!formatters.has(key)) formatters.set(key, new Intl.DateTimeFormat(locale, { ...options, timeZone: zone }));
+    return formatters.get(key);
+  }
+  const twoDigits = (n) => String(n).padStart(2, "0");
+  const msOf = (when) => (typeof when === "number" ? when : when.getTime());
+
+  /* What a zone's wall clock shows at a moment, given in ms. Weekday 0 is Sunday. */
+  function partsIn(ms, zone) {
+    const options = { hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" };
+    const found = {};
+    for (const { type, value } of formatter(zone, options, "en-US").formatToParts(ms)) found[type] = Number(value);
+    const { year, month, day } = found;
+    return { year, month, day, hour: found.hour % 24, minute: found.minute, second: found.second, weekday: new Date(Date.UTC(year, month - 1, day)).getUTCDay() };
+  }
+  /* Seconds a zone is ahead of UTC at a moment. */
+  function offsetIn(ms, zone) {
+    const at = partsIn(ms, zone);
+    return (Date.UTC(at.year, at.month - 1, at.day, at.hour, at.minute, at.second) - Math.floor(ms / 1000) * 1000) / 1000;
+  }
+  /* The moment, in ms, a zone's wall clock shows a time. Date.UTC carries over, so day 32 or hour 25 are fine. A time
+     the clocks skip going forward comes out an hour on. */
+  function zonedMs(zone, year, month, day, hour = 0, minute = 0) {
+    const wall = Date.UTC(year, month - 1, day, hour, minute);
+    const guess = wall - offsetIn(wall, zone) * 1000;
+    return wall - offsetIn(guess, zone) * 1000;
+  }
+
+  /* "YYYY-MM-DD" on a zone's calendar, the one shown unless another is given. For date inputs and comparing days. */
+  function isoDay(when, zone = shownZone()) {
+    const at = partsIn(msOf(when), zone);
+    return `${at.year}-${twoDigits(at.month)}-${twoDigits(at.day)}`;
+  }
+
+  function timeOptions(style, seconds) {
+    const options = style === "12" ? { hour: "numeric", minute: "2-digit", hourCycle: "h12" } : { hour: "2-digit", minute: "2-digit" };
+    if (style === "24") options.hourCycle = "h23";
+    if (seconds) options.second = "2-digit";
+    return options;
+  }
+  /* Hours and minutes in the time format. Takes a Date or ms. */
+  function clockTime(when, { zone = shownZone(), seconds = false, style = prefs.time } = {}) {
+    return formatter(zone, timeOptions(style, seconds)).format(msOf(when));
+  }
+  /* A time of day given as "HH:MM", such as a tariff period's start, in the time format. 24:00, the end of a day,
+     stays as it is in 24 hours. */
+  function wallTime(text) {
+    const [hour, minute] = String(text).split(":").map(Number);
+    if (!Number.isInteger(hour) || !Number.isInteger(minute)) return text;
+    if (hour === 24 && prefs.time !== "12") return text;
+    return clockTime(Date.UTC(2000, 0, 1, hour, minute), { zone: "UTC" });
+  }
+
+  /* A day and month in the date format, with the year or the weekday if asked for. Takes a Date or ms. */
+  function dateText(when, { year = false, weekday = false, zone = shownZone(), style = prefs.date } = {}) {
+    const ms = msOf(when);
+    if (style === "auto") {
+      const options = { day: "numeric", month: "short" };
+      if (year) options.year = "numeric";
+      if (weekday) options.weekday = "short";
+      return formatter(zone, options).format(ms);
+    }
+    const at = partsIn(ms, zone);
+    const [d, m, y] = [at.day, at.month, at.year];
+    const text = {
+      dmy: `${d} ${MONTHS[m - 1]}${year ? ` ${y}` : ""}`,
+      mdy: `${MONTHS[m - 1]} ${d}${year ? `, ${y}` : ""}`,
+      "dd/mm": `${twoDigits(d)}/${twoDigits(m)}${year ? `/${y}` : ""}`,
+      "mm/dd": `${twoDigits(m)}/${twoDigits(d)}${year ? `/${y}` : ""}`,
+      iso: year ? `${y}-${twoDigits(m)}-${twoDigits(d)}` : `${twoDigits(m)}-${twoDigits(d)}`,
+    }[style];
+    return weekday ? `${WEEKDAYS[at.weekday]}${style === "mdy" ? "," : ""} ${text}` : text;
+  }
+  /* A calendar date given as "YYYY-MM-DD" in the date format. It's the same day wherever it's read. */
+  function dayText(iso, options = {}) {
+    const [y, m, d] = iso.split("-").map(Number);
+    return dateText(Date.UTC(y, m - 1, d, 12), { ...options, zone: "UTC" });
+  }
+  const shortDate = (when) => dateText(when);
+  const dateTime = (when) => `${dateText(when)}, ${clockTime(when)}`;
+  /* A "YYYY-MM-DD HH:MM[:SS]" time on the monitor's clock, such as the inverter's own, in ms. NaN if it isn't one. */
+  function homeMs(text) {
+    const found = /^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)(?::(\d\d))?/.exec(String(text));
+    if (!found) return NaN;
+    const [year, month, day, hour, minute, second] = found.slice(1).map((part) => Number(part ?? 0));
+    return zonedMs(HOME_ZONE, year, month, day, hour, minute) + second * 1000;
+  }
 
   /* An estimate, so it rounds to 5 minutes once past the hour rather than ticking over. */
   function timeLeft(hours) {
@@ -1198,21 +1456,20 @@
 
   /* Today it's just the time, then the day, then the date, as the estimate gets further off. */
   function arrival(hours) {
-    const when = new Date(new Date(latest.read_at).getTime() + hours * 3600000);
-    if (!isNum(when.getTime())) return "";
-    const today = new Date();
-    if (isoDay(when) === isoDay(today)) return ` around ${clockTime(when)}`;
-    if (hours < 144) return ` around ${when.toLocaleDateString(undefined, { weekday: "short" })} ${clockTime(when)}`;
+    const when = new Date(latest.read_at).getTime() + hours * 3600000;
+    if (!isNum(when)) return "";
+    if (isoDay(when) === isoDay(Date.now())) return ` around ${clockTime(when)}`;
+    if (hours < 144) return ` around ${formatter(shownZone(), { weekday: "short" }).format(when)} ${clockTime(when)}`;
     return ` around ${shortDate(when)}`;
   }
 
-  /* Hours from now to the next time the clock shows this "HH:MM". */
+  /* Hours from now to the next time the monitor's clock, which the inverter keeps to, shows this "HH:MM". */
   function hoursUntil(clock) {
     const [h, m] = clock.split(":").map(Number);
-    const now = new Date();
-    const at = new Date(now);
-    at.setHours(h, m, 0, 0);
-    if (at <= now) at.setDate(at.getDate() + 1);
+    const now = Date.now();
+    const today = partsIn(now, HOME_ZONE);
+    let at = zonedMs(HOME_ZONE, today.year, today.month, today.day, h, m);
+    if (at <= now) at = zonedMs(HOME_ZONE, today.year, today.month, today.day + 1, h, m);
     return (at - now) / 3600000;
   }
 
@@ -1335,8 +1592,7 @@
     () => {
       const name = "Inverter clock";
       const why = "The inverter's timestamp should match the time of the read.";
-      const stamp = new Date(String(values.timestamp).replace(" ", "T"));
-      const seconds = Math.abs(stamp - new Date(latest.read_at)) / 1000;
+      const seconds = Math.abs(homeMs(values.timestamp) - new Date(latest.read_at)) / 1000;
       if (!Number.isFinite(seconds)) return { name, why, values: "—", status: "waiting", label: "No data" };
       return {
         name, why,
@@ -1554,7 +1810,7 @@
     const readings = (n) => `${n} reading${n === 1 ? "" : "s"}`;
     let tip = "";
     if (s?.error) tip = `Logging is failing, ${readings(s.pending)} waiting to be saved: ${s.error}`;
-    else if (s?.saved_at) tip = `Logging: ${readings(s.saved)} saved since start, last at ${new Date(s.saved_at).toLocaleTimeString()}, ${s.pending} waiting.`;
+    else if (s?.saved_at) tip = `Logging: ${readings(s.saved)} saved since start, last at ${clockTime(new Date(s.saved_at), { seconds: true })}, ${s.pending} waiting.`;
     else if (s) tip = `Logging: ${readings(s.pending)} waiting for the first save.`;
     $("storage-error").textContent = s?.error ? tip : "";
     const conn = $("conn");
@@ -1592,7 +1848,7 @@
       row.append(cell);
       return row;
     }
-    add(`${period.start} to ${period.end}${period.next_day ? " (next day)" : ""}`);
+    add(touTime(period));
     add({ charge: "Charge", discharge: "Discharge", hold: "Hold" }[period.action]);
     add(period.cutoff_soc === null ? "–" : `${period.cutoff_soc}%`, "num");
     add(`${{ charge: "Grid import", discharge: "Battery discharge", hold: "Power" }[period.action]} ${period.power_pct}%`);
@@ -1641,7 +1897,7 @@
   let touShown = null;
 
   const touPeriod = (slot) => latest?.schedule?.periods.find((period) => period.slot === slot);
-  const touTime = (period) => `${period.start} to ${period.end}${period.next_day ? " (next day)" : ""}`;
+  const touTime = (period) => `${wallTime(period.start)} to ${wallTime(period.end)}${period.next_day ? " (next day)" : ""}`;
 
   function touButton(text, action) {
     const button = el("button", "", text);
@@ -1679,7 +1935,7 @@
     // Added with changing programmes, so a dashboard still running the version before that doesn't send them.
     $("tou-restart").hidden = !periods.some((period) => period.power_pct !== undefined && period.raw === undefined);
     $("tou-read-at").textContent = schedule
-      ? `Read at ${new Date(schedule.read_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+      ? `Read at ${clockTime(new Date(schedule.read_at))}`
       : "";
     renderTouWrites();
   }
@@ -1689,7 +1945,7 @@
     const rows = touWrites.map((write) => {
       const row = el("tr");
       const [kind, label] = WRITE_RESULTS[write.outcome] ?? ["warning", write.outcome];
-      const when = new Date(write.ts * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      const when = dateTime(write.ts * 1000);
       const result = el("td");
       result.append(status(kind, label));
       const undo = el("td");
@@ -1985,8 +2241,6 @@
     ] },
   ];
 
-  const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const TOU_SHORT = { charge: "Grid charge", discharge: "Discharge", hold: "Hold" };
 
   /*
@@ -2005,9 +2259,6 @@
   let pan = null; // A drag along the charts while the pointer is down.
 
   const clamp = (x, low, high) => Math.min(Math.max(x, low), high);
-  const isoDay = (when) => `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}-${String(when.getDate()).padStart(2, "0")}`;
-  const clockTime = (when) => when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  const shortDate = (when) => when.toLocaleDateString(undefined, { day: "numeric", month: "short" });
   const power = (w) => (Math.abs(w) >= 1000 ? `${number(w / 1000, 2)} kW` : `${number(w, 0)} W`);
 
   /* Round tick values that span low to high, always including both. Takes the smallest round step
@@ -2056,30 +2307,35 @@
 
   /*
     Times to label on the x axis between start and end, spaced so that `room` of them fit in
-    `shown` seconds, the part on screen. They sit on round local times that don't depend on where
-    the range starts, so the labels stay put as the chart moves. Midnight is labelled with its date.
+    `shown` seconds, the part on screen. They sit on round times in the zone shown that don't depend
+    on where the range starts, so the labels stay put as the chart moves. Midnight is labelled with
+    its date.
   */
   function timeTicks(start, end, room, shown) {
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
+    const zone = shownZone();
     const hours = shown / 3600;
     const step = [0.25, 0.5, 1, 2, 3, 6, 12, 24, 48, 96, 168, 336, 672, 1344, 2688].find((h) => hours / h <= room) ?? 2688;
-    const tick = new Date(start * 1000);
-    if (step < 1) tick.setMinutes(tick.getMinutes() - (tick.getMinutes() % (step * 60)), 0, 0);
-    else tick.setHours(step < 24 ? tick.getHours() - (tick.getHours() % step) : 0, 0, 0, 0);
+    // The first tick's wall clock, on or before the start.
+    let { year, month, day, hour, minute } = partsIn(start * 1000, zone);
+    if (step < 1) minute -= minute % (step * 60);
+    else [hour, minute] = [step < 24 ? hour - (hour % step) : 0, 0];
     if (step > 24) {
       // Days counted from a Monday, so weekly labels fall on Mondays.
       const days = step / 24;
-      const dayNumber = Math.round(Date.UTC(tick.getFullYear(), tick.getMonth(), tick.getDate()) / 86400000) + 3;
-      tick.setDate(tick.getDate() - (((dayNumber % days) + days) % days));
+      const dayNumber = Math.round(Date.UTC(year, month - 1, day) / 86400000) + 3;
+      day -= ((dayNumber % days) + days) % days;
     }
     const ticks = [];
-    while (tick / 1000 < end) {
-      if (tick / 1000 >= start) {
-        const showDate = step >= 24 || (tick.getHours() === 0 && tick.getMinutes() === 0);
-        ticks.push({ ts: tick / 1000, label: showDate ? shortDate(tick) : clockTime(tick) });
-      }
-      if (step < 1) tick.setMinutes(tick.getMinutes() + step * 60);
-      else if (step < 24) tick.setHours(tick.getHours() + step);
-      else tick.setDate(tick.getDate() + step / 24);
+    // Whole steps on the wall clock from the first, so they stay on round times across a clock change.
+    for (let i = 0, last = -Infinity; ; i++) {
+      const ms = step < 24 ? zonedMs(zone, year, month, day, hour, minute + i * step * 60) : zonedMs(zone, year, month, day + (i * step) / 24);
+      if (!(ms / 1000 < end)) break;
+      if (ms <= last || ms / 1000 < start) continue; // The hour the clocks go forward has no times of its own.
+      last = ms;
+      const wall = partsIn(ms, zone);
+      const showDate = step >= 24 || (wall.hour === 0 && wall.minute === 0);
+      ticks.push({ ts: ms / 1000, label: showDate ? shortDate(ms) : clockTime(ms) });
     }
     return ticks;
   }
@@ -2472,13 +2728,15 @@
       if (period.state !== "on" || !days || !months || !clock.test(period.start) || !clock.test(period.end)) continue;
       const [startHour, startMinute] = period.start.split(":").map(Number);
       const [endHour, endMinute] = period.end.split(":").map(Number);
-      const day = new Date(start * 1000);
-      day.setHours(0, 0, 0, 0);
-      day.setDate(day.getDate() - 1); // A period from the day before can run past midnight into the span.
-      for (; day / 1000 < end; day.setDate(day.getDate() + 1)) {
-        if (!days.has(day.getDay()) || !months.has(day.getMonth())) continue;
-        const from = new Date(day.getFullYear(), day.getMonth(), day.getDate(), startHour, startMinute) / 1000;
-        const to = new Date(day.getFullYear(), day.getMonth(), day.getDate() + (period.next_day ? 1 : 0), endHour, endMinute) / 1000;
+      // On the monitor's clock, which the inverter keeps to, whatever zone the charts are shown in.
+      const first = partsIn(start * 1000, HOME_ZONE);
+      // From the day before, as a period from then can run past midnight into the span.
+      for (let n = -1; zonedMs(HOME_ZONE, first.year, first.month, first.day + n) / 1000 < end; n++) {
+        const date = new Date(Date.UTC(first.year, first.month - 1, first.day + n));
+        if (!days.has(date.getUTCDay()) || !months.has(date.getUTCMonth())) continue;
+        const [y, m, d] = [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate()];
+        const from = zonedMs(HOME_ZONE, y, m, d, startHour, startMinute) / 1000;
+        const to = zonedMs(HOME_ZONE, y, m, d + (period.next_day ? 1 : 0), endHour, endMinute) / 1000;
         if (to > start && from < end) intervals.push({ start: Math.max(from, start), end: Math.min(to, end), period });
       }
     }
@@ -2782,7 +3040,6 @@
     const band = (width - frame.left - frame.right) / days.length;
     const labelEvery = Math.ceil(MIN_TICK_SPACING_PX * 0.7 / band);
     const center = (i) => frame.left + band * (i + 0.5);
-    const dayDate = (day) => new Date(`${day.day}T12:00`);
 
     const drawn = planned.map(({ set, chart, node, height, bottom, scale }) => {
       const svg = svgEl("svg", { width, height });
@@ -2817,7 +3074,7 @@
           });
         }
         if (i % labelEvery === 0) {
-          svg.append(svgEl("text", { x: center(i), y: bottom + 17, class: "chart-tick chart-x" }, shortDate(dayDate(day))));
+          svg.append(svgEl("text", { x: center(i), y: bottom + 17, class: "chart-tick chart-x" }, dayText(day.day)));
         }
       });
       drawInsideLabels(svg, frame, scale, bottom, chart.inside);
@@ -2837,7 +3094,7 @@
         under.replaceChildren(svgEl("rect", { x: center(index) - band / 2, width: band, y: CHART_TOP, height: bottom - CHART_TOP, class: "chart-band" }));
       }
       const rows = dailyRows(day, charts);
-      showTip(clientX, clientY, rows.length ? shortDate(dayDate(day)) : `${shortDate(dayDate(day))}: no readings`, rows);
+      showTip(clientX, clientY, rows.length ? dayText(day.day) : `${dayText(day.day)}: no readings`, rows);
     };
     for (const { set, chart, svg } of drawn) {
       makeScrubbable(svg, `${chart.title} (${chart.unit})`, {
@@ -2853,7 +3110,7 @@
     const recorded = daily.days.filter((day) => Object.keys(day).length > 1).toReversed();
     $("daily-table").replaceChildren(...recorded.map((day) => {
       const row = el("tr");
-      row.append(el("td", "", new Date(`${day.day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })));
+      row.append(el("td", "", dayText(day.day, { weekday: true })));
       for (const key of keys) row.append(el("td", "num", kwh(day[key])));
       const share = selfSufficiency([day]);
       row.append(el("td", "num", share === null ? "—" : percent(share)));
@@ -2861,9 +3118,9 @@
     }));
   }
 
-  /* The same period edges as bucket_start in db.py: on the local clock, so a day's periods start
-     at midnight whatever the season. */
-  const utcOffset = (ts) => -new Date(ts * 1000).getTimezoneOffset() * 60;
+  /* The same period edges as bucket_start in db.py: on the monitor's clock, so a day's periods
+     start at its midnight whatever the season, and whichever zone the page is shown in. */
+  const utcOffset = (ts) => offsetIn(ts * 1000, HOME_ZONE);
   function bucketStart(ts, bucket) {
     const local = Math.floor((ts + utcOffset(ts)) / bucket) * bucket;
     return local - utcOffset(local - utcOffset(ts));
@@ -2979,10 +3236,9 @@
     $("history-in").disabled = span <= least + 1;
     const day = $("history-day");
     day.value = v.day ?? "";
-    day.max = isoDay(new Date());
-    if (firstReading !== null) day.min = isoDay(new Date(firstReading * 1000));
-    const [from, to] = [new Date(v.start * 1000), new Date(v.end * 1000)];
-    const text = `${shortDate(from)}, ${clockTime(from)} to ${v.following ? "now" : `${shortDate(to)}, ${clockTime(to)}`}`;
+    day.max = isoDay(Date.now());
+    if (firstReading !== null) day.min = isoDay(firstReading * 1000);
+    const text = `${dateTime(v.start * 1000)} to ${v.following ? "now" : dateTime(v.end * 1000)}`;
     if ($("history-shown").textContent !== text) $("history-shown").textContent = text;
   }
 
@@ -3013,8 +3269,9 @@
     const picked = event.target.value;
     if (!picked) return showView(settle({ bucket: view.bucket, start: 0, end: DEFAULT_VIEW_SECONDS, following: true }));
     const [year, month, date] = picked.split("-").map(Number);
-    const start = new Date(year, month - 1, date) / 1000;
-    const end = new Date(year, month - 1, date + 1) / 1000;
+    // Midnight to midnight in the zone shown.
+    const start = zonedMs(shownZone(), year, month, date) / 1000;
+    const end = zonedMs(shownZone(), year, month, date + 1) / 1000;
     const fits = (bucket) => (end - start) / bucket >= MIN_BARS && (end - start) / bucket <= MAX_BARS;
     const distance = (bucket) => Math.abs(Math.log(bucket / view.bucket));
     const bucket = HISTORY_BUCKETS.filter(fits).reduce((best, b) => (distance(b) < distance(best) ? b : best));
@@ -3373,11 +3630,14 @@
     const plan = overview.run_plan;
     $("run-plan-card").hidden = !plan;
     if (!plan) return;
-    const day = plan.until.slice(0, 10) === isoDay(new Date()) ? "today" : "tomorrow";
+    // The plan's end is on the monitor's clock.
+    const until = homeMs(plan.until);
+    const sameDay = isNum(until) ? isoDay(until) === isoDay(Date.now()) : plan.until.slice(0, 10) === isoDay(Date.now(), HOME_ZONE);
+    const day = sameDay ? "today" : "tomorrow";
     const fit = el("td", "num");
     fit.append(fits(plan.spare_w));
     const rows = [
-      [`Until ${plan.until.slice(11, 16)} ${day}`, "", el("td", "num", timeLeft(plan.hours))],
+      [`Until ${isNum(until) ? clockTime(until) : plan.until.slice(11, 16)} ${day}`, "", el("td", "num", timeLeft(plan.hours))],
       [`Energy above the ${plan.min_soc}% minimum`, "", el("td", "num", kwh(plan.energy_kwh))],
       ["Most the battery can average", batteryNow(plan.battery_w), el("td", "num", watts(plan.max_battery_w))],
       ["Most your appliances can average", heldToLimit(plan), el("td", "num", watts(plan.max_w)), "After what the inverter uses and loses"],
@@ -3489,7 +3749,7 @@
     });
   }
 
-  const calendarDate = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  const calendarDate = (ts) => dateText(ts * 1000, { year: true });
 
   function exportContents({ first_ts, last_ts, appliances, settings, meter_readings: meterReadings = 0, size_bytes }) {
     const count = (n, what) => `${number(n, 0)} ${what}${n === 1 ? "" : "s"}`;
@@ -3537,7 +3797,7 @@
   function importSummary({ label, applied, changes, tables }) {
     const readings = tables.find(({ id }) => id === "samples");
     const halfHours = tables.find(({ id }) => id === "meter_readings");
-    const onDay = (iso) => calendarDate(new Date(`${iso}T00:00`) / 1000);
+    const onDay = (iso) => dayText(iso, { year: true });
     const outcome = !changes ? "Nothing new to import." : applied ? "Imported." : "Nothing is saved until you press Import.";
     return [
       label,
@@ -3622,26 +3882,21 @@
 
   /*
     Grid meter: the electricity meter's half-hours, imported from ESB Networks under App Data.
-    Days are calendar days on the meter's Irish clock, handled as UTC so the browser's own time
-    zone never moves them. A slot is a half-hour from midnight, 0 to 47, and holds the average
+    Days are calendar days on the meter's Irish clock, handled as UTC so neither the browser's
+    time zone nor the one picked in Settings moves them. Only the date and time formats apply. A slot is a half-hour from midnight, 0 to 47, and holds the average
     draw over it in whole watts, null where the file has a gap, or -1 where there was no
     half-hour: the clocks went forward, or it's outside what the file covers.
   */
   const gridMeter = (() => {
     const NOT_A_HALF_HOUR = -1;
-    const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const toDate = (iso) => new Date(`${iso}T00:00:00Z`);
     const addDays = (iso, n) => {
       const when = toDate(iso);
       when.setUTCDate(when.getUTCDate() + n);
       return when.toISOString().slice(0, 10);
     };
-    const dayMonthYear = (iso) => {
-      const when = toDate(iso);
-      return `${when.getUTCDate()} ${MONTHS[when.getUTCMonth()]} ${when.getUTCFullYear()}`;
-    };
-    const longDay = (iso) => `${WEEKDAYS[toDate(iso).getUTCDay()]} ${dayMonthYear(iso)}`;
+    const dayMonthYear = (iso) => dayText(iso, { year: true });
+    const longDay = (iso) => dayText(iso, { year: true, weekday: true });
     const monthLabel = (key) => `${MONTHS[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)}`;
     const daysInMonth = (key) => new Date(Date.UTC(Number(key.slice(0, 4)), Number(key.slice(5, 7)), 0)).getUTCDate();
     function monthsBack(key, n) {
@@ -3653,16 +3908,19 @@
       }
       return `${year}-${String(month).padStart(2, "0")}`;
     }
-    const hhmm = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+    const hhmm = (minutes) => wallTime(`${twoDigits(Math.floor(minutes / 60))}:${twoDigits(minutes % 60)}`);
+    // Whole hours on an axis, kept short: "6 am" in 12 hours.
+    const axisHour = (hour) => (prefs.time === "12" ? formatter("UTC", { hour: "numeric", hourCycle: "h12" }).format(Date.UTC(2000, 0, 1, hour)) : hhmm(hour * 60));
     const slotTime = (slot) => hhmm(slot * 30);
     const slotSpan = (slot) => `${slotTime(slot)}–${slotTime(slot + 1)}`;
     // Times are "YYYY-MM-DD HH:MM" on a clock with no zone, so they're handled as UTC as well.
     const stampMs = (stamp) => Date.parse(`${stamp.replace(" ", "T")}:00Z`);
     const stampAt = (ms) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
     const plus30 = (stamp) => stampAt(stampMs(stamp) + 30 * 60000);
-    const stampText = (stamp) => `${stamp.slice(11)} on ${longDay(stamp.slice(0, 10))}`;
+    const stampText = (stamp) => `${wallTime(stamp.slice(11))} on ${longDay(stamp.slice(0, 10))}`;
     // The end of a run of half-hours, with midnight as 24:00 on the day it ends, like the half-hours' own spans.
-    const endText = (end) => (end.slice(11) === "00:00" ? `24:00 on ${longDay(stampAt(stampMs(end) - 30 * 60000).slice(0, 10))}` : stampText(end));
+    // In 12 hours it's 12:00 am on the next day.
+    const endText = (end) => (end.slice(11) === "00:00" && prefs.time !== "12" ? `24:00 on ${longDay(stampAt(stampMs(end) - 30 * 60000).slice(0, 10))}` : stampText(end));
 
     const kwhText = (x) => number(x, x >= 100 ? 0 : 1);
     const money = (x) => (x === null ? "—" : number(x, x >= 100 ? 0 : 2));
@@ -4305,7 +4563,7 @@
       nodes.push(svgEl("line", { x1: m.l, x2: width - m.r, y1: zero, y2: zero, class: "chart-zero" }));
       const every = plotWidth < 330 ? 6 : 4;
       for (let hour = 0; hour <= 24; hour += every) {
-        nodes.push(svgEl("text", { x: m.l + step * 2 * hour, y: m.t + plotHeight + 20, class: "chart-tick chart-x" }, hhmm(hour * 60)));
+        nodes.push(svgEl("text", { x: m.l + step * 2 * hour, y: m.t + plotHeight + 20, class: "chart-tick chart-x" }, axisHour(hour)));
       }
       daySvg.replaceChildren(...nodes, dayFocus);
       if (document.activeElement === daySvg && daySvg.matches(":focus-visible")) focusSlot();
@@ -4390,7 +4648,7 @@
       if (!width || !days.length) return;
       const span = rangeDays();
       const narrow = width < 600;
-      const m = { l: 46, r: narrow ? 10 : 56, t: 8, b: 44 };
+      const m = { l: prefs.time === "12" ? 64 : 46, r: narrow ? 10 : 56, t: 8, b: 44 }; // Room for "11:30 pm".
       const rowHeight = narrow ? 4 : 5;
       const plotHeight = rowHeight * 48;
       const plotWidth = width - m.l - m.r;
@@ -4622,7 +4880,7 @@
         const day = addDays(startDay, i);
         const at = m.l + ((i + 0.5) / 14) * plotWidth;
         if (at - lastX < 52 || at < 26 || at > width - 26) continue;
-        nodes.push(svgEl("text", { x: at, y: height - m.b + 20, class: "chart-tick chart-x" }, `${toDate(day).getUTCDate()} ${MONTHS[toDate(day).getUTCMonth()]}`));
+        nodes.push(svgEl("text", { x: at, y: height - m.b + 20, class: "chart-tick chart-x" }, dayText(day)));
         lastX = at;
       }
       const svg = svgEl("svg", {
@@ -4640,8 +4898,8 @@
       const [endDay, endTime] = end.split(" ");
       const hours = halfHours / 2;
       const when = startDay === endDay
-        ? `${dayMonthYear(startDay)}, ${startTime}–${endTime}`
-        : `${dayMonthYear(startDay)} ${startTime} to ${dayMonthYear(endDay)} ${endTime}`;
+        ? `${dayMonthYear(startDay)}, ${wallTime(startTime)}–${wallTime(endTime)}`
+        : `${dayMonthYear(startDay)} ${wallTime(startTime)} to ${dayMonthYear(endDay)} ${wallTime(endTime)}`;
       return `${when} (${number(hours, hours % 1 ? 1 : 0)} hour${hours === 1 ? "" : "s"})`;
     }
 
@@ -4830,7 +5088,8 @@
     document.fonts.ready.then(drawAll); // The carpet's labels are drawn in the web font.
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCarpet);
 
-    return { refresh };
+    // A theme picked in the user menu changes the colours the carpet is drawn in, and Settings the dates and times.
+    return { refresh, repaint: drawCarpet, redraw: () => meter && load(meter) };
   })();
 
   /*
@@ -4869,6 +5128,127 @@
     $("menu-button").focus();
   });
   TAB_ROW.addEventListener("change", () => setMenu(false));
+
+  /*
+    The user menu, at the end of the bar: the theme, Settings and logging out. The theme and the settings
+    are kept in this browser with `prefs`. The head's script puts the theme on before the page shows.
+  */
+  const userOpen = () => $("user-button").getAttribute("aria-expanded") === "true";
+  function setUserMenu(open) {
+    $("user-button").setAttribute("aria-expanded", String(open));
+  }
+  $("user-button").addEventListener("click", () => setUserMenu(!userOpen()));
+  document.addEventListener("click", (event) => {
+    if (userOpen() && !event.target.closest(".user")) setUserMenu(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !userOpen()) return;
+    setUserMenu(false);
+    $("user-button").focus();
+  });
+
+  function showTheme() {
+    if (prefs.theme === "system") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = prefs.theme;
+    for (const button of $("theme").querySelectorAll("button")) button.setAttribute("aria-pressed", String(button.dataset.theme === prefs.theme));
+  }
+  $("theme").addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button || button.dataset.theme === prefs.theme) return;
+    prefs.theme = button.dataset.theme;
+    savePrefs();
+    showTheme();
+    gridMeter.repaint();
+  });
+  showTheme();
+
+  // A click on the dimmed page around a dialog closes it.
+  for (const dialog of document.querySelectorAll("dialog.modal")) {
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+  }
+
+  /*
+    Settings. Each format is shown with the time now, in the zone picked, so the choice is easy to see.
+    A change is saved and shown at once.
+  */
+  const prefsForm = $("prefs-form");
+  let zonesListed = false;
+  function listZones() {
+    const select = prefsForm.elements.zone;
+    select.options[0].textContent = `The monitor's (${HOME_ZONE})`;
+    select.options[1].textContent = `This device's (${DEVICE_ZONE})`;
+    if (zonesListed) return;
+    zonesListed = true;
+    let zones = [];
+    try {
+      zones = Intl.supportedValuesOf("timeZone");
+    } catch {} // An older browser lists none, and has the two above.
+    if (prefs.zone !== "server" && prefs.zone !== "device" && !zones.includes(prefs.zone)) zones = [prefs.zone, ...zones];
+    if (!zones.length) return;
+    const group = document.createElement("optgroup");
+    group.label = "Others";
+    for (const zone of zones) {
+      const option = document.createElement("option");
+      option.value = option.textContent = zone;
+      group.append(option);
+    }
+    select.append(group);
+  }
+  function showPrefs() {
+    const form = prefsForm.elements;
+    const now = Date.now();
+    listZones();
+    for (const option of form.date.options) {
+      const example = dateText(now, { year: true, style: option.value });
+      option.textContent = option.value === "auto" ? `This device's (${example})` : example;
+    }
+    for (const option of form.time.options) {
+      const example = clockTime(now, { style: option.value });
+      option.textContent = { auto: `This device's (${example})`, 24: `24-hour (${example})`, 12: `12-hour (${example})` }[option.value];
+    }
+    form.date.value = prefs.date;
+    form.time.value = prefs.time;
+    form.zone.value = prefs.zone;
+    $("prefs-now").textContent = `Now ${dateText(now, { year: true, weekday: true })}, ${clockTime(now)}, ${shownZone().replaceAll("_", " ")}`;
+  }
+  $("open-prefs").addEventListener("click", () => {
+    setUserMenu(false);
+    showPrefs();
+    $("prefs").showModal();
+  });
+
+  /* Shows every date and time again in the new formats or zone. */
+  function timesChanged() {
+    showPrefs();
+    touShown = null;
+    if (latest) render();
+    renderTouWrites();
+    renderHistory();
+    renderDaily();
+    renderOverview();
+    gridMeter.redraw();
+    if (!$("view-app-data").hidden) refreshExport();
+  }
+  prefsForm.addEventListener("change", () => {
+    const form = prefsForm.elements;
+    prefs.date = form.date.value;
+    prefs.time = form.time.value;
+    prefs.zone = form.zone.value;
+    savePrefs();
+    timesChanged();
+  });
+  $("prefs-reset").addEventListener("click", () => {
+    Object.assign(prefs, { date: PREF_DEFAULTS.date, time: PREF_DEFAULTS.time, zone: PREF_DEFAULTS.zone });
+    savePrefs();
+    timesChanged();
+  });
+
+  // Log out asks first. The form posts to /logout, which ends the session and goes to the login page.
+  $("open-logout").addEventListener("click", () => {
+    setUserMenu(false);
+    $("logout-confirm").showModal();
+  });
+  $("logout-cancel").addEventListener("click", () => $("logout-confirm").close());
 
   function showTab() {
     // Links saved when the first tab was called Live still open it.
@@ -4919,7 +5299,7 @@
     const TURN_SHARE = 0.25; // Of the width, dragged before letting go turns the section.
     const FLICK_PX_PER_MS = 0.4;
     const NOT_SWIPED =
-      "svg, canvas, .stage, input, select, textarea, button, a, label, summary, [role=slider], [contenteditable], [tabindex], [data-tip], [data-no-swipe]";
+      "svg, canvas, .stage, input, select, textarea, button, a, label, summary, [role=slider], [contenteditable], [tabindex], [data-tip], [data-no-swipe], dialog, .user-menu";
     const order = Object.keys(TABS);
     const main = document.querySelector("main");
     const still = matchMedia("(prefers-reduced-motion: reduce)");
@@ -5011,7 +5391,7 @@
 
     main.addEventListener("pointerdown", (event) => {
       if (swipe || settling || FLOW_TEST || !event.isPrimary || event.button !== 0 || zoomed()) return;
-      if (menuOpen() || event.target.closest(NOT_SWIPED) || scrollsSideways(event.target)) return;
+      if (menuOpen() || userOpen() || event.target.closest(NOT_SWIPED) || scrollsSideways(event.target)) return;
       const tab = Object.keys(TABS).find((hash) => !$(TABS[hash]).hidden);
       if (tab) swipe = { id: event.pointerId, x: event.clientX, y: event.clientY, tab, moving: false, dx: 0, samples: [] };
     });

@@ -417,3 +417,18 @@ def test_daily_works_out_a_finished_day_once(call, collector):
     assert call("GET", "/api/daily?days=2").json()["days"][0]["solar_home"] == 0.001
     db.save_samples(collector.conn, [db.Sample(noon + 2, {"ppv": 3600, "load_ptotal": 3600})])
     assert call("GET", "/api/daily?days=2").json()["days"][0]["solar_home"] == 0.001
+
+
+def test_the_page_carries_this_machines_time_zone(call, monkeypatch):
+    monkeypatch.setattr("solar_monitor.api.system_time_zone", lambda: "Europe/London")
+    assert '<meta name="server-time-zone" content="Europe/London">' in call("GET", "/").text
+    monkeypatch.setattr("solar_monitor.api.system_time_zone", lambda: None)
+    assert '<meta name="server-time-zone" content="">' in call("GET", "/").text
+
+
+def test_the_time_zone_comes_from_tz_first(monkeypatch):
+    from solar_monitor.api import system_time_zone
+    monkeypatch.setenv("TZ", ":America/New_York")
+    assert system_time_zone() == "America/New_York"
+    monkeypatch.setenv("TZ", "<script>")
+    assert system_time_zone() != "<script>"

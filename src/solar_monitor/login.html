@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Log in - Solar monitor</title>
+<script>
+  // The theme picked in the dashboard's user menu, kept in this browser.
+  try {
+    const theme = JSON.parse(localStorage.getItem("solar-monitor.prefs") || "{}").theme;
+    if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+  } catch {}
+</script>
 <style>
   :root {
     color-scheme: light;
@@ -16,8 +23,9 @@
     --critical: #d03b3b;
     --solar: #eb6834;
   }
+  /* Dark follows the device unless the dashboard's user menu picked a theme, which the script above puts on <html>. */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       color-scheme: dark;
       --page: #0d0d0d;
       --surface: #1a1a19;
@@ -27,6 +35,16 @@
       --field: rgba(255, 255, 255, 0.35);
       --solar: #d95926;
     }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --border: rgba(255, 255, 255, 0.10);
+    --field: rgba(255, 255, 255, 0.35);
+    --solar: #d95926;
   }
   * { box-sizing: border-box; }
   body {
