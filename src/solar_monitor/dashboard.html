@@ -288,31 +288,31 @@
   .flow-test select, .flow-test button { font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--rule-strong); padding: 6px 10px; }
   .flow-test .status { white-space: normal; }
   .frozen .flow-eta { visibility: hidden; }
+  .flow-soc-track { fill: var(--rule); }
+  .flow-soc { fill: var(--flow-battery); }
+  .flow-soc-tick { fill: var(--ink); }
+  /* Over the battery box, for its tooltip. */
+  .flow-hit {
+    position: absolute; padding: 0; border: 0; background: none; cursor: help;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .flow-hit:focus-visible { outline-offset: 2px; }
+  .frozen .flow-hit { display: none; }
   @keyframes flow-move { to { stroke-dashoffset: -24; } }
   @media (prefers-reduced-motion: reduce) { .flow-dash { animation: none; } .stage svg { transition: none; } }
 
-  .readings { display: grid; gap: 1px; background: var(--rule); min-width: 0; }
-  .reading { background: var(--surface); padding: 10px var(--gutter) 12px; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; }
-  .read-main { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0 12px; }
-  .read-label { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-weight: 500; }
-  .read-label i { flex: none; width: 10px; height: 10px; }
-  .read-value { font: 600 38px/1.1 var(--display); white-space: nowrap; }
-  .read-detail { color: var(--muted); font-size: 13px; line-height: 1.35; }
-  .soc { position: relative; height: 6px; margin: 2px 0 4px; background: var(--rule); }
-  .soc b { position: absolute; inset: 0 auto 0 0; background: var(--flow-battery); }
-  .soc u { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); }
+  .now-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
+  .now-head a { color: var(--ink-2); }
+  .now-head a:hover { color: var(--ink); }
 
   .dash { grid-template-columns: minmax(0, 1fr); }
-  @media (min-width: 640px) and (max-width: 959.98px) { .readings { grid-template-columns: 1fr 1fr; } .reading { justify-content: flex-start; } }
   @media (min-width: 960px) {
-    .dash { grid-template-columns: minmax(0, 1fr) clamp(380px, 34vw, 520px); }
+    .dash { grid-template-columns: minmax(0, 1fr) clamp(400px, 40vw, 640px); }
     .flow-pane { min-height: 0; }
     .stage { flex: 1 1 auto; height: auto; min-height: 420px; }
-    .readings { grid-auto-rows: 1fr; }
   }
   @media (min-width: 1700px) {
     .dash { grid-template-columns: minmax(0, 1fr) 800px; }
-    .readings { grid-template-columns: 1fr 1fr; }
   }
 
   /* Statistics */
@@ -366,7 +366,10 @@
   /* A ring round a chart only for the keyboard, not when it's clicked or tapped to read. */
   .chart svg:focus:not(:focus-visible) { outline: none; }
   .chart svg:focus-visible { outline: 2px solid var(--flow-grid); outline-offset: 2px; }
-  #history-charts svg { cursor: crosshair; }
+  #history-charts svg, #now-charts svg { cursor: crosshair; }
+  .charts.compact { gap: 10px; }
+  .compact .chart-head { padding-right: 0; }
+  .chart-limit { stroke: var(--muted); stroke-dasharray: 4 3; }
   .chart-grid { stroke: var(--rule); }
   .chart-zero { stroke: var(--rule-strong); }
   .chart-cross { stroke: var(--muted); }
@@ -647,10 +650,15 @@
       </div>
       <div class="stage" id="stage">
         <svg id="flow-diagram" role="img" aria-label="Waiting for readings."></svg>
+        <button type="button" class="flow-hit" id="battery-tip" data-tip="" aria-label="Battery" hidden></button>
       </div>
       <button type="button" class="help flow-help" aria-label="About the paths" data-tip="Each box's total is measured. The split between paths is estimated: solar feeds the house first, then the battery, then the grid.">?</button>
     </div>
-    <div class="readings" id="readings" aria-label="Live values"></div>
+    <div class="pane now-pane" id="now-pane">
+      <div class="now-head"><h2>Last 24 hours</h2><a href="#statistics">Statistics →</a></div>
+      <div class="charts compact" id="now-charts"></div>
+      <p class="meta" id="now-note"></p>
+    </div>
   </section>
 
   <section class="view stats" id="view-statistics" aria-label="Statistics" hidden>
@@ -1301,9 +1309,13 @@
     const boxW = clamp(W * 0.25, 112, 200);
     const boxH = compact ? 92 : 112;
     const battW = Math.max(boxW, 156); // Wider, so "11 h 55 min to 100%" stays inside the box.
-    const battH = boxH + 20;
     const pad = compact ? 10 : 14;
     const valueSize = compact ? 26 : clamp(W / 20, 30, 42);
+    // The battery box, top to bottom: its label, the charge bar, the time left, the watts, the state.
+    const batt = compact
+      ? { label: 22, bar: 29, eta: 50, value: 80, state: 102 }
+      : { label: 28, bar: 37, eta: 62, value: 64 + valueSize, state: 88 + valueSize };
+    const battH = batt.state + 16;
     const cx = W / 2;
     const cy = (boxH + (H - battH)) / 2;
     const place = {
@@ -1354,9 +1366,12 @@
     for (const [name, flow] of Object.entries(FLOWS)) {
       const p = place[name];
       const textX = p.x + pad;
-      flow.label_ = svgEl("text", { x: textX, y: p.y + (compact ? 22 : 28) }, flow.label);
-      flow.value_ = svgEl("text", { x: textX, y: p.y + (compact ? 52 : 28 + valueSize + 2), class: "flow-value", style: `font-size: ${valueSize}px` }, "—");
-      flow.state_ = svgEl("text", { x: textX, y: p.y + (compact ? 74 : 28 + valueSize + 24) }, "No data");
+      const at = name === "battery" ? batt : compact
+        ? { label: 22, value: 52, state: 74 }
+        : { label: 28, value: 30 + valueSize, state: 52 + valueSize };
+      flow.label_ = svgEl("text", { x: textX, y: p.y + at.label }, flow.label);
+      flow.value_ = svgEl("text", { x: textX, y: p.y + at.value, class: "flow-value", style: `font-size: ${valueSize}px` }, "—");
+      flow.state_ = svgEl("text", { x: textX, y: p.y + at.state }, "No data");
       flow.node = svgEl("g", { class: "flow-node", style: `--flow-color: var(${flow.color})` });
       flow.node.append(
         svgEl("rect", { x: p.x + 0.5, y: p.y + 0.5, width: p.w - 1, height: p.h - 1, class: "flow-box" }),
@@ -1367,9 +1382,19 @@
       }
       svg.append(flow.node);
     }
+    // The charge as a bar under the label, with a tick where the inverter stops discharging.
     const battery = place.battery;
-    FLOWS.battery.eta_ = svgEl("text", { x: battery.x + pad, y: battery.y + (compact ? 94 : 28 + valueSize + 44), class: "flow-eta" }, "");
-    FLOWS.battery.node.append(FLOWS.battery.eta_);
+    const bar = { x: battery.x + pad, y: battery.y + batt.bar, w: battW - 2 * pad, h: 6 };
+    const b = FLOWS.battery;
+    b.bar_ = bar;
+    b.socTrack_ = svgEl("rect", { x: bar.x, y: bar.y, width: bar.w, height: bar.h, class: "flow-soc-track" });
+    b.socFill_ = svgEl("rect", { x: bar.x, y: bar.y, width: 0, height: bar.h, class: "flow-soc" });
+    b.socTick_ = svgEl("rect", { x: bar.x, y: bar.y - 3, width: 2, height: bar.h + 6, class: "flow-soc-tick" });
+    b.eta_ = svgEl("text", { x: battery.x + pad, y: battery.y + batt.eta, class: "flow-eta" }, "");
+    b.node.append(b.socTrack_, b.socFill_, b.socTick_, b.eta_);
+    // The svg is drawn 1:1 with the stage, so the box's place in it is its place on the page.
+    const hit = $("battery-tip");
+    Object.assign(hit.style, { left: `${battery.x}px`, top: `${battery.y}px`, width: `${battW}px`, height: `${battH}px` });
     renderFlow();
   }
 
@@ -1427,9 +1452,24 @@
       const scale = Math.sqrt(Math.min(paths[key] / FLOW_FULL_SCALE_W, 1));
       node.style.setProperty("--flow-width", `${2.5 + 5.5 * scale}px`);
     }
+    const b = FLOWS.battery;
     const soc = values.battery_soc;
-    FLOWS.battery.label_.textContent = isNum(soc) ? `Battery ${soc}%` : "Battery";
-    FLOWS.battery.eta_.textContent = batteryEta();
+    b.label_.textContent = isNum(soc) ? `Battery ${soc}%` : "Battery";
+    b.eta_.textContent = batteryEta();
+    b.socFill_.setAttribute("width", isNum(soc) ? b.bar_.w * clamp(soc, 0, 100) / 100 : 0);
+    const stopsAt = latest?.battery_limits?.min_soc;
+    b.socTick_.toggleAttribute("hidden", !isNum(stopsAt));
+    if (isNum(stopsAt)) b.socTick_.setAttribute("x", b.bar_.x + b.bar_.w * clamp(stopsAt, 0, 100) / 100 - 1);
+
+    // The details the box has no room for, in its tooltip.
+    const lines = batteryTipLines();
+    const hit = $("battery-tip");
+    const tip = lines.join("\n");
+    hit.hidden = !lines.length;
+    hit.setAttribute("aria-label", lines.length ? `Battery: ${lines.join(". ")}.` : "Battery");
+    if (hit.dataset.tip === tip) return;
+    hit.dataset.tip = tip;
+    if (helpShown(hit)) tip ? showHelp(hit) : dropTip(); // Up to date while it's being read.
   }
 
   /* The short form of the time remaining, or nothing while the battery is idle. */
@@ -1439,6 +1479,19 @@
     const limit = estimate.limit_soc;
     if (estimate.hours === 0) return estimate.state === "charging" ? `Reached ${limit}%` : `At ${limit}% minimum`;
     return estimate.hours === null ? `Heading to ${limit}%` : `${timeLeft(estimate.hours)} to ${limit}%`;
+  }
+
+  /* Each box's figures as the diagram shows them, for screen readers. */
+  function flowNumbers() {
+    const soc = values.battery_soc;
+    return Object.entries(FLOWS).map(([name, flow]) => {
+      const toward = flowWatts(flow);
+      const label = name === "battery" && isNum(soc) ? `Battery ${soc}%` : flow.label;
+      if (toward === null) return `${label}: no data.`;
+      const state = Math.abs(toward) < flow.minW ? flow.idle : toward < 0 ? flow.away : flow.toward;
+      const eta = name === "battery" ? batteryEta() : "";
+      return `${label}: ${watts(Math.abs(toward))}, ${state.toLowerCase()}${eta ? `, ${eta}` : ""}.`;
+    }).join(" ");
   }
 
   /* One sentence that says what the diagram shows, for screen readers. */
@@ -1455,12 +1508,12 @@
   }
 
   /* Today it's just the time, then the day, then the date, as the estimate gets further off. */
-  function arrival(hours) {
+  function arrivalAt(hours) {
     const when = new Date(latest.read_at).getTime() + hours * 3600000;
     if (!isNum(when)) return "";
-    if (isoDay(when) === isoDay(Date.now())) return ` around ${clockTime(when)}`;
-    if (hours < 144) return ` around ${formatter(shownZone(), { weekday: "short" }).format(when)} ${clockTime(when)}`;
-    return ` around ${shortDate(when)}`;
+    if (isoDay(when) === isoDay(Date.now())) return `at ${clockTime(when)}`;
+    if (hours < 144) return `${formatter(shownZone(), { weekday: "short" }).format(when)} ${clockTime(when)}`;
+    return `on ${shortDate(when)}`;
   }
 
   /* Hours from now to the next time the monitor's clock, which the inverter keeps to, shows this "HH:MM". */
@@ -1482,80 +1535,33 @@
     if (from?.source === "period") {
       const left = hoursUntil(from.end);
       const soc = values.battery_soc;
-      if (estimate.hours > left && isNum(soc)) {
+      if (isNum(estimate.hours) && estimate.hours > left && isNum(soc)) {
         const then = Math.round(soc + (estimate.limit_soc - soc) * left / estimate.hours);
-        return `But TOU period ${from.slot} stops charging at ${from.end}, at about ${then}%`;
+        return [`TOU ${from.slot} ends ${from.end}`, `~${then}% then`];
       }
-      return `That's TOU period ${from.slot}'s cut-off, and the period runs until ${from.end}`;
+      return [`TOU ${from.slot} cut-off, till ${from.end}`];
     }
-    if (from?.source === "inverter") return "That's the inverter's charge limit";
-    if (from?.source === "fallback") return "The inverter's charge limit couldn't be read, so this counts to full";
-    return "";
+    if (from?.source === "inverter") return ["Inverter limit"];
+    if (from?.source === "fallback") return ["Charge limit unread"];
+    return [];
   }
 
   /*
-    The label says which way it's counting, so a charging time can't be read as how long the
-    battery will last: up to where the inverter stops charging while charging, down to its
-    minimum while discharging.
+    The battery box's tooltip, a few words a line: when it gets where it's heading, what sets
+    where charging stops, and where discharging stops.
   */
-  function batteryTimeReading() {
-    const reading = { label: "Battery time", color: "--flow-battery", value: "—" };
-    const estimate = latest.battery_estimate;
-    if (!estimate) return reading;
-    if (estimate.state === "idle") return { ...reading, detail: "Not charging or discharging" };
-    const { hours, limit_soc: limit } = estimate;
-    const charging = estimate.state === "charging";
-    const counting = { ...reading, label: `Time to ${charging ? "charge" : "discharge"} to ${limit}%` };
-    const why = (text) => [text, charging ? chargeStop(estimate) : ""].filter(Boolean).join(". ");
-    if (hours === null) {
-      return { ...counting, detail: "Needs the battery's capacity, which the log measures after a few days, or enter one on the Appliances & tariffs tab" };
+  function batteryTipLines() {
+    const estimate = latest?.battery_estimate;
+    const stopsAt = latest?.battery_limits?.min_soc;
+    const lines = [];
+    if (estimate && estimate.state !== "idle") {
+      const { hours, limit_soc: limit } = estimate;
+      if (hours === null) lines.push("Needs battery capacity");
+      else if (hours > 0) lines.push(`Reaches ${limit}% ${arrivalAt(hours)}`.trim());
+      if (estimate.state === "charging") lines.push(...chargeStop(estimate));
     }
-    if (hours === 0) {
-      return { ...counting, value: "Reached", detail: charging ? why(`Already at ${limit}% or more`) : `At the ${limit}% the inverter stops discharging at` };
-    }
-    return { ...counting, value: timeLeft(hours), detail: why(`Reaches ${limit}%${arrival(hours)}`) };
-  }
-
-  /* The charge as a meter, with a tick at the level the inverter stops discharging. */
-  function socMeter(soc) {
-    const stopsAt = latest.battery_limits?.min_soc;
-    const meter = el("div", "soc");
-    meter.setAttribute("role", "img");
-    meter.setAttribute("aria-label", `Battery ${soc}% charged${isNum(stopsAt) ? `, stops discharging at ${stopsAt}%` : ""}`);
-    const fill = el("b");
-    fill.style.width = `${clamp(soc, 0, 100)}%`;
-    meter.append(fill);
-    if (isNum(stopsAt)) {
-      const tick = el("u");
-      tick.style.left = `${clamp(stopsAt, 0, 100)}%`;
-      meter.append(tick);
-    }
-    return meter;
-  }
-
-  function renderReadings() {
-    const soc = values.battery_soc;
-    const readings = [
-      { label: "Solar", color: "--flow-solar", value: watts(values.ppv) },
-      { label: "House load", color: "--flow-load", value: watts(values.load_ptotal) },
-      { label: "Battery power", color: "--flow-battery", value: watts(values.pbattery1) },
-      { label: "Battery charge", color: "--flow-battery", value: isNum(soc) ? `${soc}%` : "—", meter: isNum(soc) && socMeter(soc) },
-      batteryTimeReading(),
-      { label: "Grid power", color: "--flow-grid", value: watts(values.active_power_total) },
-    ];
-    $("readings").replaceChildren(...readings.map((reading) => {
-      const node = el("div", "reading");
-      const label = el("span", "read-label");
-      const key = el("i");
-      key.style.background = `var(${reading.color})`;
-      label.append(key, reading.label);
-      const main = el("div", "read-main");
-      main.append(label, el("span", "read-value", reading.value));
-      node.append(main);
-      if (reading.meter) node.append(reading.meter);
-      if (reading.detail) node.append(el("p", "read-detail", reading.detail));
-      return node;
-    }));
+    if (isNum(stopsAt)) lines.push(`Stops discharging at ${stopsAt}%`);
+    return lines;
   }
 
   /* Agreement within a tolerance: the larger of a fixed margin and a share of the size. */
@@ -1832,9 +1838,10 @@
 
     const live = FLOW_TEST || (latest !== null && !latest.error && age !== null && age <= staleAfter);
     $("flow").classList.toggle("frozen", !live);
-    const eta = batteryEta();
+    // The battery's tooltip goes with the box, which isn't live either.
+    if (!live && helpShown($("battery-tip"))) dropTip();
     $("flow-diagram").setAttribute("aria-label", live
-      ? `${flowSummary()}${eta ? ` Battery: ${eta}.` : ""}`
+      ? `${flowNumbers()} ${flowSummary()}`
       : Object.keys(values).length ? "Not live. Showing the last reading received." : "Waiting for readings.");
   }
 
@@ -2051,11 +2058,20 @@
   $("tou-change").addEventListener("submit", sendTouChange);
   $("tou-cancel").addEventListener("click", closeTouChange);
 
+  // The battery chart marks the charge it stops discharging at, which comes with the readings.
+  let chartsStopAt = null;
+
   function render() {
     if (latest?.readings) values = Object.fromEntries(latest.readings.map((r) => [r.id, r.value]));
     renderModes();
     renderTou();
     renderConnection();
+    const stopsAt = latest?.battery_limits?.min_soc ?? null;
+    if (stopsAt !== chartsStopAt) {
+      chartsStopAt = stopsAt;
+      renderNow();
+      if (!$("view-statistics").hidden) renderHistory();
+    }
     if (latest?.device) {
       const d = latest.device;
       $("device").textContent = `${INVERTER_MODEL}, family ${d.family}, firmware ${d.firmware}, ARM ${d.arm_firmware}`;
@@ -2066,7 +2082,6 @@
       : "";
     if (!latest?.readings) return;
     renderFlow();
-    renderReadings();
     renderChecks();
     renderEnergy();
     renderOverhead();
@@ -2194,22 +2209,28 @@
   const HISTORY_CHARTS = [
     // Solar and house each on their own scale, so the house still shows on a sunny day. Neither
     // should go below zero; a brief misreading below it is cut off at the axis.
-    // Each chart's height includes its time axis.
-    { title: "Solar", unit: "W", height: 164, floor: 0, series: [
+    // Each chart's height includes its time axis. The compact height is the dashboard's.
+    { title: "Solar", unit: "W", height: 164, compactHeight: 100, floor: 0, series: [
       { key: "pv_w", label: "Solar", unit: "W", color: "--flow-solar" },
     ] },
-    { title: "Battery charge", unit: "%", height: 130, domain: [0, 100], series: [
+    // The charge as a line, over the power in and out as bars on a scale of their own.
+    { title: "Battery", unit: "%", height: 210, compactHeight: 156, domain: [0, 100], series: [
       { key: "battery_soc", label: "Battery charge", unit: "%", color: "--flow-battery" },
-    ] },
-    { title: "House", unit: "W", height: 164, floor: 0, series: [
+    ], strip: {
+      key: "battery_w", label: "Battery", unit: "W", color: "--flow-battery", above: "discharging", below: "charging",
+      inside: { above: "Out ↑", below: "In ↓" },
+    }, limit: {
+      value: () => latest?.battery_limits?.min_soc,
+      label: (soc) => `Stops at ${soc}%`,
+    }, aria: "Battery: charge (%) and power (W)" },
+    { title: "House", unit: "W", height: 164, compactHeight: 100, floor: 0, series: [
       { key: "load_w", label: "House", unit: "W", color: "--flow-load" },
     ] },
-    { title: "Battery and grid", unit: "W", height: 204, series: [
-      { key: "battery_w", label: "Battery", unit: "W", color: "--flow-battery", above: "discharging", below: "charging" },
+    { title: "Grid", unit: "W", height: 164, compactHeight: 108, series: [
       { key: "grid_w", label: "Grid", unit: "W", color: "--flow-grid", above: GRID_ABOVE_ZERO, below: GRID_BELOW_ZERO },
     ], inside: {
-      above: `Battery out · Grid ${GRID_POSITIVE_MEANS_EXPORT ? "export" : "import"} ↑`,
-      below: `Battery in · Grid ${GRID_POSITIVE_MEANS_EXPORT ? "import" : "export"} ↓`,
+      above: `${GRID_POSITIVE_MEANS_EXPORT ? "Export" : "Import"} ↑`,
+      below: `${GRID_POSITIVE_MEANS_EXPORT ? "Import" : "Export"} ↓`,
     } },
   ];
 
@@ -2218,13 +2239,15 @@
     { title: "Solar", unit: "kWh", height: 164, columns: [
       { above: "pv", aboveLabel: "Solar", label: "Solar", color: "--flow-solar" },
     ] },
+    { title: "Battery", unit: "kWh", height: 184, columns: [
+      { above: "battery_discharge", aboveLabel: "Battery discharged", below: "battery_charge", belowLabel: "Battery charged", label: "Battery", color: "--flow-battery" },
+    ], inside: { above: "Discharged ↑", below: "Charged ↓" } },
     { title: "House", unit: "kWh", height: 164, columns: [
       { above: "load", aboveLabel: "House", label: "House", color: "--flow-load" },
     ] },
-    { title: "Battery and grid", unit: "kWh", height: 224, columns: [
-      { above: "battery_discharge", aboveLabel: "Battery discharged", below: "battery_charge", belowLabel: "Battery charged", label: "Battery", color: "--flow-battery" },
+    { title: "Grid", unit: "kWh", height: 184, columns: [
       { above: "grid_export", aboveLabel: "Grid export", below: "grid_import", belowLabel: "Grid import", label: "Grid", color: "--flow-grid" },
-    ], inside: { above: "Battery out · Grid export ↑", below: "Battery in · Grid import ↓" } },
+    ], inside: { above: "Export ↑", below: "Import ↓" } },
   ];
 
   /* Where each day's energy went, split reading by reading on the server. Stacked from the zero line up. */
@@ -2277,9 +2300,9 @@
   }
 
   /* Ticks switch to kW once they reach 1000 W. Only the top tick carries the unit.
-     Taller plots get more ticks, about one every 28 px. */
-  function yScale(low, high, top, bottom, unit) {
-    const ticks = niceTicks(low, high, clamp(Math.floor((bottom - top) / 28), 2, 6));
+     Taller plots get more ticks, about one every `spacing` px. */
+  function yScale(low, high, top, bottom, unit, spacing = 28) {
+    const ticks = niceTicks(low, high, clamp(Math.floor((bottom - top) / spacing), 2, 6));
     const [min, max] = [ticks[0], ticks.at(-1)];
     const kilo = unit === "W" && Math.max(-min, max) >= 1000;
     const divisor = kilo ? 1000 : 1;
@@ -2350,17 +2373,18 @@
     }
   }
 
-  /* Says inside the plot which way is which, where there's room above or below zero for it. */
-  function drawInsideLabels(svg, frame, scale, bottom, labels) {
+  /* Says inside the plot which way is which, where there's `room` above or below zero for it. */
+  function drawInsideLabels(svg, frame, scale, bottom, labels, top = CHART_TOP, room = 26) {
     if (!labels) return;
     const zero = scale.y(0);
     const x = frame.left + 6;
-    if (zero - CHART_TOP > 26) svg.append(svgEl("text", { x, y: CHART_TOP + 15, class: "chart-words" }, labels.above));
-    if (bottom - zero > 26) svg.append(svgEl("text", { x, y: bottom - 7, class: "chart-words" }, labels.below));
+    if (zero - top > room) svg.append(svgEl("text", { x, y: top + 15, class: "chart-words" }, labels.above));
+    if (bottom - zero > room) svg.append(svgEl("text", { x, y: bottom - 7, class: "chart-words" }, labels.below));
   }
 
-  /* A titled chart with its legend. Identity is never left to colour alone. `full`: it fills the screen. */
-  function chartShell(chart, entries, legendClass, full) {
+  /* A titled chart with its legend. Identity is never left to colour alone. `full`: it fills the screen.
+     `zoomable`: it has the button that does that. */
+  function chartShell(chart, entries, legendClass, full, zoomable = true) {
     const node = el("div", "chart");
     const head = el("div", "chart-head");
     head.append(el("h3", "", chart.title));
@@ -2375,11 +2399,14 @@
       }
       head.append(legend);
     }
-    const zoom = el("button", full ? "chart-zoom on" : "chart-zoom");
-    zoom.type = "button";
-    zoom.title = full ? "Exit full screen" : "Full screen";
-    zoom.setAttribute("aria-label", `${zoom.title}: ${chart.title}`);
-    node.append(head, zoom);
+    node.append(head);
+    if (zoomable) {
+      const zoom = el("button", full ? "chart-zoom on" : "chart-zoom");
+      zoom.type = "button";
+      zoom.title = full ? "Exit full screen" : "Full screen";
+      zoom.setAttribute("aria-label", `${zoom.title}: ${chart.title}`);
+      node.append(zoom);
+    }
     if (chart.note) node.append(el("p", "meta", chart.note));
     return node;
   }
@@ -2757,6 +2784,190 @@
     return loaded.points.filter((point) => point.ts + half >= view.start && point.ts + half <= view.end);
   }
 
+  /* A strip under a chart, sharing its time axis, takes this share of the plot's height. */
+  const STRIP_SHARE = 0.4;
+  const STRIP_GAP = 14;
+
+  /* Bars from zero, one per period, filling it but for a 1px gap once there's room for one. */
+  function barsPath(points, key, left, y, width) {
+    const zero = y(0);
+    const drawn = width >= 3 ? width - 1 : width;
+    let path = "";
+    for (const point of points) {
+      const value = point[key];
+      if (!isNum(value)) continue;
+      const tip = y(value);
+      if (Math.abs(tip - zero) < 0.5) continue;
+      path += `M${(left(point.ts) + (width - drawn) / 2).toFixed(1)} ${zero.toFixed(1)}V${tip.toFixed(1)}h${drawn.toFixed(1)}V${zero.toFixed(1)}Z`;
+    }
+    return path;
+  }
+
+  /*
+    Charts over time, one under another, read together by one crosshair and tooltip. Everything is
+    drawn a view's width either side as well, so it's there to slide in when dragged. `full`: the
+    index of the chart filling the screen. `compact`: the dashboard's, shorter, without the lowest
+    to highest shading or a full-screen button. Returns where the plots sit.
+  */
+  function drawTimeCharts(box, { charts, points, visible, bucket, start, end, tou = [], full = null, compact = false, prefix }) {
+    const span = end - start;
+    const refocus = keepZoomFocus(box);
+    box.replaceChildren();
+    const { width } = innerSize(box);
+    // From zero to the furthest reading on screen, at least 100 apart so a flat night stays readable.
+    // `spread`: the lowest and highest in each period are drawn too, so the scale takes them in.
+    const range = (series, floor = -Infinity, spread = !compact) => {
+      const keys = series.flatMap((s) => (spread ? [s.key, `${s.key}_min`, `${s.key}_max`] : [s.key]));
+      const known = visible.flatMap((p) => keys.map((key) => p[key])).filter(isNum);
+      const low = Math.max(floor, Math.min(0, ...known));
+      return [low, Math.max(low + 100, 0, ...known)];
+    };
+    const shown = charts.map((chart, i) => ({ chart, i })).filter(({ i }) => full === null || i === full);
+    const planned = shown.map(({ chart, i }) => {
+      const node = chartShell(chart, chart.series, "lines", full !== null, !compact);
+      box.append(node);
+      const height = full !== null ? fullHeight(box, node) : (compact && chart.compactHeight) || chart.height;
+      const bottom = height - X_AXIS_HEIGHT;
+      // A strip has a scale of its own, so the main plot ends above it.
+      const stripTop = chart.strip ? bottom - Math.round((bottom - CHART_TOP) * STRIP_SHARE) : bottom;
+      const plotBottom = chart.strip ? stripTop - STRIP_GAP : bottom;
+      const scale = yScale(...(chart.domain ?? range(chart.series, chart.floor)), CHART_TOP, plotBottom, chart.unit);
+      const strip = chart.strip && { top: stripTop, scale: yScale(...range([chart.strip], -Infinity, false), stripTop, bottom, chart.strip.unit, 18) };
+      return { chart, i, node, height, bottom, plotBottom, scale, strip };
+    });
+    const named = shown.filter(({ chart }) => chart.series.length > 1).flatMap(({ chart }) => chart.series.map((s) => textWidth(s.label)));
+    const endLabels = width > END_LABELS_MIN_WIDTH && named.length > 0;
+    const scales = planned.flatMap((p) => (p.strip ? [p.scale, p.strip.scale] : [p.scale]));
+    const frame = { left: leftMargin(scales), right: endLabels ? Math.ceil(Math.max(...named)) + 12 : CHART_RIGHT, width };
+    const plotWidth = width - frame.left - frame.right;
+    const atTime = (ts) => frame.left + (ts - start) / span * plotWidth;
+    const x = (ts) => atTime(ts + bucket / 2); // A point is drawn at the middle of the period it averages.
+    const timeAt = (px) => start + clamp(px - frame.left, 0, plotWidth) / plotWidth * span;
+    const xTicks = timeTicks(start - span, end + span, Math.max(2, Math.floor(plotWidth / MIN_TICK_SPACING_PX)), span);
+    const [bandLeft, bandRight] = [frame.left - 24, frame.left + plotWidth + 24];
+
+    const drawn = planned.map(({ chart, i, node, height, bottom, plotBottom, scale, strip }, n) => {
+      const svg = svgEl("svg", { width, height });
+      // Anything past the axes is cut off at their edges. The tooltip and table still give the true value.
+      const clips = svgEl("defs", {});
+      const clip = (id, attrs) => {
+        const path = svgEl("clipPath", { id });
+        path.append(svgEl("rect", attrs));
+        clips.append(path);
+        return id;
+      };
+      const plotClip = (name, top, low) => clip(`${prefix}-${name}-${i}`, { x: frame.left - 2, y: top - 2, width: plotWidth + 4, height: low - top + 4 });
+      const areas = [{ top: CHART_TOP, bottom: plotBottom, clip: plotClip("plot", CHART_TOP, plotBottom) }];
+      if (strip) areas.push({ top: strip.top, bottom, clip: plotClip("strip", strip.top, bottom) });
+      const band = clip(`${prefix}-band-${i}`, { x: bandLeft, y: bottom, width: bandRight - bandLeft, height: height - bottom });
+      svg.append(clips);
+      /* A layer that slides when the chart is dragged: an inner group that moves, in an outer one that clips. */
+      const sliding = (clipId) => {
+        const inner = svgEl("g", { class: "pan" });
+        const outer = svgEl("g", { "clip-path": `url(#${clipId})` });
+        outer.append(inner);
+        svg.append(outer);
+        return inner;
+      };
+
+      areas.forEach((area, a) => {
+        const shade = sliding(area.clip);
+        for (const interval of tou) {
+          const [left, right] = [atTime(interval.start), atTime(interval.end)];
+          shade.append(svgEl("rect", { x: left, width: right - left, y: area.top, height: area.bottom - area.top, class: "chart-tou" }));
+          const name = TOU_SHORT[interval.period.action];
+          if (n === 0 && a === 0 && name && right - left > textWidth(name) + 8) {
+            shade.append(svgEl("text", { x: (left + right) / 2, y: CHART_TOP + 15, class: "chart-words middle" }, name));
+          }
+        }
+      });
+      drawYAxis(svg, frame, scale);
+      if (strip) drawYAxis(svg, frame, strip.scale);
+      for (const area of areas) {
+        const grid = sliding(area.clip);
+        for (const tick of xTicks) {
+          const tx = Math.round(atTime(tick.ts)) + 0.5;
+          grid.append(svgEl("line", { x1: tx, x2: tx, y1: area.top, y2: area.bottom, class: "chart-grid" }));
+        }
+      }
+      const labels = sliding(band);
+      for (const tick of xTicks) {
+        const tx = Math.round(atTime(tick.ts)) + 0.5;
+        const half = textWidth(tick.label) / 2;
+        // Leave out a label the edge would cut in two. Those wholly past it still slide in.
+        if ((tx - half < bandLeft && tx + half > bandLeft) || (tx - half < bandRight && tx + half > bandRight)) continue;
+        labels.append(svgEl("text", { x: tx, y: bottom + 17, class: "chart-tick chart-x" }, tick.label));
+      }
+      // A level the line stops at, such as the charge the battery stops discharging at.
+      const limit = chart.limit?.value();
+      const limitY = isNum(limit) ? Math.round(scale.y(limit)) + 0.5 : null;
+      if (limitY !== null) svg.append(svgEl("line", { x1: frame.left, x2: frame.left + plotWidth, y1: limitY, y2: limitY, class: "chart-limit" }));
+      const lines = sliding(areas[0].clip);
+      if (!compact) {
+        for (const series of chart.series) {
+          lines.append(svgEl("path", { d: spreadPath(points, series.key, x, scale.y, bucket * 2), class: "chart-spread", style: `fill: var(${series.color})` }));
+        }
+      }
+      for (const series of chart.series) {
+        lines.append(svgEl("path", { d: linePath(points, series.key, x, scale.y, bucket * 2), class: "chart-line", style: `stroke: var(${series.color})` }));
+      }
+      if (limitY !== null) {
+        const above = limitY - 5 - CHART_FONT_PX >= CHART_TOP;
+        svg.append(svgEl("text", { x: frame.left + 6, y: above ? limitY - 5 : limitY + 15, class: "chart-words" }, chart.limit.label(limit)));
+      }
+      if (strip) {
+        const bars = sliding(areas[1].clip);
+        bars.append(svgEl("path", { d: barsPath(points, chart.strip.key, atTime, strip.scale.y, plotWidth * bucket / span), style: `fill: var(${chart.strip.color})` }));
+        drawInsideLabels(svg, frame, strip.scale, bottom, chart.strip.inside, strip.top, 18);
+      }
+      if (endLabels) drawEndLabels(svg, chart, visible, x, scale.y, plotBottom);
+      drawInsideLabels(svg, frame, scale, plotBottom, chart.inside);
+      const overlay = svgEl("g", { class: "history-overlay" });
+      svg.append(overlay);
+      node.append(svg);
+      return { chart, svg, overlay, scale, strip, bottom, plotBottom };
+    });
+    refocus();
+
+    const hide = () => {
+      $("chart-tip").hidden = true;
+      for (const { overlay } of drawn) overlay.replaceChildren();
+    };
+    const show = (index, clientX, clientY) => {
+      const point = visible[index];
+      if (!point || pan?.moving) return hide();
+      const px = x(point.ts);
+      for (const { chart, overlay, scale, strip, bottom, plotBottom } of drawn) {
+        const dot = (series, y, top, low) => isNum(point[series.key]) && svgEl("circle", {
+          cx: px, cy: clamp(y(point[series.key]), top, low), r: 4, class: "chart-dot", style: `fill: var(${series.color})`,
+        });
+        overlay.replaceChildren(
+          svgEl("line", { x1: px, x2: px, y1: CHART_TOP, y2: bottom, class: "chart-cross" }),
+          ...chart.series.map((s) => dot(s, scale.y, CHART_TOP, plotBottom)).filter(Boolean),
+          ...(strip ? [dot(chart.strip, strip.scale.y, strip.top, bottom)].filter(Boolean) : []),
+        );
+      }
+      const when = new Date(point.ts * 1000);
+      const rows = charts.flatMap((chart) => [...chart.series, ...(chart.strip ? [chart.strip] : [])]).map((s) => formatPoint(point, s)).filter(Boolean);
+      const middle = point.ts + bucket / 2;
+      const period = tou.find((interval) => middle >= interval.start && middle < interval.end)?.period;
+      showTip(clientX, clientY, `${shortDate(when)}, ${clockTime(when)}`, rows, period && touText(period));
+    };
+    const pick = (px) => {
+      if (!visible.length) return null;
+      const ts = timeAt(px) - bucket / 2;
+      let best = 0;
+      for (let i = 1; i < visible.length; i++) if (Math.abs(visible[i].ts - ts) < Math.abs(visible[best].ts - ts)) best = i;
+      return Math.abs(visible[best].ts - ts) <= bucket * 2 ? best : null; // Nothing to read in a gap.
+    };
+    for (const { chart, svg } of drawn) {
+      makeScrubbable(svg, chart.aria ?? `${chart.title} (${chart.unit})`, {
+        count: visible.length, pick, xOf: (i) => (visible[i] ? x(visible[i].ts) : 0), show, hide,
+      });
+    }
+    return { left: frame.left, plotWidth };
+  }
+
   function renderHistory() {
     const box = $("history-charts");
     $("chart-tip").hidden = true;
@@ -2788,128 +2999,10 @@
     ].filter(Boolean).join("\n");
     renderHistoryTable();
 
-    const refocus = keepZoomFocus(box);
-    box.replaceChildren();
-    const full = fullChart?.box === box.id;
-    const { width } = innerSize(box);
-    const shown = HISTORY_CHARTS.map((chart, i) => ({ chart, i })).filter(({ i }) => !full || i === fullChart.index);
-    const planned = shown.map(({ chart, i }) => {
-      const node = chartShell(chart, chart.series, "lines", full);
-      box.append(node);
-      const height = full ? fullHeight(box, node) : chart.height;
-      const bottom = height - X_AXIS_HEIGHT;
-      const keys = chart.series.flatMap((s) => [s.key, `${s.key}_min`, `${s.key}_max`]);
-      const known = visible.flatMap((p) => keys.map((key) => p[key])).filter(isNum);
-      let [low, high] = chart.domain ?? [Math.max(chart.floor ?? -Infinity, Math.min(0, ...known)), Math.max(0, ...known)];
-      if (high - low < 100 && !chart.domain) high = low + 100; // A flat night stays readable.
-      return { chart, i, node, height, bottom, scale: yScale(low, high, CHART_TOP, bottom, chart.unit) };
+    historyFrame = drawTimeCharts(box, {
+      charts: HISTORY_CHARTS, points, visible, bucket, start, end, tou,
+      full: fullChart?.box === box.id ? fullChart.index : null, prefix: "history",
     });
-    const named = shown.filter(({ chart }) => chart.series.length > 1).flatMap(({ chart }) => chart.series.map((s) => textWidth(s.label)));
-    const endLabels = width > END_LABELS_MIN_WIDTH && named.length > 0;
-    const frame = { left: leftMargin(planned.map((p) => p.scale)), right: endLabels ? Math.ceil(Math.max(...named)) + 12 : CHART_RIGHT, width };
-    const plotWidth = width - frame.left - frame.right;
-    historyFrame = { left: frame.left, plotWidth };
-    const atTime = (ts) => frame.left + (ts - start) / span * plotWidth;
-    const x = (ts) => atTime(ts + bucket / 2); // A point is drawn at the middle of the period it averages.
-    const timeAt = (px) => start + clamp(px - frame.left, 0, plotWidth) / plotWidth * span;
-    const xTicks = timeTicks(start - span, end + span, Math.max(2, Math.floor(plotWidth / MIN_TICK_SPACING_PX)), span);
-    const [bandLeft, bandRight] = [frame.left - 24, frame.left + plotWidth + 24];
-
-    const drawn = planned.map(({ chart, i, node, height, bottom, scale }, n) => {
-      const svg = svgEl("svg", { width, height });
-      // Anything past the axes is cut off at their edges. The tooltip and table still give the true value.
-      const clips = svgEl("defs", {});
-      const clip = (id, attrs) => {
-        const path = svgEl("clipPath", { id });
-        path.append(svgEl("rect", attrs));
-        clips.append(path);
-        return id;
-      };
-      const plot = clip(`history-plot-${i}`, { x: frame.left - 2, y: CHART_TOP - 2, width: plotWidth + 4, height: bottom - CHART_TOP + 4 });
-      const band = clip(`history-band-${i}`, { x: bandLeft, y: bottom, width: bandRight - bandLeft, height: height - bottom });
-      svg.append(clips);
-      /* A layer that slides when the chart is dragged: an inner group that moves, in an outer one that clips. */
-      const sliding = (clipId) => {
-        const inner = svgEl("g", { class: "pan" });
-        const outer = svgEl("g", { "clip-path": `url(#${clipId})` });
-        outer.append(inner);
-        svg.append(outer);
-        return inner;
-      };
-
-      const shade = sliding(plot);
-      for (const interval of tou) {
-        const [left, right] = [atTime(interval.start), atTime(interval.end)];
-        shade.append(svgEl("rect", { x: left, width: right - left, y: CHART_TOP, height: bottom - CHART_TOP, class: "chart-tou" }));
-        const name = TOU_SHORT[interval.period.action];
-        if (n === 0 && name && right - left > textWidth(name) + 8) {
-          shade.append(svgEl("text", { x: (left + right) / 2, y: CHART_TOP + 15, class: "chart-words middle" }, name));
-        }
-      }
-      drawYAxis(svg, frame, scale);
-      const grid = sliding(plot);
-      for (const tick of xTicks) {
-        const tx = Math.round(atTime(tick.ts)) + 0.5;
-        grid.append(svgEl("line", { x1: tx, x2: tx, y1: CHART_TOP, y2: bottom, class: "chart-grid" }));
-      }
-      const labels = sliding(band);
-      for (const tick of xTicks) {
-        const tx = Math.round(atTime(tick.ts)) + 0.5;
-        const half = textWidth(tick.label) / 2;
-        // Leave out a label the edge would cut in two. Those wholly past it still slide in.
-        if ((tx - half < bandLeft && tx + half > bandLeft) || (tx - half < bandRight && tx + half > bandRight)) continue;
-        labels.append(svgEl("text", { x: tx, y: bottom + 17, class: "chart-tick chart-x" }, tick.label));
-      }
-      const lines = sliding(plot);
-      for (const series of chart.series) {
-        lines.append(svgEl("path", { d: spreadPath(points, series.key, x, scale.y, bucket * 2), class: "chart-spread", style: `fill: var(${series.color})` }));
-      }
-      for (const series of chart.series) {
-        lines.append(svgEl("path", { d: linePath(points, series.key, x, scale.y, bucket * 2), class: "chart-line", style: `stroke: var(${series.color})` }));
-      }
-      if (endLabels) drawEndLabels(svg, chart, visible, x, scale.y, bottom);
-      drawInsideLabels(svg, frame, scale, bottom, chart.inside);
-      const overlay = svgEl("g", { class: "history-overlay" });
-      svg.append(overlay);
-      node.append(svg);
-      return { chart, svg, overlay, scale, bottom };
-    });
-    refocus();
-
-    const hide = () => {
-      $("chart-tip").hidden = true;
-      for (const { overlay } of drawn) overlay.replaceChildren();
-    };
-    const show = (index, clientX, clientY) => {
-      const point = visible[index];
-      if (!point || pan?.moving) return hide();
-      const px = x(point.ts);
-      for (const { chart, overlay, scale, bottom } of drawn) {
-        overlay.replaceChildren(
-          svgEl("line", { x1: px, x2: px, y1: CHART_TOP, y2: bottom, class: "chart-cross" }),
-          ...chart.series.filter((s) => isNum(point[s.key])).map((s) => svgEl("circle", {
-            cx: px, cy: clamp(scale.y(point[s.key]), CHART_TOP, bottom), r: 4, class: "chart-dot", style: `fill: var(${s.color})`,
-          })),
-        );
-      }
-      const when = new Date(point.ts * 1000);
-      const rows = HISTORY_CHARTS.flatMap((chart) => chart.series.map((s) => formatPoint(point, s))).filter(Boolean);
-      const middle = point.ts + bucket / 2;
-      const period = tou.find((interval) => middle >= interval.start && middle < interval.end)?.period;
-      showTip(clientX, clientY, `${shortDate(when)}, ${clockTime(when)}`, rows, period && touText(period));
-    };
-    const pick = (px) => {
-      if (!visible.length) return null;
-      const ts = timeAt(px) - bucket / 2;
-      let best = 0;
-      for (let i = 1; i < visible.length; i++) if (Math.abs(visible[i].ts - ts) < Math.abs(visible[best].ts - ts)) best = i;
-      return Math.abs(visible[best].ts - ts) <= bucket * 2 ? best : null; // Nothing to read in a gap.
-    };
-    for (const { chart, svg } of drawn) {
-      makeScrubbable(svg, `${chart.title} (${chart.unit})`, {
-        count: visible.length, pick, xOf: (i) => (visible[i] ? x(visible[i].ts) : 0), show, hide,
-      });
-    }
   }
 
   function renderHistoryTable() {
@@ -3223,6 +3316,34 @@
     }
   }
 
+  /* The dashboard's charts: the last day up to now, at the history's first interval. */
+  let nowData = null; // { bucket, start, end, points }
+  let nowRequest = 0;
+  async function refreshNow() {
+    const end = bucketEnd(Date.now() / 1000, DEFAULT_BUCKET);
+    const start = end - DEFAULT_VIEW_SECONDS;
+    const request = ++nowRequest;
+    try {
+      const next = await getJson(`/api/history?start=${start}&end=${end}&bucket=${DEFAULT_BUCKET}`);
+      if (request !== nowRequest) return;
+      nowData = { bucket: next.bucket_seconds, start, end, points: next.points };
+      $("now-note").textContent = "";
+      renderNow();
+    } catch {
+      if (request === nowRequest) $("now-note").textContent = "Couldn't load the last 24 hours. Showing the last loaded.";
+    }
+  }
+
+  function renderNow() {
+    const box = $("now-charts");
+    if (!nowData || $("view-dashboard").hidden) return; // Charts need a width, and a hidden box has none.
+    if (tipOwner && box.contains(tipOwner.node)) dropTip();
+    const { bucket, start, end, points } = nowData;
+    const visible = points.filter((point) => point.ts + bucket / 2 >= start && point.ts + bucket / 2 <= end);
+    if (!visible.length) return box.replaceChildren(el("p", "no-value", "No readings in the last 24 hours."));
+    drawTimeCharts(box, { charts: HISTORY_CHARTS, points, visible, bucket, start, end, compact: true, prefix: "now" });
+  }
+
   /* The controls and the "from … to …" line, for view `v`. */
   function showHistoryControls(v) {
     const { earliest } = limits(v.bucket);
@@ -3364,8 +3485,9 @@
   }
   redrawOnWidthChange($("history-charts"), renderHistory);
   redrawOnWidthChange($("daily-charts"), renderDaily);
+  redrawOnWidthChange($("now-charts"), renderNow);
   // Margins are measured from the tick labels, so measure again once the web font is in.
-  document.fonts.ready.then(() => { renderHistory(); renderDaily(); });
+  document.fonts.ready.then(() => { renderHistory(); renderDaily(); renderNow(); });
 
   /* Fills the screen with a chart, `next` as in fullChart, or with null goes back to the page. */
   function setFullChart(next) {
@@ -5223,6 +5345,7 @@
     touShown = null;
     if (latest) render();
     renderTouWrites();
+    renderNow();
     renderHistory();
     renderDaily();
     renderOverview();
@@ -5258,6 +5381,7 @@
     // Test mode stays on the dashboard, so its made-up readings can't reach a tab that acts on them.
     const tab = !FLOW_TEST && TABS[location.hash] ? location.hash : "#dashboard";
     const returning = tab === "#statistics" && $("view-statistics").hidden;
+    const backToDashboard = tab === "#dashboard" && $("view-dashboard").hidden;
     for (const [hash, view] of Object.entries(TABS)) $(view).hidden = hash !== tab;
     for (const link of $("tab-links").querySelectorAll("a")) {
       if (link.hash !== tab) link.removeAttribute("aria-current");
@@ -5276,6 +5400,7 @@
       refreshHistory();
       refreshDaily();
     }
+    if (backToDashboard && !FLOW_TEST) refreshNow();
   }
   let afterTabChange = null; // Set by a swipe, to drop its sliding once the new section shows.
   window.addEventListener("hashchange", () => {
@@ -5508,9 +5633,11 @@
   new ResizeObserver(buildFlow).observe($("stage")); // Also draws the diagram when its tab opens.
   if (FLOW_TEST) {
     startFlowTest();
+    $("now-pane").hidden = true; // Its charts are the real readings, not the made-up ones.
   } else {
     refresh();
     setInterval(refresh, REFRESH_MS);
+    refreshNow();
   }
   setInterval(renderConnection, 1000);
   view = settle({ bucket: DEFAULT_BUCKET, start: 0, end: DEFAULT_VIEW_SECONDS, following: true });
@@ -5520,9 +5647,12 @@
   setInterval(() => {
     // Redrawing would drop the tooltip and keyboard focus from under someone reading a chart.
     // A full-screen button keeps its focus through a redraw.
-    if ($("view-statistics").hidden || pan || !$("chart-tip").hidden || document.activeElement?.closest(".charts svg")) return;
-    refreshHistory();
-    refreshDaily();
+    if (pan || !$("chart-tip").hidden || document.activeElement?.closest(".charts svg")) return;
+    if (!$("view-statistics").hidden) {
+      refreshHistory();
+      refreshDaily();
+    }
+    if (!$("view-dashboard").hidden && !FLOW_TEST) refreshNow();
   }, CHART_REFRESH_MS);
 </script>
 </body>
