@@ -3,6 +3,7 @@ accounts from the command line."""
 
 import json
 import re
+import sqlite3
 from html.parser import HTMLParser
 
 import pytest
@@ -544,6 +545,44 @@ def test_the_old_sessions_file_goes(env, conn, tmp_path):
     old.write_text("{}", encoding="utf-8")
     main.prepare_accounts(conn, tmp_path / "test.db", "127.0.0.1")
     assert not old.exists()
+
+
+# The tables accounts changed, as they were before.
+BEFORE_ACCOUNTS = """
+CREATE TABLE inverter_writes (
+    id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, slot INTEGER NOT NULL, old_percent INTEGER NOT NULL,
+    new_percent INTEGER NOT NULL, old_bytes TEXT NOT NULL, new_bytes TEXT NOT NULL, outcome TEXT NOT NULL,
+    held_bytes TEXT
+);
+CREATE TABLE setting_writes (
+    id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, setting TEXT NOT NULL, old_value INTEGER NOT NULL,
+    new_value INTEGER NOT NULL, outcome TEXT NOT NULL, held_value INTEGER
+);
+CREATE TABLE display_prefs (name TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
+INSERT INTO inverter_writes (ts, slot, old_percent, new_percent, old_bytes, new_bytes, outcome)
+    VALUES (1, 1, 25, 50, '00', '01', 'confirmed');
+INSERT INTO setting_writes (ts, setting, old_value, new_value, outcome) VALUES (2, 'min_soc', 10, 15, 'confirmed');
+INSERT INTO display_prefs VALUES ('theme', 'dark');
+"""
+
+
+def test_a_database_from_before_accounts_is_brought_up_to_date(env, tmp_path):
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(BEFORE_ACCOUNTS)
+    old.close()
+    env.setenv("DASHBOARD_PASSWORD", "the old password")
+    conn = db.connect(path)
+    try:
+        assert main.prepare_accounts(conn, path, "0.0.0.0") is True
+        owner = db.find_user(conn, auth.OWNER)
+        assert db.get_display_prefs(conn, owner["id"]) == {"theme": "dark"}
+        assert db.get_display_prefs(conn, 0) == {"theme": "dark"}
+        for log in ("inverter_writes", "setting_writes"):
+            assert [tuple(row) for row in conn.execute(f"SELECT user_id, username FROM {log}")] == [(None, None)]
+    finally:
+        conn.close()
+    db.connect(path).close()  # A second start finds nothing left to do.
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
