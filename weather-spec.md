@@ -1,64 +1,115 @@
-# Weather: forecast, dashboard widget, Weather tab, automation stub
+# Weather: forecast, warnings, dashboard widget, Weather tab, automation
 
-Phase 7 of [spec.md](spec.md). It adds a weather forecast to the app: a small widget on the Dashboard, a Weather tab with the hourly detail, and the groundwork for the next feature, battery automation driven by the forecast.
+Phase 7 of [spec.md](spec.md). It adds a weather forecast and weather warnings to the app: a Weather section on the Dashboard, a Weather tab with the hourly detail, weather kept by the hour alongside the statistics, and the groundwork for battery automation driven by the forecast.
 
-Nothing in this phase writes to the inverter.
+Nothing in this phase writes to the inverter. The first automation that acts is V2, below.
 
 ## Goals
 
 | # | Goal | Step |
 |---|------|------|
-| 1 | Fetch a free forecast for the house's location on the Pi, and keep it in SQLite | W1 |
-| 2 | Weather tab: the next 48 hours by the hour, and 7 days by the day | W2 |
-| 3 | Dashboard widget: now, the next few hours, and today's and tomorrow's sun | W3 |
-| 4 | Expected solar output (kWh) per hour, learned from the log, and how the forecast compared with what happened | W4 |
-| 5 | A stub for automation: works out what it would do, shows it and logs it, and never acts | W5 |
+| 1 | Pluggable weather sources: any forecast or warnings service can be added without touching the rest of the app | W1 |
+| 2 | Fetch a forecast and warnings for the saved location on the Pi, and keep them in SQLite | W1 |
+| 3 | Keep the weather for every hour, back to the start of the log, so the statistics can be compared with it | W2 |
+| 4 | Weather tab: warnings, the next 48 hours by the hour, and 7 days by the day | W3 |
+| 5 | Dashboard: a Weather section on the cards side, and sections that fold up from their headings | W4 |
+| 6 | Expected solar output per hour, and how the forecast compared with what happened | W5 |
+| 7 | Automation stub: works out what it would do, shows it and logs it, and never acts | W6 |
+| 8 | V2: lower a chosen TOU period's charge cut-off before a sunny morning | V2 |
 
-## Choosing the source
+## Choosing the sources
 
 | | Yr (MET Norway Locationforecast 2.0) | Open-Meteo | Met Éireann |
 |---|---|---|---|
-| Covers Ireland | Yes | Yes, with the UK Met Office's 2 km model in its "best match" | Yes |
+| Covers | The world | The world. For Ireland, the UK Met Office's 2 km model in its "best match" | Ireland |
 | Cost and key | Free, no key | Free for non-commercial use, which covers personal home automation. No key | Free, no key |
-| Solar radiation | **None.** Cloud cover (total, low, medium, high) and a clear-sky UV index only | **Yes**: global (GHI), direct, diffuse, and tilted (GTI) irradiance | No |
-| Time step | Hourly for the short range, then 6-hourly, out to 9-10 days. Where the hourly part ends outside the Nordics isn't confirmed | Hourly, 7 days by default, up to 16 | Hourly to 90 h, then 3- and 6-hourly to 10 days |
-| Format | JSON | JSON | XML |
-| Terms | CC BY 4.0. A User-Agent naming the app and a contact. At most 4 decimals in coordinates. Cache, and don't ask again before `Expires`. "Yr" can't be in the app's name | CC BY 4.0. Under 10,000 calls a day | Licence based on CC BY 4.0, with extra conditions such as showing weather warnings alongside |
+| Solar radiation | **None.** Cloud cover and a clear-sky UV index only | **Yes**: global (GHI), direct, diffuse, and tilted (GTI) irradiance | No |
+| Past data | No | Yes: past forecasts back to about 2022, and reanalysis back to 1940 | No |
+| Warnings | Separate service (MetAlerts), Norway | No | Yes, a JSON feed by county |
+| Terms | CC BY 4.0. A User-Agent naming the app and a contact. At most 4 decimals in coordinates. Don't ask again before `Expires`. "Yr" can't be in the app's name | CC BY 4.0. Under 10,000 calls a day | Licence based on CC BY 4.0. Credit Met Éireann |
 
-**Does Yr work?** Yes, it covers Ireland and its terms suit this app. But it has no solar radiation, and the automation that follows this phase is really a question of how much the panels will make tomorrow. Cloud cover is a poor stand-in for that.
+**Does Yr work?** Yes, but it has no solar radiation and no past data, and both matter here: automation is really a question of how much the panels will make, and the statistics need past weather.
 
-**Decision: Open-Meteo, as the only source.** It gives the weather for the widget and tab and the irradiance for the solar estimate from one request. One fetcher and one table. Yr stays the fallback if Open-Meteo's terms or service change: the stored fields below are ones both provide, apart from irradiance.
+**Defaults for this house:**
+
+- Forecast: **Open-Meteo**.
+- Warnings: **Met Éireann**.
+- Yr is the second forecast provider, written alongside, to prove the plug-in design works with a source that lacks irradiance and past data.
 
 ## Hard rules
 
-- **The location is personal data.** Latitude and longitude identify the house. They are entered on the Settings screen and kept in the `settings` table, never in code, git, tests, specs or logs. They're rounded to 2 decimals (about 1 km) before they're saved, which is ample for a forecast and also below MET Norway's 4-decimal limit. No place name or address is stored or shown.
-- **Fetched by the server, never by the browser.** The Pi fetches and caches, and the page reads only `/api/weather`. So the location never leaves the Pi from viewers' devices, the kiosk keeps working without internet, and only one copy asks.
-- **Never in the collector's way.** Fetches run on their own thread with a short timeout. A slow or failed fetch can't delay a poll or a flush.
-- **Works offline.** Weather icons are bundled with the page (like the fonts), never loaded from the source. With no forecast the widget says so and gives the age of the last good one. Nothing else on the page depends on the forecast.
-- **No hardware specs.** No panel size, tilt, azimuth or inverter rating is entered (as in spec.md phase 3, hardware specs that labels would give aren't stored). The solar estimate is learned from the log (W4).
-- **Polite fetching.** Once an hour, at a random minute picked at start-up, one request each time. Back off on errors, and stop until the next hour on HTTP 429.
-- **No writes to the inverter in this phase.** The automation stub only recommends. See W5.
-- **Credit the source.** The Weather tab and the widget's tooltip name the source and link the licence, as CC BY 4.0 requires.
+- **Nothing about a place or a service is hardcoded outside its provider.** The core app knows only the provider interface (W1), its own units, and UTC. Someone in another country picks their sources, location and region on the Settings screen, or adds a provider module, and nothing else changes.
+- **The location is personal data.** Latitude and longitude are entered on the Settings screen and kept in the database, never in code, git, tests, specs or logs. They're rounded to 2 decimals (about 1 km) when they're saved. No place name or address is stored or shown.
+- **Fetched by the server, never by the browser.** The Pi fetches and caches, and the page reads only the app's own API. The location never leaves from viewers' devices, the kiosk keeps working without internet, and only one copy asks.
+- **Never in the collector's way.** Fetches run on their own thread with short timeouts. A slow or failed fetch can't delay a poll or a flush.
+- **Works offline.** Weather icons are bundled with the page, like the fonts. With no forecast the Weather section says so and gives the age of the last one. Nothing else on the page depends on the weather.
+- **Polite fetching.** As often as the provider allows, at most hourly, at a random minute picked at start-up. Honour `Expires` and `If-Modified-Since` where the provider sends them. Back off on errors, and stop until the next hour on HTTP 429.
+- **No writes to the inverter until V2,** and then only through `control.py`'s checked path (see V2).
+- **Credit each source.** The Weather tab names each provider in use and links its licence, as CC BY 4.0 requires. Each provider supplies its own credit line.
 
-## W1: fetch and store
+## W1: providers, fetch and store
 
-### Request
+### The plug-in interface
 
-One call to `https://api.open-meteo.com/v1/forecast` with:
+A `weather/` package. The core sees only these:
 
-- `latitude`, `longitude` from settings (2 decimals).
-- `hourly=temperature_2m,apparent_temperature,precipitation,precipitation_probability,weather_code,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,wind_speed_10m,wind_gusts_10m,wind_direction_10m,shortwave_radiation,direct_radiation,diffuse_radiation,is_day`
-- `daily=sunrise,sunset,daylight_duration,sunshine_duration`
-- `forecast_days=7`, `timeformat=unixtime`, `timezone=GMT`, `wind_speed_unit=ms`.
-- A User-Agent naming the app and its public repo, `solar-monitor (github.com/nicholasdtc/solar-monitor)`. No email address.
+```python
+class ForecastProvider(Protocol):
+    name: str                      # 'open-meteo', 'met-norway'
+    title: str                     # 'Open-Meteo', shown on the Settings screen
+    credit: Credit                 # text, licence name and link
+    has_irradiance: bool
+    has_past: bool                 # can it return past hours?
+    min_interval: int              # seconds between fetches it allows
 
-All times are kept in UTC, as the rest of the app does, and the page shows them in local time.
+    def forecast(self, where: Location, fetch: Fetch) -> list[Hour]: ...
+    def past(self, where: Location, start: int, end: int, fetch: Fetch) -> list[Hour]: ...  # if has_past
 
-**Hour labels.** Open-Meteo labels radiation and precipitation by the end of the hour they cover (the mean or sum over the preceding hour), while temperature, cloud and wind are the value at that instant. Like the ESB meter file, the store keeps each value against the start of the hour it covers, so radiation and precipitation move back one hour on the way in. Check this against the docs and a sunny day's log before relying on it.
+class WarningsProvider(Protocol):
+    name: str
+    title: str
+    credit: Credit
+    regions: list[Region]          # codes and names, offered on the Settings screen; empty if it works from coordinates
 
-### Module
+    def warnings(self, where: Location, region: str | None, fetch: Fetch) -> list[Warning]: ...
+```
 
-`weather.py` holds the fetcher and the parsing. It takes an injectable `fetch` callable, so tests never touch the network, and returns parsed hours or an error. A small loop in `main.py`, beside the collector, calls it hourly and saves the result. Without a saved location it doesn't fetch, and the tab asks for one.
+- **`Hour`** is the app's own record, in fixed units: °C, m/s, mm, %, W/m², degrees, UTC seconds for the start of the hour it covers. Any field a provider lacks is `None`. Converting units and moving end-of-hour labels to starts is the provider's job.
+- **`condition`** in `Hour` is the app's own short list, not any provider's codes: clear, mostly clear, partly cloudy, cloudy, fog, drizzle, rain, heavy rain, sleet, snow, showers, thunder. Each provider maps its own codes (WMO codes for Open-Meteo, `symbol_code` for Yr) onto it. The page's bundled icons follow this list, so a new provider needs no new icons.
+- **`Warning`** has the level (the app's own scale: minor, moderate, severe, extreme, mapped from yellow, orange and red or the CAP severity), type, headline, description, start, end, the regions covered, and a link to the issuer's page.
+- **`fetch`** is injected. Tests pass a stub with saved responses, so tests never touch the network.
+- Everything specific to a service lives in its module: URLs, parameter lists, code tables, units, rate limits and the User-Agent rule. Where a service can be self-hosted (Open-Meteo can), its base URL is a setting with the public one as the default.
+- **A registry** lists the providers. Adding one is a module, a line in the registry, and tests with a saved response.
+
+### Settings
+
+All are on the Settings screen, with the same permission as the other settings. Each change is recorded in the Action history.
+
+| Setting | Default | Notes |
+|---|---|---|
+| Location | none | Latitude and longitude, rounded to 2 decimals. Without one, nothing is fetched and the Weather tab asks for it |
+| Forecast provider | Open-Meteo | From the registry |
+| Warnings provider | none | From the registry. Met Éireann for this house |
+| Warnings region | none | From the provider's list, when it has one. For Met Éireann, the county |
+| Provider options | per provider | For example Open-Meteo's model (default "best match") and base URL |
+| Panel arrays | none | Optional, for W5: tilt and facing per array |
+| Units | the user's display preferences | Temperature, wind and rain units, alongside the existing date and time choices. Stored in the app's units, converted on the page |
+
+`settings` holds numbers only, so the names and region go in a new key-value table for text settings.
+
+### Requests (Open-Meteo, as the first provider)
+
+- Forecast: `/v1/forecast` with the hourly fields the `Hour` record needs (temperature, feels like, precipitation and its probability, weather code, cloud cover total, low, mid and high, wind, gusts, direction, shortwave, direct and diffuse radiation, is_day), and daily sunrise, sunset and sunshine. `forecast_days=7`, `timeformat=unixtime`, `timezone=GMT`, `wind_speed_unit=ms`.
+- With panel arrays set, global tilted irradiance per array as well. Open-Meteo takes one tilt and facing per request, so that's one extra request per array.
+- Past: the same fields from `historical-forecast-api.open-meteo.com/v1/forecast`, with start and end dates.
+- User-Agent: the app and its public repo, `solar-monitor (github.com/nicholasdtc/solar-monitor)`. No email address.
+- Open-Meteo labels radiation and precipitation by the end of the hour they cover, while temperature, cloud and wind are the value at that instant. The provider moves the first group back one hour, so every `Hour` is labelled by its start. Check against a sunny day's log.
+
+### Warnings (Met Éireann, as the first provider)
+
+- `https://www.met.ie/Open_Data/json/warning_IRELAND.json`, every 15 to 30 minutes (warnings change faster than forecasts), filtered to the chosen county.
+- The county list ships with the provider module, as Met Éireann's own region codes.
+- Kept in a `weather_warnings` table, keyed by the issuer's id, with first and last seen, so the history shows past warnings too.
 
 ### Tables
 
@@ -66,123 +117,171 @@ All times are kept in UTC, as the rest of the app does, and the page shows them 
 CREATE TABLE weather_fetches (
     id          INTEGER PRIMARY KEY,
     fetched_at  INTEGER NOT NULL,      -- UTC seconds
-    source      TEXT NOT NULL,         -- 'open-meteo'
+    provider    TEXT NOT NULL,
+    kind        TEXT NOT NULL,         -- 'forecast', 'past', 'warnings'
     outcome     TEXT NOT NULL,         -- 'ok', or a short error
-    hours       INTEGER NOT NULL       -- how many hours it returned
+    items       INTEGER NOT NULL
 );
 
+-- Forecast runs: what was expected, and when it was expected.
 CREATE TABLE forecast_hours (
     fetch_id     INTEGER NOT NULL REFERENCES weather_fetches(id),
-    hour_start   INTEGER NOT NULL,     -- UTC seconds, start of the hour covered
-    temp_c       REAL, feels_c REAL,
-    precip_mm    REAL, precip_pct REAL,
-    weather_code INTEGER,              -- WMO code
-    cloud_pct    REAL, cloud_low_pct REAL, cloud_mid_pct REAL, cloud_high_pct REAL,
-    wind_ms      REAL, gust_ms REAL, wind_dir REAL,
-    ghi_wm2      REAL, direct_wm2 REAL, diffuse_wm2 REAL,
-    is_day       INTEGER,
+    hour_start   INTEGER NOT NULL,
+    ...the Hour fields...,
     PRIMARY KEY (fetch_id, hour_start)
+) WITHOUT ROWID;
+
+-- The weather as it happened: one row per hour, kept for good (W2).
+CREATE TABLE weather_hours (
+    hour_start   INTEGER PRIMARY KEY,
+    source       TEXT NOT NULL,        -- 'past:open-meteo', or 'forecast:met-norway' when only a forecast was available
+    ...the Hour fields...
 ) WITHOUT ROWID;
 ```
 
-Daily sunrise, sunset and sunshine are small enough to keep as JSON on the fetch row, or in a third table if the tab needs them by day.
+**Pruning forecast runs.** Automation needs to know how good the evening-before forecast was, so old runs are scored, not just the latest:
 
-**Every run is kept, not just the latest.** Automation needs to know how good a forecast made the evening before was, and that means scoring old runs against what the panels did. To keep this small:
-
-- The latest run keeps all 7 days.
+- The latest run keeps all its days.
 - Older runs keep only the 48 hours after they were fetched.
-- After 14 days, one run per day is kept (the last before 18:00 local, the "day-ahead" run) and the rest are deleted.
+- After 14 days, one run per day is kept, the last before the day-ahead decision time (W6), and the rest are deleted.
 
-That is about 1,200 rows a day for the last fortnight, then 48 a day, so a few MB a year. It belongs with the open question in spec.md on retention.
+That's about 1,200 rows a day for the last fortnight, then 48 a day, so a few MB a year.
 
-### Export and import
+Both weather tables, warnings and the text settings go into `/api/export` and the importer like the other tables. The location goes with the other settings.
 
-Forecast tables are added to `/api/export` and the importer like the other tables, so a restore keeps the forecast history. The location goes with the other settings.
+## W2: weather for every hour, for the statistics
 
-## W2: the Weather tab
+`weather_hours` holds the weather for every hour the app has a log for, whichever provider is in use:
 
-A new tab after Dashboard: `<li><a href="#weather">Weather</a></li>` in `#tab-links` and a `<section class="view" id="view-weather" hidden>`. All of it comes from one `GET /api/weather`, which returns the latest run, the past 24 hours of logged solar and the fetch status.
+- **With a provider that has past data** (Open-Meteo): once a night, fill yesterday from its past service. Where the log has hours that `weather_hours` doesn't, fill those too: that covers the first backfill back to the start of the log, and the Pi being offline.
+- **With a provider that hasn't**: when an hour has passed, keep the latest forecast for it, the one made closest to it, with its source marked as a forecast. Nothing is lost if the provider is changed later: the past service can overwrite these rows.
+- The backfill runs in small chunks (a month per request), well inside the provider's limits, and shows its progress on the Weather tab.
+
+**In Statistics:** the history charts can show weather beside the readings. That means an optional row for irradiance and cloud under the solar chart, temperature beside the load, and the condition icon per day on the daily view. Each is off by default and is a display preference.
+
+## W3: the Weather tab
+
+A new tab after Dashboard: `<li><a href="#weather">Weather</a></li>` and `<section class="view" id="view-weather" hidden>`. It reads from `GET /api/weather`.
 
 From the top:
 
-1. **Now.** Icon, temperature, feels like, wind and gusts, rain this hour, and when it was fetched.
-2. **Next 48 hours, as charts**, sharing the time axis and drawing code of the Statistics charts:
-   - Solar: expected PV (W4) per hour as bars, with the actual PV from the log over the hours already past. Until W4 exists, irradiance (W/m²) instead.
-   - Cloud: total cover, split into low, mid and high.
+1. **Warnings**, while any are in force or coming up, coloured by level, with time, type, headline and the issuer's link.
+2. **Now.** Icon, temperature, feels like, wind and gusts, rain this hour, and when it was fetched.
+3. **Next 48 hours, as charts**, sharing the time axis and drawing code of the Statistics charts:
+   - Solar: expected PV (W5) per hour as bars, with actual PV over the hours already past. Irradiance until W5 has learned enough.
+   - Cloud: total, split into low, mid and high.
    - Rain: probability, with mm.
    - Temperature and feels like.
-3. **Next 48 hours, as a table**, one row per hour: time, icon, temperature, rain (mm and %), cloud %, wind and gust, irradiance, expected PV. Night hours fold up.
-4. **Next 7 days**, one column per day: icon, low and high, rain, sunshine hours, sunrise and sunset, expected PV in kWh.
-5. **Yesterday's forecast against what happened** (W4): expected and actual kWh by hour.
-6. **Footer**: source, licence link, last good fetch, and a note if the latest fetch failed.
+4. **Next 48 hours, as a table**, one row per hour: time, icon, temperature, rain (mm and %), cloud, wind and gust, irradiance, expected PV. Night hours fold up.
+5. **Next 7 days**, one column per day: icon, low and high, rain, sunshine hours, sunrise and sunset, expected PV.
+6. **Yesterday's forecast against what happened** (W5), and the 30-day error.
+7. **Automation would…** (W6).
+8. **Footer**: each source's credit and licence link, the last good fetch of each kind, the backfill's progress, and a note if a fetch failed.
 
-The location is set on the Settings screen, with the same permission that edits the other settings, and the change goes in the Action history like other settings.
+Fields the provider doesn't have are left out, not shown empty. With Yr, for example, there's no irradiance row.
 
-## W3: the Dashboard widget
+## W4: the Dashboard
 
-A compact pane beside "Last 24 hours". It shows:
+**Weather on the cards side.** A new "Weather" section above "Last 24 hours", in the same pane, so on a phone it falls in the same column. It shows:
 
+- Any warning in force or due today: level colour, type and time, in one line linked to the Weather tab.
 - Now: icon, temperature, wind.
 - The next 6 hours as a strip: icon and rain chance per hour.
-- Solar today: expected kWh with what's been made so far, and tomorrow's expected kWh. Until W4 has learned enough, sunshine hours instead.
-- A "Weather →" link to the tab.
+- Solar today: expected kWh with what's been made so far, and tomorrow's expected kWh. Sunshine hours until W5 has learned enough.
+- "Weather →" to the tab, as "Statistics →" is beside "Last 24 hours".
 
-Tooltips stay short, per CLAUDE.md, for example "Rain 60%, 0.4 mm", "Gust 14 m/s", "Open-Meteo, 14:12". With no forecast the pane shows "No forecast" and the age of the last one, at the same size, so the layout doesn't jump. It must still fit the kiosk layout.
+With no forecast, the section shows "No forecast" and the age of the last one, at the same height, so the layout doesn't jump. Tooltips stay short, for example "Rain 60%, 0.4 mm", "Gust 14 m/s", "Open-Meteo, 14:12".
 
-## W4: expected solar output, learned from the log
+**Sections fold up.** Each section heading on the cards side ("Weather" and "Last 24 hours") becomes a button with a chevron: ▾ open, ▸ folded. Clicking it, or Enter or Space on it, folds or opens that section.
 
-The aim is expected PV per hour in kWh, without asking for any panel data.
+- The button carries `aria-expanded` and `aria-controls`. The "Weather →" and "Statistics →" links stay outside it, so they still just navigate.
+- Folded state is remembered per device in browser storage, so the kiosk and a phone can differ. If storage isn't available, everything starts open.
+- A folded section's charts stop redrawing until it's opened, so a phone does less work.
+- Folding is written once and used by both sections, so the next section added to the cards side gets it for free.
 
-- **The model.** Expected PV for an hour = forecast GHI × a factor learned for that time of day and time of year. Shading, the panels' angle and the inverter's ceiling are all folded into the factor. The ceiling is the most PV seen in the log, never a rating.
-- **Learning.** Each night, pair each logged hour's mean `pv_w` with the GHI forecast for that hour from the day-ahead run, over the last 30 to 60 days, and fit the factors. The page shows "learning" until there are about 14 days.
-- **A head start.** Open-Meteo also serves past forecasts for past days. If its terms allow, a one-off backfill of GHI for the days already in the log lets learning start straight away. To check.
-- **If GHI isn't good enough.** Tilted irradiance (GTI) needs the panels' tilt and facing. Those would be fitted from the log, by trying angles against clear days, not typed in. Only if the GHI fit proves poor.
-- **Scoring.** Every day, record expected against actual kWh, by day and by hour. The Weather tab shows the last day and a 30-day error figure, so it's clear how far automation could trust the forecast.
+## W5: expected solar output
 
-This lives in `planning.py` (or a new `solar_forecast.py` if it grows), with tests on made-up logs.
+The aim is expected PV per hour in kWh.
 
-## W5: automation stub
+- **With panel arrays set** (tilt and facing per array, optional on the Settings screen): use each array's tilted irradiance. A learned factor per array still absorbs the panels' size, shading and losses, so no rating is entered.
+- **Without them**: use GHI, with a factor learned for each time of day and time of year.
+- **The ceiling** is the most PV seen in the log, never a rating.
+- **Learning**: each night, pair each logged hour's mean `pv_w` with the irradiance for that hour from `weather_hours` and from the day-ahead forecast run, over the last 30 to 60 days, and fit the factors. With the W2 backfill, learning can start on the first day, from the whole log. The tab says "learning" until the fit is good enough.
+- **Scoring**: each day, record expected against actual, by day and by hour, for the day-ahead run. The Weather tab shows yesterday's comparison and a 30-day error. Automation uses the error to decide how far to trust a forecast.
+- If the GHI fit turns out as good as the tilted one, the arrays setting can stay empty.
 
-Only the shape of the next feature, so the data and the screens are in place. It recommends and logs, and **never writes**.
+This lives in `solar_forecast.py`, with tests on made-up logs.
 
-- `automation.py` exposes `recommend(forecast, state) -> list[Recommendation]`. `state` is what the app already reads: charge level, the minimum and reserve settings, the TOU programmes, tariffs, and the typical load per hour from the log. A `Recommendation` has the setting it concerns, the current value, the value it would choose, the reason, and the figures behind it.
-- The first rule, used to prove the plumbing: from tomorrow's expected PV and the typical load, the overnight grid charge level that would leave the battery full by mid-afternoon without buying more than needed. It's worked out at 21:00 each day.
-- Each run goes in an `automation_runs` table (time, inputs as JSON, recommendations as JSON), shown on the Weather tab as "Automation would…", with an "Off: suggestions only" label. There is no switch to turn it on in this phase.
-- No code path from `automation.py` to `control.py`, and a test that proves it.
+## W6: automation stub
 
-**When automation does act (the next phase, not this one):** every write goes through `control.py`'s existing path: re-read the current value, refuse if it isn't what was expected, log before sending, read back byte for byte afterwards, never retry by itself. The first automated write is the smallest harmless change, approved by the user for that write, and it starts as a "do it" button on a suggestion before anything runs unattended. The forecast's scored accuracy (W4) decides how far it may move a setting.
+The shape of the automation, so the data, the screens and the log are ready before anything acts. It recommends and logs, and **never writes**.
+
+- `automation.py` exposes `rules`, a registry of rules like the providers', and `evaluate(rule, forecast, state) -> Recommendation | None`.
+  - `state` is what the app already reads: charge level, the floors and ceiling, the TOU periods, the capacity measured from the log, the typical load per hour from the log, and the forecast's scored error.
+  - A `Recommendation` has the setting it concerns, the current value, the value it would choose, the reason in a few words, and the figures behind it.
+- Each rule has its own settings, kept in the database, never in code.
+- The decision time is a setting per rule, default an hour before the TOU period it concerns starts.
+- Each evaluation goes in an `automation_runs` table (time, rule, inputs as JSON, recommendation as JSON), shown on the Weather tab under "Automation would…", labelled "Suggestions only".
+- There is no on switch in this phase, and no path from `automation.py` to `control.py`. A test proves it.
+- The first rule is the V2 one below, so its suggestions can be checked against what actually happened before it's ever allowed to act.
+
+## V2: lower a TOU charge cut-off before a sunny morning
+
+Once the weather has run for a while and the forecast's error is known. Example: TOU charges from the grid overnight to 90%. If tomorrow morning will be sunny, charging only to 60% leaves room for free solar instead of bought grid power.
+
+**The rule's settings**, chosen by the user on the Weather tab or Battery schedule tab:
+
+- Which TOU period (one of the inverter's charge periods, read live).
+- The usual cut-off, and the sunny cut-off. Both are checked against the range `control.py` already enforces.
+- How much margin to keep, as a share of the forecast. The default comes from the forecast's own measured error, not a fixed number.
+
+**Deciding:** the morning counts as sunny enough when expected PV, less the typical load, from sunrise to midday comes to more than the room the lower cut-off leaves (the capacity measured from the log × the difference between the two cut-offs), after the margin.
+
+**Acting:**
+
+- At the decision time, the rule works out which cut-off should apply tonight, and only writes if the inverter holds the other one. That means a rule that does nothing leaves the usual value in place, and a sunny night is put back the next night by the same rule.
+- Every write goes through `control.py`'s existing path: re-read the period, refuse if it isn't exactly what's expected, log before sending, read back byte for byte, never retry by itself. Only the cut-off byte differs.
+- If the period has been changed by hand, so it holds neither of the rule's two values, the rule stops and says so, and doesn't overwrite.
+- It starts as a "Do it" button on the suggestion. Running it unattended is a second switch, off by default, with the user's approval for the first write, which is the smallest change (one night, one period).
+- Every write is in the inverter write log and the Action history, with the forecast and figures that led to it.
 
 ## API
 
 | Method | Path | What |
 |---|---|---|
-| GET | `/api/weather` | Latest run (48 h by the hour and 7 days by the day), past 24 h of actual PV, fetch status, expected PV once learned |
-| GET | `/api/weather/accuracy` | Expected against actual, by day, for the last 30 days (W4) |
-| GET | `/api/automation` | The latest suggestions and recent runs (W5) |
+| GET | `/api/weather` | Warnings, the latest run (48 h by the hour, 7 days by the day), past 24 h of actual PV, fetch status, expected PV once learned |
+| GET | `/api/weather/history?start=&end=` | `weather_hours` for a range, for the Statistics charts |
+| GET | `/api/weather/accuracy` | Expected against actual, by day, for the last 30 days |
+| GET | `/api/weather/providers` | The registry: names, titles, what each has, regions, options |
+| GET | `/api/automation` | The rules, their settings, the latest suggestions and recent runs |
 
-The location goes through the existing `PUT /api/settings`.
+Settings go through the existing settings endpoints, extended for text values.
 
 ## Tests
 
-- `tests/test_weather.py`: parsing a saved Open-Meteo response (with made-up coordinates), the one-hour shift for radiation and rain, errors, 429, no location, pruning old runs, and that a slow fetch doesn't hold up the collector.
-- The solar estimate on made-up logs: learning, too little data, the PV ceiling.
-- The automation stub: its recommendation from fixed inputs, and that it can't reach `control.py`.
-- The API: shapes, and permissions for the location.
+- Each provider: parsing a saved response with made-up coordinates, units, the end-of-hour shift, mapping its codes to the app's conditions and levels, errors and 429.
+- The core with a stub provider: no location, a provider without irradiance or past data, switching provider, pruning runs, filling `weather_hours` from past data and from forecasts, the backfill in chunks, and that a slow fetch doesn't hold up the collector.
+- Warnings: filtering by region, levels, first and last seen.
+- The solar estimate on made-up logs: GHI and tilted, too little data, the PV ceiling.
+- Automation: the V2 rule's decision from fixed inputs, and that the stub can't reach `control.py`.
+- The API: shapes, and permissions for the settings.
+- The page: folding sections and remembering them, the Weather section with no forecast, and a warning line.
 
-Test fixtures use made-up coordinates, never the house's.
+Fixtures use made-up coordinates, never the house's.
 
 ## Open questions
 
-- Where the widget sits on a phone, where the dashboard is already one column.
-- Whether to show Met Éireann weather warnings. They'd be a second source, so only if wanted.
-- Whether Open-Meteo's past-forecast service allows the backfill in W4.
-- Whether GHI alone gives a good enough fit, or the panels' angle needs fitting.
-- Which rule automation should start with once it can act: the overnight charge level, the discharge floor before a sunny day, or holding charge before a storm.
+- Where SEMS+ gets the panel angle it shows: entered by the installer, or reported by the system. If the inverter reports it, read it live instead of asking for it.
+- Whether the Open-Meteo past-forecast service has the same free terms as the forecast. Its pages don't say; check before the backfill runs.
+- Whether Met Éireann's warnings feed needs anything beyond credit under its custom licence.
+- How long the forecast needs to run before V2's suggestions are trusted enough to offer the "Do it" button.
 
 ## Sources
 
 - [MET Norway terms of service](https://api.met.no/doc/TermsOfService)
 - [Locationforecast data model](https://docs.api.met.no/doc/locationforecast/datamodel)
 - [Open-Meteo forecast API](https://open-meteo.com/en/docs)
+- [Open-Meteo historical forecast API](https://open-meteo.com/en/docs/historical-forecast-api)
 - [Open-Meteo terms](https://open-meteo.com/en/terms)
 - [Met Éireann forecast API](https://data.gov.ie/dataset/met-eireann-forecast-api)
+- [Met Éireann weather warnings](https://data.gov.ie/dataset/weather-warnings)

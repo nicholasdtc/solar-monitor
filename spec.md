@@ -127,8 +127,9 @@ solar-monitor/
 - Exports leave the accounts and sessions out. The full database export deletes them from the copy securely, so no password hash is left in it.
 
 **Phase 7: weather**
-- A forecast from Open-Meteo, fetched hourly by the Pi and kept in SQLite. Yr was considered, but it has no solar radiation.
-- A Dashboard widget, a Weather tab with the hourly detail, expected solar output learned from the log, and an automation stub that only recommends.
+- Pluggable forecast and warnings providers, with nothing about a place or a service hardcoded outside them. Defaults: Open-Meteo forecasts (Yr has no solar radiation) and Met Éireann warnings.
+- Weather kept for every hour of the log, a Weather section on the Dashboard with sections that fold up, a Weather tab with the hourly detail, expected solar output, and an automation stub that only recommends.
+- V2: lower a chosen TOU period's charge cut-off before a sunny morning, through `control.py`.
 - Details in [weather-spec.md](weather-spec.md).
 
 ## Open questions
