@@ -4823,8 +4823,11 @@
   function fillRegions(provider) {
     const regions = weatherProviders?.warnings.find((p) => p.name === provider)?.regions ?? [];
     const select = $("warnings-region");
-    select.replaceChildren(new Option("All", ""), ...regions.map((r) => new Option(r.name, r.code)));
     select.disabled = !provider || !may("edit");
+    // Only when the provider changes, so a refresh doesn't close the list while it's open.
+    if (select.dataset.provider === provider) return;
+    select.dataset.provider = provider;
+    select.replaceChildren(new Option("All", ""), ...regions.map((r) => new Option(r.name, r.code)));
   }
 
   function renderWeatherChoices(settings) {
@@ -4835,6 +4838,7 @@
     if (warnings !== document.activeElement) warnings.value = settings.warnings_provider ?? "";
     fillRegions(warnings.value);
     const region = $("warnings-region");
+    if (region === document.activeElement) return;
     // A region the provider doesn't have, kept from another, means all of them.
     region.value = settings.warnings_region ?? "";
     if (region.selectedIndex < 0) region.value = "";
