@@ -250,6 +250,18 @@ With no forecast, the section shows "No forecast" and the age of the last one, a
 - A folded section's charts stop redrawing until it's opened, so a phone does less work.
 - Folding is written once and used by both sections, so the next section added to the cards side gets it for free.
 
+**As built in W4:**
+
+- The Weather section shows only once the location is set in Setup; without one it's hidden, and "Last 24 hours" is the first section.
+- Warnings: those in force, or starting before the end of today, one line each with the level's colour on the left: the headline, then "from 15:00" or "until 18:00" (a date when it runs past today). Each links to the Weather tab.
+- Now: the icon, temperature and wind with its compass point. Its tooltip has the condition, feels like, gust, and the provider with the fetch time.
+- The next 6 hours: time, icon, temperature and rain chance, each tooltip "Rain 60%, 0.4 mm" and the wind.
+- Under them, "Solar today 12.3 kWh" from the inverter's own count, live with each reading, and "Sunshine 3 h more today, 5 h tomorrow" (tomorrow once the forecast covers 12 of its hours), the same 120 W/m² measure as the Weather tab. Expected kWh replaces the sunshine hours in W5.
+- With no forecast: "No forecast. The last is from 3 h ago." or "No forecast yet.", in a box the same height as the forecast.
+- "History →" stays the link beside "Last 24 hours", as it was.
+- Folded sections are kept in browser storage under `solar-monitor.folded`, a list of the folded sections' names (`weather`, `now`).
+- The Dashboard asks for the weather on load, when going back to it, and every 5 minutes while it's showing, sharing the Weather tab's fetch.
+
 ## W5: expected solar output
 
 The aim is expected PV per hour in kWh.

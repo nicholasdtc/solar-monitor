@@ -391,6 +391,36 @@
   .now-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
   .now-head a { color: var(--ink-2); }
   .now-head a:hover { color: var(--ink); }
+  .now-body, .dash-wx-section, .dash-wx { display: flex; flex-direction: column; gap: 12px; }
+  .now-body[hidden], .dash-wx-section[hidden], .dash-wx[hidden] { display: none; }
+  .dash-wx-section { padding-bottom: 8px; }
+  .fold-toggle {
+    display: inline-flex; align-items: baseline; gap: 8px; padding: 0; border: 0; background: none;
+    font: inherit; color: inherit; text-align: left; cursor: pointer; min-height: 32px;
+  }
+  .fold-toggle::before { content: "▾"; content: "▾" / ""; width: 0.8em; color: var(--ink-2); font-size: 0.8em; }
+  .fold-toggle[aria-expanded="false"]::before { content: "▸"; content: "▸" / ""; }
+  .fold-toggle:hover::before { color: var(--ink); }
+  .dash-wx-warnings { display: flex; flex-direction: column; gap: 6px; }
+  .dash-wx-warnings:empty { display: none; }
+  a.dash-wx-warning {
+    display: block; border-left: 4px solid var(--wx-level, var(--rule-strong)); padding: 2px 0 2px 10px;
+    color: var(--ink); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  a.dash-wx-warning:hover { text-decoration: underline; }
+  .dash-wx-warning.moderate { --wx-level: var(--warning); }
+  .dash-wx-warning.severe { --wx-level: var(--wx-severe); }
+  .dash-wx-warning.extreme { --wx-level: var(--critical); }
+  .dash-wx-main { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; min-height: 104px; }
+  .dash-wx-now { display: flex; align-items: center; gap: 10px; }
+  .dash-wx-temp { font: 600 32px/1.1 var(--body); font-variant-numeric: tabular-nums; }
+  .dash-wx-wind { color: var(--ink-2); }
+  .dash-wx-strip { display: grid; grid-template-columns: repeat(6, minmax(44px, 1fr)); gap: 4px; flex: 1 1 300px; }
+  .dash-wx-hour { display: flex; flex-direction: column; align-items: center; gap: 2px; font-variant-numeric: tabular-nums; }
+  .dash-wx-hour .time, .dash-wx-hour .chance { color: var(--ink-2); font-size: 13px; }
+  .dash-wx-empty { color: var(--ink-2); }
+  .dash-wx-solar { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+  .dash-wx-solar span:empty { display: none; }
 
   .dash { grid-template-columns: minmax(0, 1fr); }
   @media (min-width: 960px) {
@@ -957,9 +987,25 @@
       <button type="button" class="help flow-help" aria-label="About the paths" data-tip="Each box's total is measured. The split between paths is estimated: solar feeds the house first, then the battery, then the grid.">?</button>
     </div>
     <div class="pane now-pane" id="now-pane">
-      <div class="now-head"><h2>Last 24 hours</h2><a href="#statistics">History →</a></div>
-      <div class="charts compact" id="now-charts" data-swipe></div>
-      <p class="meta" id="now-note"></p>
+      <div class="dash-wx-section" id="dash-wx" hidden>
+        <div class="now-head">
+          <h2><button type="button" class="fold-toggle" data-fold="weather" aria-expanded="true" aria-controls="dash-wx-body">Weather</button></h2>
+          <a href="#weather">Weather →</a>
+        </div>
+        <div class="dash-wx" id="dash-wx-body">
+          <div class="dash-wx-warnings" id="dash-wx-warnings"></div>
+          <div class="dash-wx-main" id="dash-wx-main"></div>
+          <p class="meta dash-wx-solar"><span id="dash-wx-made"></span><span id="dash-wx-sun" data-tip="Direct sun ≥ 120 W/m²&#10;WMO measure" tabindex="0"></span></p>
+        </div>
+      </div>
+      <div class="now-head">
+        <h2><button type="button" class="fold-toggle" data-fold="now" aria-expanded="true" aria-controls="now-body">Last 24 hours</button></h2>
+        <a href="#statistics">History →</a>
+      </div>
+      <div class="now-body" id="now-body">
+        <div class="charts compact" id="now-charts" data-swipe></div>
+        <p class="meta" id="now-note"></p>
+      </div>
     </div>
   </section>
 
@@ -3049,6 +3095,7 @@
       $("device").textContent = `${INVERTER_MODEL}, family ${d.family}, firmware ${d.firmware}, ARM ${d.arm_firmware}`;
     }
     renderStorage();
+    $("dash-wx-made").textContent = isNum(values.e_day) ? `Solar today ${kwh(values.e_day)}` : "";
     $("error").textContent = latest?.error
       ? `Last read failed at ${latest.error_at}: ${latest.error}${latest.readings ? " Values below are from the last good read." : ""}`
       : "";
@@ -4661,7 +4708,7 @@
 
   function renderNow() {
     const box = $("now-charts");
-    if (!nowData || $("view-dashboard").hidden) return; // Charts need a width, and a hidden box has none.
+    if (!nowData || $("view-dashboard").hidden || $("now-body").hidden) return; // Charts need a width, and a hidden box has none.
     if (tipOwner && box.contains(tipOwner.node)) dropTip();
     const { bucket, start, end, points } = nowData;
     const visible = points.filter((point) => point.ts + bucket / 2 >= start && point.ts + bucket / 2 <= end);
@@ -5543,6 +5590,7 @@
     }
 
     function redraw() {
+      drawDashboard();
       if (!data || $("view-weather").hidden) return;
       const located = Boolean(data.located);
       const forecast = data.forecast?.hours ?? [];
@@ -5557,6 +5605,85 @@
       drawCharts();
       drawHours(forecast);
       drawDays();
+    }
+
+    const ago = (seconds) => seconds < 90 * 60 ? `${number(Math.max(1, Math.round(seconds / 60)), 0)} min ago`
+      : seconds < 48 * HOUR ? `${number(Math.round(seconds / HOUR), 0)} h ago` : `${number(Math.round(seconds / 86400), 0)} days ago`;
+
+    /* The Dashboard's weather: warnings for today, the weather now, the next hours, and the sunshine to come. */
+    function drawDashboard() {
+      if (!data || FLOW_TEST) return;
+      $("dash-wx").hidden = !data.located;
+      if (!data.located || $("dash-wx-body").hidden || $("view-dashboard").hidden) return;
+      const now = Date.now() / 1000;
+      const zone = shownZone();
+      const today = partsIn(Date.now(), zone);
+      const endOfToday = zonedMs(zone, today.year, today.month, today.day + 1) / 1000;
+
+      // Warnings in force, or starting before the day is out.
+      const warnings = (data.warnings ?? []).filter((w) => (!isNum(w.expiry) || w.expiry > now) && (!isNum(w.onset) || w.onset < endOfToday));
+      $("dash-wx-warnings").replaceChildren(...warnings.map((w) => {
+        const link = el("a", `dash-wx-warning ${LEVELS.includes(w.level) ? w.level : "minor"}`);
+        link.href = "#weather";
+        const what = w.headline || [cap(w.level), w.kind, "warning"].filter(Boolean).join(" ");
+        const when = isNum(w.onset) && w.onset > now ? `from ${clockTime(ms(w.onset))}`
+          : isNum(w.expiry) ? `until ${w.expiry < endOfToday ? clockTime(ms(w.expiry)) : dateTime(ms(w.expiry))}` : "";
+        link.textContent = [what, when].filter(Boolean).join(", ");
+        return link;
+      }));
+
+      const forecast = data.forecast?.hours ?? [];
+      const current = forecast.find((h) => h.hour_start <= now && now < h.hour_start + HOUR);
+      const next = forecast.filter((h) => h.hour_start > now).slice(0, 6);
+      const main = $("dash-wx-main");
+      if (!current && !next.length) {
+        const last = data.forecast?.fetched_at;
+        main.replaceChildren(el("p", "dash-wx-empty", isNum(last) ? `No forecast. The last is from ${ago(now - last)}.` : "No forecast yet."));
+        $("dash-wx-sun").textContent = "";
+        return;
+      }
+
+      const h = current ?? next[0];
+      const source = [data.credits?.[0]?.title, isNum(data.forecast?.fetched_at) ? clockTime(ms(data.forecast.fetched_at)) : ""].filter(Boolean).join(", ");
+      const nowBlock = tipped(el("div", "dash-wx-now"), [
+        cap(h.condition),
+        isNum(h.feels_like_c) ? `Feels ${tempText(h.feels_like_c)}` : "",
+        isNum(h.gust_ms) ? `Gust ${windText(h.gust_ms)} ${windUnit()}` : "",
+        source,
+      ].filter(Boolean).join("\n"));
+      const temp = el("span", "dash-wx-temp", `${tempText(h.temperature_c)}${isNum(h.temperature_c) ? tempUnit().slice(1) : ""}`);
+      const words = el("span", "dash-wx-wind", isNum(h.wind_ms) ? `Wind ${windText(h.wind_ms)} ${windUnit()}${isNum(h.wind_from_deg) ? ` ${compass(h.wind_from_deg)}` : ""}` : "");
+      nowBlock.append(icon(h.condition, h.is_day, 44), temp, words);
+
+      const strip = el("div", "dash-wx-strip");
+      strip.append(...next.map((hour) => {
+        const rain = [
+          isNum(hour.precipitation_chance_pct) ? `Rain ${percent(hour.precipitation_chance_pct)}` : "",
+          isNum(hour.precipitation_mm) ? `${rainText(hour.precipitation_mm)} ${rainUnit()}` : "",
+        ].filter(Boolean).join(", ");
+        const cell = tipped(el("div", "dash-wx-hour"), [
+          rain,
+          isNum(hour.wind_ms) ? `Wind ${windText(hour.wind_ms)} ${windUnit()}` : "",
+        ].filter(Boolean).join("\n") || cap(hour.condition));
+        cell.append(
+          el("span", "time", clockTime(ms(hour.hour_start))),
+          icon(hour.condition, hour.is_day, 28),
+          el("span", "", tempText(hour.temperature_c)),
+          el("span", "chance", isNum(hour.precipitation_chance_pct) ? percent(hour.precipitation_chance_pct) : ""),
+        );
+        return cell;
+      }));
+      main.replaceChildren(nowBlock, strip);
+
+      // Sunshine to come, from the forecast's direct sun.
+      const todayDay = isoDay(Date.now());
+      const tomorrowDay = isoDay(zonedMs(zone, today.year, today.month, today.day + 1, 12));
+      const sunny = (list) => list.filter((x) => x.direct_wm2 >= SUNSHINE_WM2).length;
+      const rest = forecast.filter((x) => x.hour_start + HOUR > now && isoDay(ms(x.hour_start)) === todayDay);
+      const tomorrow = forecast.filter((x) => isoDay(ms(x.hour_start)) === tomorrowDay);
+      $("dash-wx-sun").textContent = forecast.some((x) => isNum(x.direct_wm2))
+        ? `Sunshine ${sunny(rest)} h more today${tomorrow.length >= 12 ? `, ${sunny(tomorrow)} h tomorrow` : ""}`
+        : "";
     }
 
     function drawWarnings() {
@@ -5910,7 +6037,8 @@
 
     redrawOnWidthChange($("weather-charts"), drawCharts);
     setInterval(() => {
-      if (!$("view-weather").hidden && !document.hidden) refresh();
+      if (document.hidden || FLOW_TEST) return;
+      if (!$("view-weather").hidden || !$("view-dashboard").hidden) refresh();
     }, 5 * 60 * 1000);
 
     return { refresh, redraw, tempIn, icon, usual, cap };
@@ -7914,13 +8042,47 @@
       refreshDaily();
     } else if (page === "#statistics/charts") renderHistory(); // Charts aren't drawn while their page is hidden.
     else if (tab === "#statistics") renderDaily();
-    if (backToDashboard && !FLOW_TEST) refreshNow();
+    if (backToDashboard && !FLOW_TEST) {
+      refreshNow();
+      weatherTab.refresh();
+    }
   }
   /*
     Opened with no section in the address, the page opens on the one picked in Preferences, and puts it in the address.
     The monitor's prefs come after the page opens, so a section picked on another device is taken up then, unless
     another section has been chosen here meanwhile.
   */
+  /*
+    A heading's button folds away what it controls. What's folded is kept in this browser; without storage, all start open.
+    A folded section isn't drawn, so it's drawn as it opens.
+  */
+  const FOLDS_KEY = "solar-monitor.folded";
+  const FOLD_OPENED = { now: () => renderNow(), weather: () => weatherTab.redraw() };
+  let folded = [];
+  try {
+    const kept = JSON.parse(localStorage.getItem(FOLDS_KEY) || "[]");
+    if (Array.isArray(kept)) folded = kept.filter((key) => typeof key === "string");
+  } catch {}
+  for (const button of document.querySelectorAll("button.fold-toggle")) {
+    const key = button.dataset.fold;
+    const body = $(button.getAttribute("aria-controls"));
+    const show = (open) => {
+      button.setAttribute("aria-expanded", String(open));
+      body.hidden = !open;
+    };
+    show(!folded.includes(key));
+    button.addEventListener("click", () => {
+      const open = body.hidden;
+      show(open);
+      folded = folded.filter((other) => other !== key);
+      if (!open) folded.push(key);
+      try {
+        localStorage.setItem(FOLDS_KEY, JSON.stringify(folded));
+      } catch {}
+      if (open) FOLD_OPENED[key]?.();
+    });
+  }
+
   const OPENED_WITHOUT_SECTION = !location.hash;
   let sectionChosen = false;
   function openOnSection() {
@@ -8178,6 +8340,7 @@
     refresh();
     setInterval(refresh, REFRESH_MS);
     refreshNow();
+    weatherTab.refresh();
   }
   setInterval(renderConnection, 1000);
   view = settle({ bucket: DEFAULT_BUCKET, start: 0, end: DEFAULT_VIEW_SECONDS, following: true });

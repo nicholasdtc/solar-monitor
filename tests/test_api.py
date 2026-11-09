@@ -351,6 +351,18 @@ def test_the_page_loads_nothing_from_the_internet(call):
     assert not re.findall(r'(?:src|href)="(?:https?:)?//|url\(["\']?(?:https?:)?//|@import', page)
 
 
+def test_every_fold_button_controls_a_part_of_the_page(call):
+    """The dashboard's headings fold what they control, so each has to name something there."""
+    page = call("GET", "/").text
+    buttons = re.findall(r'<button[^>]*class="fold-toggle"[^>]*>', page)
+    assert len(buttons) >= 2
+    for button in buttons:
+        controls = re.search(r'aria-controls="([^"]+)"', button).group(1)
+        assert re.search(r'data-fold="[a-z]+"', button)
+        assert 'aria-expanded="true"' in button
+        assert f'id="{controls}"' in page
+
+
 def test_a_cross_site_form_post_cannot_add_an_appliance(call):
     # A form or a "simple" fetch from another site can't set a JSON content type.
     response = call("POST", "/api/appliances", content=json.dumps(lamp()), headers={"content-type": "text/plain"})
