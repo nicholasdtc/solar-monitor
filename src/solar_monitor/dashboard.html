@@ -5780,13 +5780,13 @@
       const keep = (series) => series.filter((s) => has(s.key));
       const charts = [];
 
-      const sun = keep([
-        { key: "gti", label: "Sun on panels", unit: "W/m²", color: "--flow-solar" },
-        { key: "ghi", label: "Flat ground", unit: "W/m²", color: "--muted" },
-      ]);
+      /* Sun on the panels is what makes power; flat ground only stands in when a source lacks it. */
+      const sun = keep([has("gti")
+        ? { key: "gti", label: "Sun on panels", unit: "W/m²", color: "--flow-solar" }
+        : { key: "ghi", label: "Sun", unit: "W/m²", color: "--flow-solar" }]);
       if (sun.length) {
         charts.push({
-          title: "Sun", unit: "W/m²", height: 200, floor: 0, series: sun,
+          title: sun[0].label, unit: "W/m²", height: 200, floor: 0, series: sun,
           strip: has("pv_w") ? { key: "pv_w", label: "Solar made", unit: "W", color: "--flow-solar" } : undefined,
           aria: "Sun (W/m²)" + (has("pv_w") ? " and solar made (W)" : ""),
         });
