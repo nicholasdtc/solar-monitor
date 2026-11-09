@@ -423,6 +423,27 @@ def test_daily_adds_where_the_energy_went_to_days_with_readings(call, collector)
     assert "solar_home" not in days[0]
 
 
+def test_daily_sends_the_rates_and_the_import_by_band(call, collector):
+    db.save_settings(collector.conn, {"tariff_day": 0.3, "tariff_peak": 0.4, "tariff_night": 0.2, "tariff_export": 0.18})
+    now = int(time.time())
+    collector.buffer.extend(db.Sample(now - age, {"load_ptotal": 3600, "active_power_total": -3600}) for age in (1, 0))
+    answer = call("GET", "/api/daily?days=2").json()
+    assert answer["tariff"]["rates"] == {"day": 0.3, "peak": 0.4, "night": 0.2, "export": 0.18}
+    assert answer["tariff"]["bands"]["night_start"] == 23 * 60
+    today = answer["days"][-1]
+    assert today["import_night"] + today["import_day"] + today["import_peak"] == 0.001
+
+
+def test_daily_splits_finished_days_again_when_the_bands_change(call, collector):
+    from datetime import date, datetime, timedelta
+    noon = int(datetime.combine(date.today() - timedelta(days=1), datetime.min.time()).timestamp()) + 12 * 3600
+    db.save_samples(collector.conn, [db.Sample(noon + age, {"load_ptotal": 3600, "active_power_total": -3600}) for age in (0, 1)])
+    assert call("GET", "/api/daily?days=2").json()["days"][0]["import_day"] == 0.001
+    db.save_settings(collector.conn, {"band_peak_start_minutes": 11 * 60, "band_peak_end_minutes": 13 * 60})
+    yesterday = call("GET", "/api/daily?days=2").json()["days"][0]
+    assert (yesterday["import_day"], yesterday["import_peak"]) == (0.0, 0.001)
+
+
 def test_daily_works_out_a_finished_day_once(call, collector):
     from datetime import date, datetime, timedelta
     noon = int(datetime.combine(date.today() - timedelta(days=1), datetime.min.time()).timestamp()) + 12 * 3600

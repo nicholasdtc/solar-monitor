@@ -46,6 +46,7 @@
     --flow-load: #a3297f;
     /* Grid meter rate bands: one blue ramp, the cheapest lightest. Checked with the palette validator on this surface. */
     --band-night: #6da7ec;
+    --balance: var(--ink-2); /* Neither export nor import: a neutral grey. */
     --band-day: #2a78d6;
     --band-peak: #104281;
     /* Grid meter half-hours: the same ramp, low to high. */
@@ -446,6 +447,11 @@
   .chart-words { fill: var(--ink-2); font-size: 13px; font-family: var(--body); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
   .chart-words.middle { text-anchor: middle; fill: var(--muted); }
   .flows { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+  /* The money charts sit side by side where there's room. Filling the screen, the one shown takes it all. */
+  .money-charts:not(.full) { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px 32px; margin-top: 16px; }
+  #money-data { display: flex; flex-direction: column; gap: 12px; }
+  #money-data[hidden] { display: none; }
+  tfoot td { font-weight: 600; border-top: 1px solid var(--rule-strong); }
   td small.spread { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; }
   #chart-tip {
     position: fixed; z-index: 8; padding: 8px 10px; pointer-events: none; font-size: 13px;
@@ -922,6 +928,25 @@
           <thead><tr><th>Day</th><th class="num">Solar</th><th class="num">House</th><th class="num">Battery charged</th><th class="num">Battery discharged</th><th class="num">Grid import</th><th class="num">Grid export</th><th class="num">Solar to house</th><th class="num">Solar to battery</th><th class="num">Solar to grid</th><th class="num">House from battery</th><th class="num">House from grid</th><th class="num">Self-sufficiency</th></tr></thead>
           <tbody id="daily-table"></tbody>
         </table>
+      </div>
+    </div>
+    <div class="pane span-all" id="money-pane" hidden>
+      <h2>Grid money</h2>
+      <p class="meta" id="money-note"></p>
+      <div id="money-data">
+        <div class="tiles" id="money-tiles"></div>
+        <div class="charts money-charts" id="money-charts"></div>
+        <p class="meta" id="money-method"></p>
+        <details>
+          <summary>Show as a table</summary>
+          <div class="scroll" tabindex="0" role="region" aria-label="Grid money table">
+            <table>
+              <thead><tr><th>Day</th><th class="num">Exported</th><th class="num">Earned</th><th class="num">Night import</th><th class="num">Day import</th><th class="num">Peak import</th><th class="num">Import cost</th><th class="num">Balance</th></tr></thead>
+              <tbody id="money-table"></tbody>
+              <tfoot id="money-total"></tfoot>
+            </table>
+          </div>
+        </details>
       </div>
     </div>
   </section>
@@ -3208,7 +3233,7 @@
     page. Where the browser allows it, the page also goes full screen, hiding the browser's own bars.
   */
   let fullChart = null; // { box, index }: the id of the box of charts, and the chart's place in it.
-  const CHART_BOXES = ["history-charts", "daily-charts", "flow-charts"];
+  const CHART_BOXES = ["history-charts", "daily-charts", "flow-charts", "money-charts"];
 
   /* A box's room inside its padding. It has none on the page, and some while it fills the screen. */
   function innerSize(box) {
@@ -3896,6 +3921,7 @@
     const hasFlows = days.some((day) => day.solar_home !== undefined);
     $("daily-note").textContent = "";
     renderDailyTable();
+    renderMoney();
     $("flow-section").hidden = !anyData || !hasFlows;
     if (!anyData) {
       box.replaceChildren(el("p", "no-value", "No daily totals yet. The first come within 5 minutes of the app starting."));
@@ -4002,6 +4028,193 @@
       row.append(el("td", "num", share === null ? "—" : percent(share)));
       return row;
     }));
+  }
+
+  /*
+    Grid money: what each day's export earned and its import cost, at today's rates. The inverter counts a day's
+    import with no split by time, so the server sends how much of it the readings saw in each rate band, and the
+    counter's kWh are shared out the same way. Totals then match the Grid import column above.
+  */
+  const MONEY_BANDS = [
+    { key: "night", label: "Night", color: "--band-night" },
+    { key: "day", label: "Day", color: "--band-day" },
+    { key: "peak", label: "Peak", color: "--band-peak" },
+  ];
+  const MONEY_CHARTS = [
+    { key: "earned", title: "Export earnings", height: 184, entries: [{ label: "Earned", color: "--flow-grid" }] },
+    { key: "cost", title: "Import cost", height: 184, entries: MONEY_BANDS },
+    { key: "net", title: "Balance", height: 184, entries: [{ label: "Balance", color: "--balance" }], inside: { above: "In credit ↑", below: "Net cost ↓" } },
+  ];
+  const signedMoney = (x) => (x > 0 ? `+${moneyText(x, 2)}` : moneyText(x, 2));
+  const moneyOrDash = (x) => (isNum(x) ? moneyText(x, 2) : "—");
+
+  /* A day's money, with null for what can't be worked out: no counter, or import with no readings to split it. */
+  function moneyDay(day, rates) {
+    const seen = MONEY_BANDS.map((band) => day[`import_${band.key}`] ?? 0);
+    const seenAll = seen.reduce((sum, x) => sum + x, 0);
+    const counted = isNum(day.grid_import) ? day.grid_import : null;
+    let kwh = null;
+    if (seenAll > 0) kwh = seen.map((x) => (counted === null ? x : (counted * x) / seenAll));
+    else if (counted === 0) kwh = [0, 0, 0];
+    const exported = isNum(day.grid_export) ? day.grid_export : null;
+    const earned = exported === null ? null : exported * rates.export;
+    const parts = kwh && kwh.map((x, i) => x * rates[MONEY_BANDS[i].key]);
+    const cost = parts && parts.reduce((sum, x) => sum + x, 0);
+    const net = earned === null || cost === null ? null : earned - cost;
+    return { day: day.day, exported, earned, kwh, parts, cost, net };
+  }
+
+  /* A money scale. The tick furthest from zero has the currency, as the other charts' top tick has the unit. */
+  function moneyScale(low, high, bottom) {
+    const scale = yScale(low, high, CHART_TOP, bottom, "");
+    const far = scale.ticks.reduce((a, b) => (Math.abs(b) > Math.abs(a) ? b : a));
+    const digits = Math.max(0, -Math.floor(Math.log10(scale.ticks[1] - scale.ticks[0]) + 1e-9));
+    return { ...scale, label: (tick) => (tick === 0 ? "0" : tick === far ? moneyText(tick, digits) : number(tick, digits)) };
+  }
+
+  function renderMoney() {
+    const pane = $("money-pane");
+    const box = $("money-charts");
+    if (!daily?.tariff || $("view-statistics").hidden) return;
+    const { rates, bands, bandsSet } = daily.tariff;
+    const priced = ["night", "day", "peak", "export"].every((key) => isNum(rates[key]));
+    const days = daily.days.map((day) => moneyDay(day, rates));
+    const known = days.filter((day) => day.net !== null);
+    pane.hidden = !daily.days.some((day) => Object.keys(day).length > 1);
+    $("money-data").hidden = !priced || !known.length;
+    $("money-note").textContent = !priced
+      ? "Set your rates under Appliances & tariffs to see what the grid earned and cost."
+      : known.length ? `Last ${known.length} day${known.length === 1 ? "" : "s"} at your rates. Today's is so far.` : "No grid totals yet.";
+    if (!priced || !known.length) return;
+
+    // The tiles count only days with both sides known, so the balance is the one shown.
+    const sum = (pick) => known.reduce((total, day) => total + pick(day), 0);
+    const exported = sum((day) => day.exported);
+    const imported = sum((day) => day.kwh.reduce((a, b) => a + b, 0));
+    const earned = sum((day) => day.earned);
+    const cost = sum((day) => day.cost);
+    const rateText = (x) => moneyText(x, Math.abs(x) < 1 ? 3 : 2);
+    const tile = (label, value, sub) => {
+      const node = el("div", "tile");
+      node.append(el("span", "tile-label", label), el("span", "tile-value", value), el("span", "tile-sub", sub));
+      return node;
+    };
+    $("money-tiles").replaceChildren(
+      tile("Earned from export", moneyText(earned, 2), `${kwh(exported)} at ${rateText(rates.export)}`),
+      tile("Import cost", moneyText(cost, 2), imported > 0 ? `${kwh(imported)}, average ${rateText(cost / imported)}` : kwh(imported)),
+      tile("Balance", signedMoney(earned - cost), earned >= cost ? "In credit" : "Net cost"),
+      tile("Export covered", cost > 0 ? percent(earned / cost) : "—", "of the import cost"),
+    );
+    const hhmm = (minutes) => wallTime(`${twoDigits(Math.floor(minutes / 60))}:${twoDigits(minutes % 60)}`);
+    const bandText = (name, start, end) => (start === end ? `no ${name} rate` : `${name} ${hhmm(start)} to ${hhmm(end)}`);
+    $("money-method").textContent =
+      `Import is split by the time the readings saw it (${bandText("night", bands.night_start, bands.night_end)}, ` +
+      `${bandText("peak", bands.peak_start, bands.peak_end)}, day the rest${bandsSet ? "" : ", the usual hours until you set your own"}), ` +
+      "then scaled to the inverter's import counter. Today's rates price every day. No standing charge, levy or VAT.";
+    renderMoneyTable(days, known);
+
+    const fullHere = fullChart?.box === "money-charts";
+    const refocus = keepZoomFocus(box);
+    box.replaceChildren();
+    const value = (day, key) => day[key] ?? 0;
+    const shown = MONEY_CHARTS.map((chart, i) => ({ chart, i })).filter(({ i }) => !fullHere || i === fullChart.index);
+    // Earnings and cost share a scale, so their columns compare. The balance has its own, either side of zero.
+    const flowHigh = Math.max(...days.flatMap((day) => [value(day, "earned"), value(day, "cost")])) || 1;
+    const nets = days.map((day) => value(day, "net"));
+    const netLow = Math.min(0, ...nets);
+    const netHigh = Math.max(0, ...nets) || (netLow < 0 ? 0 : 1);
+    const planned = shown.map(({ chart }) => {
+      const node = chartShell(chart, chart.entries, "bars", fullHere);
+      box.append(node);
+      const height = fullHere ? fullHeight(box, node) : chart.height;
+      const bottom = height - X_AXIS_HEIGHT;
+      const scale = chart.key === "net" ? moneyScale(netLow, netHigh, bottom) : moneyScale(0, flowHigh, bottom);
+      return { chart, node, height, bottom, scale };
+    });
+    const left = leftMargin(planned.map((p) => p.scale));
+    const drawn = planned.map(({ chart, node, height, bottom, scale }) => {
+      const width = fullHere ? innerSize(box).width : node.clientWidth;
+      const frame = { left, right: CHART_RIGHT, width };
+      const band = (width - frame.left - frame.right) / days.length;
+      const center = (i) => frame.left + band * (i + 0.5);
+      const labelEvery = Math.ceil((MIN_TICK_SPACING_PX * 0.7) / band);
+      const columnWidth = Math.min(24, Math.max(3, band * 0.6));
+      const svg = svgEl("svg", { width, height });
+      const under = svgEl("g", {});
+      svg.append(under);
+      drawYAxis(svg, frame, scale);
+      days.forEach((day, i) => {
+        const x = center(i) - columnWidth / 2;
+        if (chart.key === "cost" && day.parts) {
+          const parts = day.parts.map((amount, b) => ({ amount, color: MONEY_BANDS[b].color })).filter((part) => part.amount > 0);
+          let total = 0;
+          parts.forEach((part, p) => {
+            // A 2px gap in the surface colour between stacked parts.
+            const from = scale.y(total) - (p ? 1 : 0);
+            total += part.amount;
+            const to = scale.y(total) + (p < parts.length - 1 ? 1 : 0);
+            if (from - to < 0.5) return;
+            const d = p === parts.length - 1 ? columnPath(x, columnWidth, from, to) : `M${x} ${from}V${to}H${x + columnWidth}V${from}Z`;
+            svg.append(svgEl("path", { d, style: `fill: var(${part.color})` }));
+          });
+        } else if (chart.key !== "cost" && day[chart.key]) {
+          svg.append(svgEl("path", { d: columnPath(x, columnWidth, scale.y(0), scale.y(day[chart.key])), style: `fill: var(${chart.entries[0].color})` }));
+        }
+        if (i % labelEvery === 0) svg.append(svgEl("text", { x: center(i), y: bottom + 17, class: "chart-tick chart-x" }, dayText(day.day)));
+      });
+      drawInsideLabels(svg, frame, scale, bottom, chart.inside);
+      node.append(svg);
+      return { chart, svg, under, bottom, band, center, frame };
+    });
+    refocus();
+
+    const hide = () => {
+      $("chart-tip").hidden = true;
+      for (const { under } of drawn) under.replaceChildren();
+    };
+    const show = (index, clientX, clientY) => {
+      const day = days[index];
+      for (const { under, bottom, band, center } of drawn) {
+        under.replaceChildren(svgEl("rect", { x: center(index) - band / 2, width: band, y: CHART_TOP, height: bottom - CHART_TOP, class: "chart-band" }));
+      }
+      const rows = [];
+      if (day.earned !== null) rows.push({ value: moneyText(day.earned, 2), label: `Earned, ${kwh(day.exported)}`, color: "--flow-grid" });
+      if (day.parts) {
+        for (const b of [2, 1, 0]) rows.push({ value: moneyText(day.parts[b], 2), label: `${MONEY_BANDS[b].label} ${kwh(day.kwh[b])}`, color: MONEY_BANDS[b].color });
+        rows.push({ value: moneyText(day.cost, 2), label: "Import cost" });
+      }
+      if (day.net !== null) rows.push({ value: signedMoney(day.net), label: "Balance", color: "--balance" });
+      showTip(clientX, clientY, rows.length ? dayText(day.day) : `${dayText(day.day)}: no totals`, rows);
+    };
+    for (const { chart, svg, band, frame, center } of drawn) {
+      makeScrubbable(svg, chart.title, {
+        count: days.length,
+        pick: (px) => { const i = Math.floor((px - frame.left) / band); return i >= 0 && i < days.length ? i : null; },
+        xOf: center, show, hide,
+      });
+    }
+  }
+
+  function renderMoneyTable(days, known) {
+    const cells = (day) => [
+      kwh(day.exported), moneyOrDash(day.earned),
+      ...[0, 1, 2].map((b) => (day.kwh ? kwh(day.kwh[b]) : "—")),
+      moneyOrDash(day.cost), isNum(day.net) ? signedMoney(day.net) : "—",
+    ];
+    const recorded = days.filter((day) => day.earned !== null || day.cost !== null).toReversed();
+    $("money-table").replaceChildren(...recorded.map((day) => {
+      const row = el("tr");
+      row.append(el("td", "", dayText(day.day, { weekday: true })), ...cells(day).map((text) => el("td", "num", text)));
+      return row;
+    }));
+    // The total is over the days with both sides known, as in the tiles.
+    const total = known.reduce((sum, day) => ({
+      exported: sum.exported + day.exported, earned: sum.earned + day.earned, cost: sum.cost + day.cost, net: sum.net + day.net,
+      kwh: sum.kwh.map((x, b) => x + day.kwh[b]),
+    }), { exported: 0, earned: 0, cost: 0, net: 0, kwh: [0, 0, 0] });
+    const row = el("tr");
+    row.append(el("td", "", `Total, ${known.length} day${known.length === 1 ? "" : "s"}`), ...cells(total).map((text) => el("td", "num", text)));
+    $("money-total").replaceChildren(row);
   }
 
   /* The same period edges as bucket_start in db.py: on the monitor's clock, so a day's periods
@@ -4278,6 +4491,7 @@
   }
   redrawOnWidthChange($("history-charts"), renderHistory);
   redrawOnWidthChange($("daily-charts"), renderDaily);
+  redrawOnWidthChange($("money-charts"), renderMoney);
   redrawOnWidthChange($("now-charts"), renderNow);
   // Margins are measured from the tick labels, so measure again once the web font is in.
   document.fonts.ready.then(() => { renderHistory(); renderDaily(); renderNow(); });
@@ -4300,7 +4514,7 @@
       document.exitFullscreen().catch(() => {});
     }
     dropTip();
-    if (next) (next.box === "history-charts" ? renderHistory : renderDaily)();
+    if (next) ({ "history-charts": renderHistory, "money-charts": renderMoney }[next.box] ?? renderDaily)();
     else {
       // The window may have changed size meanwhile, under the full chart.
       renderHistory();

@@ -300,6 +300,7 @@ def create_app(collector: Collector) -> FastAPI:
     # Where the energy went on days that have ended, which only an import can change.
     # Working it out reading by reading takes a noticeable moment on the Pi, so it's done once.
     finished_flows: dict[str, dict[str, float]] = {}
+    flows_bands: dict[str, int] = {}  # The rate bands finished_flows split the import by.
     # The meter's half-hours, as the page wants them. Only an import changes them.
     meter_readings: dict[str, object] | None = None
     importing = asyncio.Lock()
@@ -482,17 +483,26 @@ def create_app(collector: Collector) -> FastAPI:
 
     @app.get("/api/daily")
     async def api_daily(days: int = Query(default=14, ge=1, le=366)) -> dict[str, object]:
+        nonlocal flows_bands
         series = db.daily_series(collector.conn, days)
+        tariff = meter.tariff(db.get_settings(collector.conn))
+        if tariff["bands"] != flows_bands:
+            finished_flows.clear()
+            flows_bands = tariff["bands"]
         today = series[-1]["day"]
         first = next(day["day"] for day in series if day["day"] not in finished_flows or day["day"] == today)
         flows = db.daily_flows(
-            collector.conn, int(datetime.fromisoformat(first).timestamp()), int(time.time()) + 1, collector.buffer
+            collector.conn,
+            int(datetime.fromisoformat(first).timestamp()),
+            int(time.time()) + 1,
+            collector.buffer,
+            flows_bands,
         )
         for day in series:
             if first <= day["day"] < today:
                 finished_flows[day["day"]] = flows.get(day["day"], {})
         flows = {**finished_flows, **flows}
-        return {"days": [{**day, **flows.get(day["day"], {})} for day in series]}
+        return {"days": [{**day, **flows.get(day["day"], {})} for day in series], "tariff": tariff}
 
     @app.get("/api/appliances")
     async def api_appliances() -> dict[str, object]:

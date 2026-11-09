@@ -275,6 +275,43 @@ def test_daily_flows_include_unsaved_readings(conn):
     assert days["2026-11-06"]["solar_home"] == 0.06
 
 
+BANDS = {"night_start": 23 * 60, "night_end": 8 * 60, "peak_start": 17 * 60, "peak_end": 19 * 60}
+
+
+def importing(start, minutes=61):
+    return [flow(start + 60 * i, load=3600, grid=-3600) for i in range(minutes)]
+
+
+def test_daily_flows_split_the_import_by_rate_band(conn):
+    db.save_samples(conn, importing(at(2026, 11, 6, 2)) + importing(at(2026, 11, 6, 12)) + importing(at(2026, 11, 6, 17)))
+    day = db.daily_flows(conn, at(2026, 11, 6), at(2026, 11, 7), bands=BANDS)["2026-11-06"]
+    # Each hour's last reading counts for the minute to the next hour's first, at 3.6 kW: 0.06 kWh more.
+    assert (day["import_night"], day["import_day"], day["import_peak"]) == (3.66, 3.66, 3.6)
+
+
+def test_a_night_band_past_midnight_takes_the_late_evening(conn):
+    db.save_samples(conn, importing(at(2026, 11, 6, 23, 30), 10))
+    day = db.daily_flows(conn, at(2026, 11, 6), at(2026, 11, 7), bands=BANDS)["2026-11-06"]
+    assert (day["import_night"], day["import_day"], day["import_peak"]) == (0.54, 0.0, 0.0)
+
+
+def test_a_band_that_starts_and_ends_together_isnt_used(conn):
+    db.save_samples(conn, importing(at(2026, 11, 6, 2), 10))
+    day = db.daily_flows(conn, at(2026, 11, 6), at(2026, 11, 7), bands={**BANDS, "night_end": 23 * 60})["2026-11-06"]
+    assert (day["import_night"], day["import_day"]) == (0.0, 0.54)
+
+
+def test_peak_wins_where_it_overlaps_night(conn):
+    db.save_samples(conn, importing(at(2026, 11, 6, 2), 10))
+    day = db.daily_flows(conn, at(2026, 11, 6), at(2026, 11, 7), bands={**BANDS, "peak_start": 60, "peak_end": 180})["2026-11-06"]
+    assert (day["import_night"], day["import_peak"]) == (0.0, 0.54)
+
+
+def test_daily_flows_leave_out_the_bands_unless_asked(conn):
+    db.save_samples(conn, importing(at(2026, 11, 6, 2), 10))
+    assert set(db.daily_flows(conn, at(2026, 11, 6), at(2026, 11, 7))["2026-11-06"]) == set(db.FLOWS)
+
+
 def test_daily_series_fills_the_calendar_and_shows_days_with_no_readings(conn):
     db.save_samples(conn, [
         db.Sample(at(2026, 11, 4, 8), {"e_total": 10.0}),

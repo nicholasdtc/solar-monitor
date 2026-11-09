@@ -434,10 +434,26 @@ def _readings_with_pending() -> str:
 
 # Where each day's solar went and where the house's power came from, in kWh.
 FLOWS = ("solar_home", "solar_battery", "solar_export", "battery_home", "grid_home")
+# What was imported in each rate band, in kWh.
+IMPORT_BANDS = ("import_night", "import_day", "import_peak")
+
+
+def _in_band(start: str, end: str) -> str:
+    """SQL for whether a reading's minute of the day is in a band, which may run past midnight.
+
+    A band that starts and ends at the same time isn't used.
+    """
+    return f"""(CASE WHEN {start} = {end} THEN 0
+        WHEN {start} < {end} THEN minute >= {start} AND minute < {end}
+        ELSE minute >= {start} OR minute < {end} END)"""
 
 
 def daily_flows(
-    conn: sqlite3.Connection, start: int, end: int, pending: Iterable[Sample] = ()
+    conn: sqlite3.Connection,
+    start: int,
+    end: int,
+    pending: Iterable[Sample] = (),
+    bands: dict[str, int] | None = None,
 ) -> dict[str, dict[str, float]]:
     """{local day: {flow: kWh}} worked out reading by reading, for start <= ts < end.
 
@@ -447,6 +463,10 @@ def daily_flows(
     actually charged, discharged, exported or imported, so conversion losses aren't
     counted as anything. Battery and grid signs are as stored: positive battery is
     discharging, positive grid is exporting.
+
+    Given the rate bands, as minutes after midnight ({"night_start": ..., "night_end": ...,
+    "peak_start": ..., "peak_end": ...}), it also adds what was imported in each band, by the
+    clock time of each reading. Peak wins where the two overlap.
     """
     rows = conn.execute(
         f"""
@@ -458,10 +478,19 @@ def daily_flows(
                 MAX(COALESCE(battery_w, 0), 0) AS discharge,
                 MAX(COALESCE(grid_w, 0), 0) AS export,
                 MAX(COALESCE(-grid_w, 0), 0) AS import,
-                MIN(COALESCE(LEAD(ts) OVER (ORDER BY ts) - ts, 0), :longest) AS seconds
+                MIN(COALESCE(LEAD(ts) OVER (ORDER BY ts) - ts, 0), :longest) AS seconds,
+                CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER) * 60
+                    + CAST(strftime('%M', ts, 'unixepoch', 'localtime') AS INTEGER) AS minute
             FROM ({_readings_with_pending()})
         ),
-        home AS (SELECT *, MIN(pv, load) AS solar_home FROM readings),
+        banded AS (
+            SELECT *,
+                CASE WHEN {_in_band(":peak_start", ":peak_end")} THEN 'peak'
+                    WHEN {_in_band(":night_start", ":night_end")} THEN 'night'
+                    ELSE 'day' END AS band
+            FROM readings
+        ),
+        home AS (SELECT *, MIN(pv, load) AS solar_home FROM banded),
         split AS (
             SELECT *,
                 MIN(pv - solar_home, charge) AS solar_battery,
@@ -473,14 +502,24 @@ def daily_flows(
             SUM(solar_battery * seconds),
             SUM(MIN(pv - solar_home - solar_battery, export) * seconds),
             SUM(battery_home * seconds),
-            SUM(MIN(load - solar_home - battery_home, import) * seconds)
+            SUM(MIN(load - solar_home - battery_home, import) * seconds),
+            SUM(CASE band WHEN 'night' THEN import * seconds ELSE 0 END),
+            SUM(CASE band WHEN 'day' THEN import * seconds ELSE 0 END),
+            SUM(CASE band WHEN 'peak' THEN import * seconds ELSE 0 END)
         FROM split
         GROUP BY day
         """,
-        {"start": start, "end": end, "waiting": _waiting(pending, start, end), "longest": MAX_READING_SECONDS},
+        {
+            "start": start,
+            "end": end,
+            "waiting": _waiting(pending, start, end),
+            "longest": MAX_READING_SECONDS,
+            **{key: (bands or {}).get(key, 0) for key in ("night_start", "night_end", "peak_start", "peak_end")},
+        },
     ).fetchall()
+    names = FLOWS + IMPORT_BANDS if bands else FLOWS
     joules_per_kwh = 3_600_000
-    return {day: {name: round(joules / joules_per_kwh, 3) for name, joules in zip(FLOWS, sums)} for day, *sums in rows}
+    return {day: {name: round(joules / joules_per_kwh, 3) for name, joules in zip(names, sums)} for day, *sums in rows}
 
 
 def battery_samples(
