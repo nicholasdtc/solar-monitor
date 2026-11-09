@@ -16,6 +16,8 @@ from solar_monitor.api import create_app
 from solar_monitor.auth import LoginRequired
 from solar_monitor.collector import Collector
 from solar_monitor.importer import BadFile
+from solar_monitor.weather.base import HOUR, Hour
+from solar_monitor.weather.base import Warning as WeatherWarning
 
 TS = 1_800_000_000
 DAY = 86_400
@@ -52,13 +54,21 @@ def source(tmp_path):
     db.save_samples(connection, [db.Sample(TS, READING), db.Sample(TS + DAY, LATER)])
     db.add_appliance(connection, FRIDGE)
     db.add_appliance(connection, KETTLE)
-    db.save_settings(connection, {"tariff_day": 0.25, "outage_hours": 4})
+    db.save_settings(connection, {"tariff_day": 0.25, "outage_hours": 4, "forecast_provider": "met-norway"})
+    db.save_settings(connection, {"warnings_provider": "met-eireann", "warnings_region": "EI07"})
+    db.save_warnings(connection, TS, "met-eireann", [warning("1", TS, TS + DAY), warning("2", None, None)])
     write = db.add_inverter_write(connection, 2, "aa" * 12, "bb" * 12, 50, 60)
     db.finish_inverter_write(connection, write, "confirmed", None)
     write = db.add_setting_write(connection, "min_soc", 20, 5)
     db.finish_setting_write(connection, write, "confirmed", 5)
     yield connection
     connection.close()
+
+
+def warning(id, onset, expiry):
+    return WeatherWarning(
+        "met-eireann", id, "moderate", "Rain", f"Rain {id}", "<p>Wet, very</p>", onset, expiry, ("EI07",), "https://x.test"
+    )
 
 
 def exported(source, name):
@@ -78,7 +88,19 @@ def run(tmp_path, conn, content, *, apply=True):
 
 def contents(conn):
     """Everything in the database, to check nothing changed."""
-    tables = ("samples", "daily_counters", "appliances", "settings", "inverter_writes", "setting_writes", "meter_readings")
+    tables = (
+        "samples",
+        "daily_counters",
+        "appliances",
+        "settings",
+        "inverter_writes",
+        "setting_writes",
+        "meter_readings",
+        "text_settings",
+        "weather_warnings",
+        "weather_fetches",
+        "forecast_hours",
+    )
     return {table: conn.execute(f"SELECT * FROM {table} ORDER BY 1, 2").fetchall() for table in tables}
 
 
@@ -154,7 +176,7 @@ def test_full_database_brings_back_everything_but_the_inverter_log(tmp_path, con
     assert report["changes"] is True
     expected = contents(source)
     actual = contents(conn)
-    for name in ("samples", "daily_counters", "settings"):
+    for name in ("samples", "daily_counters", "settings", "text_settings", "weather_warnings"):
         assert actual[name] == expected[name], name
     assert appliances(conn) == appliances(source)
     assert db.daily_totals(conn) == db.daily_totals(source)
@@ -167,7 +189,8 @@ def test_csv_brings_back_the_main_readings_and_what_can_be_rebuilt_from_them(tmp
     columns = "ts, pv_w, load_w, battery_w, battery_soc, grid_w"
     assert conn.execute(f"SELECT {columns} FROM samples").fetchall() == source.execute(f"SELECT {columns} FROM samples").fetchall()
     assert contents(conn)["daily_counters"] == contents(source)["daily_counters"]
-    assert contents(conn)["settings"] == contents(source)["settings"]
+    for name in ("settings", "text_settings", "weather_warnings"):  # Warnings with no start or end too.
+        assert contents(conn)[name] == contents(source)[name], name
     assert appliances(conn) == appliances(source)  # Accents, quotes and the tick all survive.
     assert db.daily_totals(conn) == db.daily_totals(source)
     assert db.decode_raw(conn.execute("SELECT raw FROM samples WHERE ts = ?", (TS,)).fetchone()[0]) == CSV_READINGS
@@ -375,6 +398,47 @@ def test_settings_and_counters_from_a_newer_version_are_skipped_and_counted(tmp_
     assert any("recognise" in note and "2" in note for note in report["notes"])
 
 
+def test_weather_choices_from_a_newer_version_are_skipped_and_counted(tmp_path, conn, source):
+    content = with_cell(exported(source, "csv"), "text_settings", "value", "a-newer-provider")
+    report = run(tmp_path, conn, content)
+    choices = table(report, "text_settings")
+    assert (choices["in_file"], choices["new"], choices["unknown"]) == (3, 2, 1)
+    assert db.get_settings(conn)["warnings_region"] is None
+    assert any("recognise" in note and "1" in note for note in report["notes"])
+
+
+def test_weather_choices_already_made_stay(tmp_path, conn, source):
+    db.save_settings(conn, {"forecast_provider": "open-meteo"})
+    report = run(tmp_path, conn, exported(source, "sqlite"))
+    assert db.get_settings(conn)["forecast_provider"] == "open-meteo"
+    assert db.get_settings(conn)["warnings_provider"] == "met-eireann"
+    assert table(report, "text_settings")["already_here"] == 1
+
+
+def test_a_warning_already_here_stays_as_it_is(tmp_path, conn, source):
+    db.save_warnings(conn, TS + HOUR, "met-eireann", [warning("1", TS, TS + 2 * DAY)])
+    report = run(tmp_path, conn, exported(source, "csv"))
+    assert (table(report, "weather_warnings")["new"], table(report, "weather_warnings")["already_here"]) == (1, 1)
+    assert conn.execute("SELECT expiry, first_seen FROM weather_warnings WHERE id = '1'").fetchone() == (TS + 2 * DAY, TS + HOUR)
+
+
+def test_forecasts_and_the_fetch_log_are_left_out(tmp_path, conn, source):
+    db.save_forecast(source, TS, "open-meteo", [Hour(hour_start=TS + HOUR, temperature_c=5.0)])
+    run(tmp_path, conn, exported(source, "sqlite"))
+    assert contents(conn)["forecast_hours"] == [] and contents(conn)["weather_fetches"] == []
+
+
+def test_exports_from_before_the_weather_still_work(tmp_path, conn, source):
+    older_zip = rezip(exported(source, "csv"), {"text_settings.csv": None, "weather_warnings.csv": None})
+    older_database = with_sql(
+        tmp_path, exported(source, "sqlite"), "DROP TABLE text_settings", "DROP TABLE weather_warnings"
+    )
+    for content in (older_zip, older_database):
+        report = run(tmp_path, conn, content, apply=False)
+        assert table(report, "samples")["new"] == 2
+        assert {entry["id"] for entry in report["tables"]}.isdisjoint({"text_settings", "weather_warnings"})
+
+
 def test_a_retired_setting_from_an_older_copy_is_skipped_without_a_note(tmp_path, conn, source):
     content = with_cell(exported(source, "csv"), "settings", "key", "target_soc")
     report = run(tmp_path, conn, content)
@@ -461,6 +525,13 @@ def test_a_zip_missing_a_column_is_refused(tmp_path, conn, source):
         ("settings", "value", "abc"),
         ("settings", "value", "200000"),  # More than a tariff can be.
         ("settings", "value", "nan"),
+        ("weather_warnings", "level", "orange"),
+        ("weather_warnings", "id", ""),
+        ("weather_warnings", "link", "javascript:alert(1)"),
+        ("weather_warnings", "regions", "EI07"),
+        ("weather_warnings", "regions", "[7]"),
+        ("weather_warnings", "onset", "1.5"),
+        ("weather_warnings", "first_seen", ""),
     ],
 )
 def test_a_bad_cell_on_the_last_row_refuses_the_whole_file(tmp_path, conn, source, name, column, value):
@@ -476,6 +547,7 @@ def test_a_bad_cell_on_the_last_row_refuses_the_whole_file(tmp_path, conn, sourc
         pytest.param(f"UPDATE samples SET ts = {TS * 1000} WHERE ts = {TS + DAY}", id="milliseconds"),
         pytest.param("UPDATE appliances SET typical_w = -1 WHERE name = 'Kettle'", id="negative-watts"),
         pytest.param("UPDATE settings SET value = 200000 WHERE key = 'tariff_day'", id="bad-setting"),
+        pytest.param("UPDATE weather_warnings SET link = 'data:text/html,x' WHERE id = '2'", id="bad-warning-link"),
     ],
 )
 def test_a_bad_value_in_a_database_refuses_the_whole_file(tmp_path, conn, source, statement):

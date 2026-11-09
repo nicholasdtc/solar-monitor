@@ -348,6 +348,13 @@ def test_a_tab_needs_its_permission(conn, owner, method, path, permission):
     assert Browser(app).log_in("with").request(method, path).status_code == 200
 
 
+
+@pytest.mark.parametrize("path", ["/api/weather", "/api/weather/providers"])
+def test_the_weather_needs_no_permission(conn, owner, path):
+    add_account(conn, "nobody")
+    assert Browser(real_app(conn)).log_in("nobody").get(path).status_code == 200
+
+
 def test_a_routes_own_refusal_isnt_marked_as_a_missing_permission(conn, owner):
     add_account(conn, "someone")
     browser = Browser(real_app(conn)).log_in("someone")

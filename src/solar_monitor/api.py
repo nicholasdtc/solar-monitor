@@ -33,9 +33,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 from starlette.background import BackgroundTask
 
-from solar_monitor import accounts, auth, config, control, db, export, importer, meter, planning
+from solar_monitor import accounts, auth, config, control, db, export, importer, meter, planning, weather
 from solar_monitor.collector import Collector
 from solar_monitor.inputs import ApplianceIn, DisplayPrefsIn, SettingsIn
+from solar_monitor.weather import service as weather_service
+from solar_monitor.weather.base import HOUR, Fetch
+from solar_monitor.weather.http import HttpFetch
 from solar_monitor.schedule import (
     ALL_MONTHS,
     EVERY_DAY,
@@ -209,6 +212,9 @@ SETTING_LABELS = {
     "panel_azimuth_deg": "Panels face (°)",
     "latitude": "Latitude",
     "longitude": "Longitude",
+    "forecast_provider": "Forecast from",
+    "warnings_provider": "Warnings from",
+    "warnings_region": "Warnings region",
 }
 # The location is personal, so the history says only that it changed.
 PRIVATE_SETTINGS = ("latitude", "longitude")
@@ -278,11 +284,21 @@ def _history_summary(row: dict[str, object]) -> str:
     return str(row["summary"])
 
 
-def create_app(collector: Collector) -> FastAPI:
+def _credit(provider: object) -> dict[str, str]:
+    credit = provider.credit  # type: ignore[attr-defined]
+    return {"title": provider.title, "text": credit.text, "licence": credit.licence, "link": credit.link}  # type: ignore[attr-defined]
+
+
+def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
+    """fetch is how the weather is asked for: the real one unless a test passes saved answers."""
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         task = asyncio.create_task(collector.run())
+        weather_task = asyncio.create_task(weather_service.run(collector.conn, fetch or HttpFetch()))
         yield
+        weather_task.cancel()
+        await asyncio.wait([weather_task])
         # goodwe turns a cancel during a read into a failed read, which the collector
         # survives, so one cancel isn't always enough to end it.
         while not task.done():
@@ -547,6 +563,37 @@ def create_app(collector: Collector) -> FastAPI:
         if changes:
             record(request, f"Changed {'; '.join(changes)}")
         return overview()
+
+    @app.get("/api/weather")
+    async def api_weather() -> dict[str, object]:
+        """The latest forecast from the start of this hour on, the chosen warnings that haven't
+        ended, the sources' credits, and how each kind's last fetch went. Not the location."""
+        now = int(time.time())
+        settings = db.get_settings(collector.conn)
+        forecaster = weather.FORECASTS.get(str(settings["forecast_provider"] or weather.DEFAULT_FORECAST))
+        warner = weather.WARNINGS.get(str(settings["warnings_provider"])) if settings["warnings_provider"] else None
+        return {
+            "located": weather_service.location(settings) is not None,
+            "forecast": db.latest_forecast(collector.conn, now - now % HOUR),
+            "warnings": db.current_warnings(collector.conn, warner.name, now) if warner else [],
+            "credits": [_credit(p) for p in (forecaster, warner) if p is not None],
+            "fetches": db.last_weather_fetches(collector.conn),
+        }
+
+    @app.get("/api/weather/providers")
+    async def api_weather_providers() -> dict[str, object]:
+        """What the settings can choose from, from the registry."""
+        return {
+            "default_forecast": weather.DEFAULT_FORECAST,
+            "forecasts": [
+                {"name": p.name, "title": p.title, "has_irradiance": p.has_irradiance, "has_past": p.has_past}
+                for p in weather.FORECASTS.values()
+            ],
+            "warnings": [
+                {"name": p.name, "title": p.title, "regions": [{"code": r.code, "name": r.name} for r in p.regions]}
+                for p in weather.WARNINGS.values()
+            ],
+        }
 
     # Each person's own. Not recorded: they change nothing anyone else sees.
     @app.get("/api/prefs")

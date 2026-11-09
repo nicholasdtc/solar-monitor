@@ -81,9 +81,23 @@ class WarningsProvider(Protocol):
 - Everything specific to a service lives in its module: URLs, parameter lists, code tables, units, rate limits and the User-Agent rule. Where a service can be self-hosted (Open-Meteo can), its base URL is a setting with the public one as the default.
 - **A registry** lists the providers. Adding one is a module, a line in the registry, and tests with a saved response.
 
+**As built in W1**, in `src/solar_monitor/weather/`:
+
+| File | What |
+|---|---|
+| `base.py` | The interface: `Hour`, `Warning`, `Location`, `Region`, `Credit`, the conditions and levels, and the fetch errors |
+| `http.py` | The one real `fetch`: urllib, short timeouts, the User-Agent, and HTTP 304 and 429 as their own errors |
+| `__init__.py` | The registry, `FORECASTS` and `WARNINGS`, and the default forecast |
+| `open_meteo.py`, `met_norway.py`, `met_eireann.py` | The first providers |
+| `service.py` | The fetch loop the app starts and stops with itself |
+
+**Credits.** Each provider's `credit` is what its terms ask for. Open-Meteo and MET Norway are CC BY 4.0. Met Éireann's licence asks for copyright, source, licence and a disclaimer, so its credit carries all four. The Weather tab (W3) and the Dashboard section (W4) show them.
+
+**Warning text is shown as text, never as HTML.** Met Éireann's descriptions come as HTML. They are stored as issued, and the page strips the tags and sets `textContent`, so nothing from a feed runs on the page.
+
 ### Settings
 
-The numbers are in the "Solar panels and location" pane on the Appliances & tariffs tab, done already. The provider choices join them when W1 lands. All have the same permission as the other settings, and each change is recorded in the Action history (the location only as "changed").
+All of these are in the "Solar panels and location" pane on the Appliances & tariffs tab. The provider choices list only the providers the registry has, and the region list follows the warnings provider. A region kept from another provider means all of them. All have the same permission as the other settings, and each change is recorded in the Action history (the location only as "changed").
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -93,14 +107,14 @@ The numbers are in the "Solar panels and location" pane on the Appliances & tari
 | Forecast provider | Open-Meteo | From the registry |
 | Warnings provider | none | From the registry. Met Éireann for this house |
 | Warnings region | none | From the provider's list, when it has one. For Met Éireann, the county |
-| Provider options | per provider | For example Open-Meteo's model (default "best match") and base URL |
-| Units | the user's display preferences | Temperature, wind and rain units, alongside the existing date and time choices. Stored in the app's units, converted on the page |
+| Provider options | per provider | Later. For example Open-Meteo's model (default "best match") and base URL. W1 uses each provider's defaults |
+| Units | the user's display preferences | With W3. Temperature, wind and rain units, alongside the existing date and time choices. Stored in the app's units, converted on the page |
 
 `settings` holds numbers only, so the names and region go in a new key-value table for text settings.
 
 ### Requests (Open-Meteo, as the first provider)
 
-- Forecast: `/v1/forecast` with the hourly fields the `Hour` record needs (temperature, feels like, precipitation and its probability, weather code, cloud cover total, low, mid and high, wind, gusts, direction, shortwave, direct and diffuse radiation, is_day), and daily sunrise, sunset and sunshine. `forecast_days=7`, `timeformat=unixtime`, `timezone=GMT`, `wind_speed_unit=ms`.
+- Forecast: `/v1/forecast` with the hourly fields the `Hour` record needs (temperature, feels like, precipitation and its probability, weather code, cloud cover total, low, mid and high, wind, gusts, direction, shortwave, direct and diffuse radiation, is_day), and daily sunrise, sunset and sunshine. `forecast_days=7`, `timeformat=unixtime`, `timezone=GMT`, `wind_speed_unit=ms`. W1 asks for the hours only: the daily figures are summed from them, and sunrise and sunset come in W3, worked out from the location or asked for then.
 - With the panel tilt set, global tilted irradiance (GTI) for that tilt and facing as well (facing south if it isn't set). The provider converts the app's compass bearing to its own convention: Open-Meteo counts 0 as south, −90 east, 90 west. A second array, if anyone needs one, would be one extra request each.
 - Past: the same fields from `historical-forecast-api.open-meteo.com/v1/forecast`, with start and end dates.
 - User-Agent: the app and its public repo, `solar-monitor (github.com/nicholasdtc/solar-monitor)`. No email address.
@@ -120,8 +134,9 @@ CREATE TABLE weather_fetches (
     fetched_at  INTEGER NOT NULL,      -- UTC seconds
     provider    TEXT NOT NULL,
     kind        TEXT NOT NULL,         -- 'forecast', 'past', 'warnings'
-    outcome     TEXT NOT NULL,         -- 'ok', or a short error
-    items       INTEGER NOT NULL
+    outcome     TEXT NOT NULL,         -- 'ok', 'not modified', 'rate limited' or 'error'
+    items       INTEGER NOT NULL,
+    error       TEXT                   -- what went wrong, briefly
 );
 
 -- Forecast runs: what was expected, and when it was expected.
@@ -148,7 +163,7 @@ CREATE TABLE weather_hours (
 
 That's about 1,200 rows a day for the last fortnight, then 48 a day, so a few MB a year.
 
-Both weather tables, warnings and the text settings go into `/api/export` and the importer like the other tables. The location goes with the other settings.
+The warnings and the text settings go into the CSV export and the importer like the other tables, and the location goes with the other settings. The forecast runs and the fetch log are only in the full database export, and the importer leaves them out: an old forecast is no use on another copy. `weather_hours` (W2) will go in both, as it's the weather as it happened.
 
 ## W2: weather for every hour, for the statistics
 
@@ -273,7 +288,7 @@ Fixtures use made-up coordinates, never the house's.
 ## Open questions
 
 - Whether the Open-Meteo past-forecast service has the same free terms as the forecast. Its pages don't say; check before the backfill runs.
-- Whether Met Éireann's warnings feed needs anything beyond credit under its custom licence.
+- Whether Met Éireann's warnings feed needs anything beyond the statements in its credit.
 - How long the forecast needs to run before V2's suggestions are trusted enough to offer the "Do it" button.
 
 ## Sources

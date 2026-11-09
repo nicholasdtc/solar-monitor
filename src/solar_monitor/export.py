@@ -29,6 +29,7 @@ CSV_QUERIES = {
     "daily_counters": "SELECT day, counter, first_value, last_value FROM daily_counters ORDER BY day, counter",
     "appliances": "SELECT id, name, typical_w, peak_w, surge_w, use_in_outage, notes FROM appliances ORDER BY id",
     "settings": "SELECT key, value FROM settings ORDER BY key",
+    "text_settings": "SELECT key, value FROM text_settings ORDER BY key",
     "inverter_writes": "SELECT id, ts, datetime(ts, 'unixepoch', 'localtime') AS local_time, slot, old_percent, new_percent, "
     "outcome, old_bytes, new_bytes, held_bytes, username FROM inverter_writes ORDER BY id",
     "setting_writes": "SELECT id, ts, datetime(ts, 'unixepoch', 'localtime') AS local_time, setting, old_value, new_value, "
@@ -36,6 +37,8 @@ CSV_QUERIES = {
     "meter_readings": "SELECT day, slot, occurrence, kw FROM meter_readings ORDER BY day, slot, occurrence",
     "actions": "SELECT id, ts, datetime(ts, 'unixepoch', 'localtime') AS local_time, username, kind, summary "
     "FROM actions ORDER BY id",
+    "weather_warnings": "SELECT provider, id, level, kind, headline, description, onset, expiry, regions, link, "
+    "first_seen, last_seen FROM weather_warnings ORDER BY first_seen, provider, id",
 }
 
 CSV_LAYOUT = "Solar monitor export, CSV layout 1"  # Importing reads this, so a change of layout needs a new number.
@@ -51,6 +54,7 @@ daily_counters.csv  Each day's first and latest reading of each lifetime counter
                     A day's energy runs from the previous recorded day's latest reading.
 appliances.csv      Your appliances, in watts. use_in_outage is 1 if ticked for a power cut.
 settings.csv        Your planning choices. Unset ones aren't listed.
+text_settings.csv   The choices that are words, such as where the weather comes from.
 inverter_writes.csv Every change this app sent to the inverter. Confirmed means it read the change
                     back. The bytes are the whole TOU programme in hex, before and after.
                     username is who asked for it, empty from before there were accounts.
@@ -66,9 +70,14 @@ meter_readings.csv  The electricity meter's half-hours, as imported from ESB Net
 actions.csv         The Action history tab: what people did here other than change the
                     inverter. kind is data, users or login. An empty username is a log-in
                     with an unknown name.
+weather_warnings.csv Weather warnings as issued. onset, expiry, first_seen and last_seen are
+                    Unix seconds: when it starts and ends, and the first and latest fetch that
+                    had it. regions is a JSON list of the issuer's region codes. description
+                    is as issued, which may be HTML.
 
 Accounts and their passwords aren't exported.
 The other readings from each poll are only in the full database export.
+So are the weather forecasts and the log of fetching them.
 """
 
 APPLIANCES_FORMAT = "solar-monitor-appliances"

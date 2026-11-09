@@ -547,6 +547,7 @@
   .add label.tick input { margin: 0; }
   .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
   .settings input[type="number"], .settings input[type="time"] { width: 120px; }
+  .settings select { min-height: 34px; max-width: 100%; padding: 4px 8px; background: var(--page); color: var(--ink); border: 1px solid var(--rule); }
 
   /* App data */
   .export, .import { display: grid; gap: 16px; justify-items: start; }
@@ -1173,6 +1174,9 @@
         <label for="panel-azimuth"><span>Panels face (°) <button type="button" class="help" aria-label="About the direction" data-tip="Compass: 90 east, 180 south, 270 west">?</button></span><input id="panel-azimuth" name="panel_azimuth_deg" type="number" min="0" max="359.99" step="any"></label>
         <label for="latitude"><span>Latitude <button type="button" class="help" aria-label="About the location" data-tip="Rounded to 2 decimals, about 1 km&#10;North +, south −">?</button></span><input id="latitude" name="latitude" type="number" min="-90" max="90" step="any"></label>
         <label for="longitude"><span>Longitude <button type="button" class="help" aria-label="About the longitude" data-tip="East +, west −">?</button></span><input id="longitude" name="longitude" type="number" min="-180" max="180" step="any"></label>
+        <label for="forecast-provider">Forecast from <select id="forecast-provider" name="forecast_provider"></select></label>
+        <label for="warnings-provider">Warnings from <select id="warnings-provider" name="warnings_provider"><option value="">None</option></select></label>
+        <label for="warnings-region">Warnings region <select id="warnings-region" name="warnings_region"><option value="">All</option></select></label>
       </form>
     </div>
 
@@ -4813,6 +4817,42 @@
   const timeInputValue = (minutes) => (isNum(minutes) ? `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}` : "");
   const minutesOfDay = (text) => (text ? Number(text.slice(0, 2)) * 60 + Number(text.slice(3, 5)) : null);
 
+  // Where the weather comes from: the choices are the providers this version has, asked for once.
+  let weatherProviders = null;
+
+  function fillRegions(provider) {
+    const regions = weatherProviders?.warnings.find((p) => p.name === provider)?.regions ?? [];
+    const select = $("warnings-region");
+    select.replaceChildren(new Option("All", ""), ...regions.map((r) => new Option(r.name, r.code)));
+    select.disabled = !provider || !may("edit");
+  }
+
+  function renderWeatherChoices(settings) {
+    if (!weatherProviders) return;
+    const forecast = $("forecast-provider");
+    if (forecast !== document.activeElement) forecast.value = settings.forecast_provider ?? weatherProviders.default_forecast;
+    const warnings = $("warnings-provider");
+    if (warnings !== document.activeElement) warnings.value = settings.warnings_provider ?? "";
+    fillRegions(warnings.value);
+    const region = $("warnings-region");
+    // A region the provider doesn't have, kept from another, means all of them.
+    region.value = settings.warnings_region ?? "";
+    if (region.selectedIndex < 0) region.value = "";
+  }
+
+  async function loadWeatherProviders() {
+    try {
+      const response = await fetch("/api/weather/providers");
+      if (!response.ok) return;
+      weatherProviders = await response.json();
+    } catch {
+      return;
+    }
+    $("forecast-provider").replaceChildren(...weatherProviders.forecasts.map((p) => new Option(p.title, p.name)));
+    $("warnings-provider").replaceChildren(new Option("None", ""), ...weatherProviders.warnings.map((p) => new Option(p.title, p.name)));
+    if (overview) renderWeatherChoices(overview.settings);
+  }
+
   function renderChoices() {
     const { settings, capacity } = overview;
     for (const form of SETTINGS_FORMS) {
@@ -4821,6 +4861,7 @@
         setValue(input, input.type === "time" ? timeInputValue(value) : value);
       }
     }
+    renderWeatherChoices(settings);
     $("capacity-help").dataset.tip = capacity.source === "measured"
       ? `Not used now: the log measures ${kwh(capacity.kwh)}, over ${capacity.points} percentage points of charging and discharging.`
       : "Used until the log has enough charging and discharging to measure it, which can take a few days. Allows for the battery health the inverter reports.";
@@ -4877,7 +4918,9 @@
   for (const form of SETTINGS_FORMS) {
     form.addEventListener("submit", (event) => event.preventDefault());
     form.addEventListener("change", ({ target }) => {
-      const value = target.type === "time" ? minutesOfDay(target.value) : optionalNumber(target);
+      if (target.name === "warnings_provider") fillRegions(target.value);
+      const value = target.tagName === "SELECT" ? target.value || null
+        : target.type === "time" ? minutesOfDay(target.value) : optionalNumber(target);
       sendOverview("PUT", "/api/settings", { [target.name]: value });
     });
   }
@@ -4964,6 +5007,8 @@
     $("import-button").hidden = true;
     $("import-view-only").hidden = false;
   }
+  loadWeatherProviders();
+
   function setImportBusy(message) {
     for (const id of ["import-file", "import-button", "import-cancel"]) $(id).disabled = Boolean(message);
     if (message) $("import-status").textContent = message;

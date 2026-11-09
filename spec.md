@@ -57,7 +57,8 @@ solar-monitor/
     export.py            # downloadable copies of the app's data: one entry per format
     importer.py          # brings an export back in: checks the whole file first, then only adds what's missing
     inputs.py            # the limits on appliances and settings, shared by the API and the importer
-    api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings, /api/tou, /api/export, /api/import
+    weather/             # forecast and warnings providers, their registry, and the fetch loop
+    api.py               # FastAPI: /api/latest, /api/history, /api/daily, /api/appliances, /api/settings, /api/tou, /api/export, /api/import, /api/weather
     dashboard.html       # the dashboard page
     fonts/               # the page's fonts, served locally so it works without internet
     main.py              # runs collector + API; reset-password sets an account's password

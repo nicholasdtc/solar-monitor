@@ -14,6 +14,7 @@ import pytest
 from solar_monitor import auth, db, export
 from solar_monitor.api import create_app
 from solar_monitor.collector import Collector
+from solar_monitor.weather.base import Warning as WeatherWarning
 
 READING = {"ppv": 1500.5, "load_ptotal": 400, "pbattery1": -800, "battery_soc": 62, "active_power_total": 300, "e_total": 10.5}
 
@@ -55,7 +56,11 @@ def filled(collector):
         collector.conn,
         {"name": "Crème fridge", "typical_w": 120, "peak_w": None, "surge_w": 600, "use_in_outage": True, "notes": 'a "cold", one'},
     )
-    db.save_settings(collector.conn, {"tariff_day": 0.25})
+    db.save_settings(collector.conn, {"tariff_day": 0.25, "forecast_provider": "met-norway"})
+    warning = WeatherWarning(
+        "met-eireann", "7", "moderate", "Rain", "Rain, heavy", "<p>Wet, very</p>", 1_800_000_000, None, ("EI07", "EI10"), "https://x.test"
+    )
+    db.save_warnings(collector.conn, 1_800_000_100, "met-eireann", [warning])
     with collector.conn:
         collector.conn.execute("INSERT INTO meter_readings (day, slot, occurrence, kw) VALUES ('2026-10-25', 2, 1, 0.75)")
     return collector
@@ -74,13 +79,16 @@ def test_csv_zip_holds_each_table(filled, temp_folder):
     with zipfile.ZipFile(write(filled, "csv")) as archive:
         assert sorted(archive.namelist()) == [
             "README.txt", "actions.csv", "appliances.csv", "daily_counters.csv", "inverter_writes.csv",
-            "meter_readings.csv", "samples.csv", "setting_writes.csv", "settings.csv",
+            "meter_readings.csv", "samples.csv", "setting_writes.csv", "settings.csv", "text_settings.csv",
+            "weather_warnings.csv",
         ]
         samples = read_csv(archive, "samples.csv")
         counters = read_csv(archive, "daily_counters.csv")
         appliances = read_csv(archive, "appliances.csv")
         settings = read_csv(archive, "settings.csv")
         meter_readings = read_csv(archive, "meter_readings.csv")
+        text_settings = read_csv(archive, "text_settings.csv")
+        warnings = read_csv(archive, "weather_warnings.csv")
 
     assert len(samples) == 1
     assert samples[0]["ts"] == "1800000000"
@@ -95,6 +103,23 @@ def test_csv_zip_holds_each_table(filled, temp_folder):
     assert appliances[0]["peak_w"] == ""
     assert settings == [{"key": "tariff_day", "value": "0.25"}]
     assert meter_readings == [{"day": "2026-10-25", "slot": "2", "occurrence": "1", "kw": "0.75"}]
+    assert text_settings == [{"key": "forecast_provider", "value": "met-norway"}]
+    assert warnings == [
+        {
+            "provider": "met-eireann",
+            "id": "7",
+            "level": "moderate",
+            "kind": "Rain",
+            "headline": "Rain, heavy",
+            "description": "<p>Wet, very</p>",
+            "onset": "1800000000",
+            "expiry": "",
+            "regions": '["EI07", "EI10"]',
+            "link": "https://x.test",
+            "first_seen": "1800000100",
+            "last_seen": "1800000100",
+        }
+    ]
 
 
 def test_csv_zip_of_an_empty_database_has_just_the_headers(collector, temp_folder):

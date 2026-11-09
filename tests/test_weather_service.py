@@ -1,6 +1,7 @@
 """The weather fetch loop, with stub providers and a made-up clock, so nothing touches the network."""
 
 import asyncio
+import json
 
 import pytest
 
@@ -238,3 +239,76 @@ def test_settings_take_only_registered_providers_and_regions():
     for bad in ({"forecast_provider": "nope"}, {"warnings_provider": "open-meteo"}, {"warnings_region": "XX"}):
         with pytest.raises(ValidationError):
             SettingsIn(**bad)
+
+
+# The app, with the weather loop started by its lifespan and answers made up around now
+
+
+def canned(now):
+    hour = now - now % HOUR
+    answer = {
+        "hourly": {
+            "time": [hour + i * HOUR for i in range(4)],
+            "temperature_2m": [8.0, 9.0, 10.0, 11.0],
+            "weather_code": [0, 1, 2, 3],
+            "is_day": [1, 1, 1, 1],
+        }
+    }
+    issued = [
+        {
+            "id": 9,
+            "level": "Yellow",
+            "type": "Wind",
+            "headline": "Wind warning",
+            "description": "<p>Gusts</p>",
+            "onset": "2026-01-01T00:00:00+00:00",
+            "expiry": "2099-01-01T00:00:00+00:00",
+            "regions": ["EI07"],
+        }
+    ]
+
+    def fetch(url, params):
+        return issued if "met.ie" in url else answer
+
+    return fetch
+
+
+def test_the_app_fetches_on_start_and_serves_the_weather(conn, monkeypatch):
+    import time
+
+    import httpx
+
+    from solar_monitor.api import create_app
+    from solar_monitor.collector import Collector
+
+    db.save_settings(conn, {"latitude": 10.0, "longitude": 20.0, "warnings_provider": "met-eireann"})
+    app_collector = Collector("test", 0, conn)
+
+    async def idle():
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(app_collector, "run", idle)
+    monkeypatch.setattr(app_collector, "flush", lambda: None)
+    app = create_app(app_collector, fetch=canned(int(time.time())))
+
+    async def scenario():
+        async with app.router.lifespan_context(app):
+            for _ in range(200):
+                if len(db.last_weather_fetches(conn)) == 2:
+                    break
+                await asyncio.sleep(0.01)
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                return (await client.get("/api/weather")).json(), (await client.get("/api/weather/providers")).json()
+
+    found, providers = asyncio.run(scenario())
+    assert found["located"] is True
+    assert [h["temperature_c"] for h in found["forecast"]["hours"]] == [8.0, 9.0, 10.0]
+    assert found["forecast"]["hours"][0]["condition"] == "clear"
+    assert [(w["id"], w["level"], w["description"]) for w in found["warnings"]] == [("9", "moderate", "<p>Gusts</p>")]
+    assert [c["title"] for c in found["credits"]] == ["Open-Meteo", "Met Éireann"]
+    assert {k: v["outcome"] for k, v in found["fetches"].items()} == {"forecast": "ok", "warnings": "ok"}
+    assert "latitude" not in json.dumps(found) and "10.0" not in json.dumps(found["fetches"])
+    assert providers["default_forecast"] == "open-meteo"
+    assert {p["name"] for p in providers["forecasts"]} == set(weather.FORECASTS)
+    assert len(providers["warnings"][0]["regions"]) == 26

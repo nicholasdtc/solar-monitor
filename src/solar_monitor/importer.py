@@ -2,8 +2,8 @@
 and the half-hourly smart meter file from ESB Networks.
 
 It only adds what's missing, so importing the same file twice changes nothing. Readings match by
-their time, daily counters by day and name, appliances by name, settings by key and the meter's
-half-hours by their label, and whatever is already here stays as it is. The one thing that grows
+their time, daily counters by day and name, appliances by name, settings by key, weather warnings
+by their issuer and id, and the meter's half-hours by their label, and whatever is already here stays as it is. The one thing that grows
 is a day's counters, which widen to cover the readings from both sides. The log of changes sent to
 the inverter is left out on purpose: it's a record of what this copy of the app did, and it holds
 the bytes an undo would send. Nothing here talks to the inverter.
@@ -38,6 +38,7 @@ from pydantic import ValidationError
 
 from solar_monitor import db, export, meter
 from solar_monitor.inputs import ApplianceIn, SettingsIn
+from solar_monitor.weather.base import LEVELS
 
 BATCH_ROWS = 1000
 BATCH_PAUSE_SECONDS = 0.02
@@ -58,14 +59,32 @@ COLUMNS = {
     "appliances": ("name", "typical_w", "peak_w", "surge_w", "use_in_outage", "notes"),
     "settings": ("key", "value"),
     "meter_readings": ("day", "slot", "occurrence", "kw"),
+    "text_settings": ("key", "value"),
+    "weather_warnings": (
+        "provider",
+        "id",
+        "level",
+        "kind",
+        "headline",
+        "description",
+        "onset",
+        "expiry",
+        "regions",
+        "link",
+        "first_seen",
+        "last_seen",
+    ),
 }
-OPTIONAL = {"meter_readings"}  # Exports from before the app held them don't have them.
+# Exports from before the app held them don't have them.
+OPTIONAL = {"meter_readings", "text_settings", "weather_warnings"}
 LABELS = {
     "samples": "Readings",
     "daily_counters": "Daily counters",
     "appliances": "Appliances",
     "settings": "Settings",
     "meter_readings": "Meter half-hours",
+    "text_settings": "Weather choices",
+    "weather_warnings": "Weather warnings",
 }
 WRITE_LOGS = ("inverter_writes", "setting_writes")  # Only true of the copy that sent them.
 
@@ -379,6 +398,59 @@ def _setting(row: Row) -> tuple[object, float | None]:
     return key, value
 
 
+def _text_setting(row: Row) -> tuple[object, str | None]:
+    """A known key with a value this version takes, or the key and None: a provider or key from a
+    newer version, which says nothing about whether the rest are good."""
+    key, value = row["key"], row["value"]
+    if key not in db.TEXT_SETTINGS or not isinstance(value, str):
+        return key, None
+    try:
+        SettingsIn.model_validate({key: value})
+    except ValidationError:
+        return key, None
+    return key, value
+
+
+def _optional_whole(value: object, name: str) -> int | None:
+    if value is None or value == "":
+        return None
+    return _whole(value, name, LATEST_TS)
+
+
+def _weather_warning(row: Row) -> tuple[object, ...]:
+    texts = {}
+    for name in ("provider", "id", "level", "kind", "headline", "description", "link"):
+        value = row[name]
+        if not isinstance(value, str) or (name in ("provider", "id") and not value):
+            raise ValueError(f"{name} is missing")
+        texts[name] = value
+    if texts["level"] not in LEVELS:
+        raise ValueError(f"level isn't one of {', '.join(LEVELS)}: {texts['level'][:40]}")
+    # The page makes it a link, so nothing but a web address.
+    if not texts["link"].startswith(("https://", "http://")):
+        raise ValueError(f"link isn't a web address: {texts['link'][:40]}")
+    try:
+        regions = json.loads(str(row["regions"]))
+    except json.JSONDecodeError:
+        regions = None
+    if not isinstance(regions, list) or not all(isinstance(code, str) for code in regions):
+        raise ValueError(f"regions isn't a list of region codes: {str(row['regions'])[:40]}")
+    return (
+        texts["provider"],
+        texts["id"],
+        texts["level"],
+        texts["kind"],
+        texts["headline"],
+        texts["description"],
+        _optional_whole(row["onset"], "onset"),
+        _optional_whole(row["expiry"], "expiry"),
+        json.dumps(regions),
+        texts["link"],
+        _whole(row["first_seen"], "first_seen", LATEST_TS),
+        _whole(row["last_seen"], "last_seen", LATEST_TS),
+    )
+
+
 def _whole(value: object, name: str, highest: int) -> int:
     number = _number(value, name)
     if not number.is_integer() or not 0 <= number <= highest:
@@ -595,12 +667,54 @@ def _merge_settings(source: Source, target: sqlite3.Connection, write: bool) -> 
     return {"in_file": in_file, "new": new, "unknown": unknown}
 
 
+def _merge_text_settings(source: Source, target: sqlite3.Connection, write: bool) -> dict[str, object]:
+    here = {key for (key,) in target.execute("SELECT key FROM text_settings")}
+    in_file = new = unknown = 0
+    with _checked(source, "text_settings", _text_setting) as rows:
+        for key, value in rows:
+            in_file += 1
+            if value is None:
+                unknown += 1
+            elif key not in here:
+                new += 1
+                here.add(key)
+                if write:
+                    db.save_settings(target, {key: value})
+    return {"in_file": in_file, "new": new, "unknown": unknown}
+
+
+def _merge_weather_warnings(source: Source, target: sqlite3.Connection, write: bool) -> dict[str, object]:
+    here = set(target.execute("SELECT provider, id FROM weather_warnings"))
+    columns = COLUMNS["weather_warnings"]
+    in_file = new = 0
+    with _checked(source, "weather_warnings", _weather_warning) as rows:
+        for batch in _batches(rows):
+            in_file += len(batch)
+            fresh = []
+            for warning in batch:
+                if warning[:2] not in here:
+                    here.add(warning[:2])
+                    fresh.append(warning)
+            new += len(fresh)
+            if write and fresh:
+                with target:
+                    target.executemany(
+                        f"INSERT OR IGNORE INTO weather_warnings ({', '.join(columns)}) "
+                        f"VALUES ({', '.join('?' * len(columns))})",
+                        fresh,
+                    )
+                time.sleep(BATCH_PAUSE_SECONDS)
+    return {"in_file": in_file, "new": new}
+
+
 MERGES = {
     "samples": _merge_samples,
     "daily_counters": _merge_counters,
     "appliances": _merge_appliances,
     "settings": _merge_settings,
     "meter_readings": _merge_meter_readings,
+    "text_settings": _merge_text_settings,
+    "weather_warnings": _merge_weather_warnings,
 }
 
 
@@ -621,7 +735,7 @@ def _notes(source: Source, results: dict[str, dict[str, object]]) -> list[str]:
         )
     if source.format == "esb":
         notes.append("The MPRN and the meter's serial number on each row aren't kept.")
-    unknown = counters.get("unknown", 0) + results.get("settings", {}).get("unknown", 0)
+    unknown = sum(results.get(table, {}).get("unknown", 0) for table in ("daily_counters", "settings", "text_settings"))
     if unknown:
         notes.append(f"Rows this version of the app doesn't recognise, skipped: {unknown}.")
     left_out = source.left_out()
