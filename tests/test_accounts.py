@@ -433,6 +433,19 @@ def test_every_page_but_the_dashboard_needs_a_permission(app):
     assert given == set(auth.TABS)
 
 
+def test_old_links_open_a_page_that_exists(app):
+    page = as_(app, "admin").get("/").text
+    old = dict(re.findall(r'"(#[\w/-]+)": "(#[\w/-]+)"', re.search(r"const OLD_HASHES = \{(.*?)\};", page, re.S).group(1)))
+    assert old["#grid-meter/day"] == "#grid-meter/overview"
+    assert old["#appliances/outage"] == old["#appliances/run"] == "#appliances/planning"
+    assert old["#history"] == old["#setup/activity"] == "#system/activity"
+    views = re.findall(r'<section [^>]*data-tab="([\w-]+)"(?: data-sub="([\w-]+)")?', page)
+    pages = {f"#{tab}/{sub}" if sub else f"#{tab}" for tab, sub in views}
+    tabs = {f"#{tab}" for tab, _ in views}
+    for target in old.values():
+        assert target in pages or target in tabs, target
+
+
 def test_everything_the_script_looks_up_is_on_the_page(app):
     page = as_(app, "admin").get("/").text
     ids = set(re.findall(r'\bid="([^"]+)"', page))

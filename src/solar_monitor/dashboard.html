@@ -496,9 +496,6 @@
   .share-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; }
   .share-bar { display: flex; height: 14px; gap: 2px; }
   .share-bar i { min-width: 2px; }
-  .about { display: block; } /* Folded away until wanted: the background, not the data. */
-  .about summary h2 { display: inline; color: var(--ink); }
-  .about[open] summary { margin-bottom: 12px; }
   summary { cursor: pointer; color: var(--ink-2); min-height: 28px; }
   details .scroll { max-height: 360px; margin-top: 8px; overflow-y: auto; }
 
@@ -629,6 +626,8 @@
   .btn:disabled { color: var(--muted); cursor: default; background: var(--surface); }
   #gm-bars svg { cursor: pointer; }
   #gm-day-chart svg { cursor: crosshair; }
+  /* Overview shows one day's half-hours, or the bars and carpet for longer. */
+  #view-grid-meter-overview.one-day .gm-many, #view-grid-meter-overview:not(.one-day) .gm-one { display: none; }
   .chart-focus { fill: none; stroke: var(--flow-grid); stroke-width: 2; }
   .b0 { fill: var(--band-night); }
   .b1 { fill: var(--band-day); }
@@ -972,19 +971,23 @@
       <p class="meta" id="gm-intro"></p>
       <div class="range gm-data">
         <div class="seg" id="gm-range" role="group" aria-label="Grid meter range">
-          <button type="button" data-range="7">7 days</button><button type="button" data-range="30">30 days</button><button type="button" data-range="12m">12 months</button><button type="button" data-range="all">All</button>
+          <button type="button" data-range="day">Day</button><button type="button" data-range="7">7 days</button><button type="button" data-range="30">30 days</button><button type="button" data-range="12m">12 months</button><button type="button" data-range="all">All</button>
         </div>
-        <label>From <input type="date" id="gm-from"></label>
-        <label>To <input type="date" id="gm-to"></label>
+        <label class="gm-many">From <input type="date" id="gm-from"></label>
+        <label class="gm-many">To <input type="date" id="gm-to"></label>
+        <button type="button" class="btn gm-one" id="gm-prev-day">Previous day</button>
+        <label class="gm-one">Day <input type="date" id="gm-day-input"></label>
+        <button type="button" class="btn gm-one" id="gm-next-day">Next day</button>
+        <button type="button" class="btn" id="gm-zoom-out" hidden>Zoom out</button>
       </div>
       <div class="range gm-data">
-        <label>Group by <select id="gm-group">
+        <label class="gm-many">Group by <select id="gm-group">
           <option value="day">Day</option><option value="week">Week</option><option value="month">Month</option><option value="year">Year</option>
         </select></label>
         <label>Compare with <select id="gm-versus">
           <option value="none">Nothing</option><option value="previous">The period before</option><option value="year">The same dates a year earlier</option><option value="custom">Dates starting on…</option>
         </select></label>
-        <label id="gm-versus-start-label" hidden>Starting <input type="date" id="gm-versus-start"></label>
+        <label id="gm-versus-start-label" hidden><span id="gm-versus-start-text">Starting</span> <input type="date" id="gm-versus-start"></label>
         <button type="button" class="help" aria-label="About comparing" data-tip="The period before: the same number of days just before, or the same number of months when the range starts on the 1st.&#10;If the two ranges have different amounts of readings, the change is worked out per day.">?</button>
       </div>
       <p class="meta range-shown" id="gm-range-note"></p>
@@ -996,10 +999,32 @@
       </div>
     </div>
 
-    <div class="pane gm-data">
+    <div class="pane gm-data gm-one" id="gm-day-pane">
+      <div class="chart-head">
+        <div class="head-text"><h2>Each half-hour <button type="button" class="help" aria-label="About this chart" data-tip="Average kW&#10;kWh is half that">?</button></h2><p class="meta" id="gm-day-sub"></p></div>
+      </div>
+      <div class="legend bars">
+        <span><i style="background: var(--band-night)"></i>Night</span>
+        <span><i style="background: var(--band-day)"></i>Day</span>
+        <span><i style="background: var(--band-peak)"></i>Peak</span>
+        <span><i style="background: var(--rule-strong)"></i>No reading</span>
+        <span id="gm-day-versus-key" hidden><i class="key-mark"></i><span id="gm-day-versus-key-text"></span></span>
+      </div>
+      <div class="chart" id="gm-day-chart"></div>
+      <details>
+        <summary>Show as a table</summary>
+        <div class="scroll" tabindex="0" role="region" aria-label="Each half-hour, as a table">
+          <table>
+            <thead><tr><th>Half-hour</th><th>Band</th><th class="num">Average kW</th><th class="num">kWh</th><th class="num" id="gm-day-vs-col" hidden>Compared kW</th></tr></thead>
+            <tbody id="gm-day-table"></tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+
+    <div class="pane gm-data gm-many">
       <div class="chart-head">
         <div class="head-text"><h2>Import by rate band <button type="button" class="help" id="gm-bars-help" aria-label="Using this chart" data-tip="">?</button></h2><p class="meta" id="gm-bars-sub"></p></div>
-        <button type="button" class="btn" id="gm-zoom-out" hidden>Zoom out</button>
       </div>
       <div class="legend bars">
         <span><i style="background: var(--band-night)"></i>Night</span>
@@ -1019,7 +1044,7 @@
       </details>
     </div>
 
-    <div class="pane gm-data">
+    <div class="pane gm-data gm-many">
       <div class="chart-head">
         <div class="head-text"><h2>Every half-hour <button type="button" class="help" id="gm-carpet-help" aria-label="About this chart" data-tip="A column for each day, a row for each half-hour, coloured by the average kW.&#10;Click a day to open it.">?</button></h2></div>
       </div>
@@ -1031,47 +1056,15 @@
     </div>
   </section>
 
-  <section class="view page" id="view-grid-meter-day" data-tab="grid-meter" data-sub="day" data-label="One day" data-perm="grid-meter" aria-label="Grid meter: One day" hidden>
-    <div class="pane gm-none" hidden>
-      <p class="note">No meter readings yet. Import an ESB Networks half-hourly kW file under <a href="#setup/data">Setup › Data</a>.</p>
-    </div>
-
-    <div class="pane gm-data" id="gm-day-pane">
-      <h2>One day <button type="button" class="help" aria-label="About this chart" data-tip="Each bar is the average kW over a half-hour. Its kWh is half that.">?</button></h2>
-      <div class="range">
-        <button type="button" class="btn" id="gm-prev-day">Previous day</button>
-        <label>Day <input type="date" id="gm-day-input"></label>
-        <button type="button" class="btn" id="gm-next-day">Next day</button>
-      </div>
-      <p class="note" id="gm-day-summary" aria-live="polite"></p>
-      <div class="legend bars">
-        <span><i style="background: var(--band-night)"></i>Night</span>
-        <span><i style="background: var(--band-day)"></i>Day</span>
-        <span><i style="background: var(--band-peak)"></i>Peak</span>
-        <span><i style="background: var(--rule-strong)"></i>No reading</span>
-      </div>
-      <div class="chart" id="gm-day-chart"></div>
-      <details>
-        <summary>Show as a table</summary>
-        <div class="scroll" tabindex="0" role="region" aria-label="One day, as a table">
-          <table>
-            <thead><tr><th>Half-hour</th><th>Band</th><th class="num">Average kW</th><th class="num">kWh</th></tr></thead>
-            <tbody id="gm-day-table"></tbody>
-          </table>
-        </div>
-      </details>
-    </div>
-  </section>
-
   <section class="view page" id="view-grid-meter-about" data-tab="grid-meter" data-sub="about" data-label="About" data-perm="grid-meter" aria-label="Grid meter: About" hidden>
     <div class="pane gm-none" hidden>
       <p class="note">No meter readings yet. Import an ESB Networks half-hourly kW file under <a href="#setup/data">Setup › Data</a>.</p>
     </div>
 
-    <details class="pane gm-data about">
-      <summary><h2>About this data</h2></summary>
+    <div class="pane gm-data">
+      <h2>About this data</h2>
       <dl class="notes" id="gm-notes"></dl>
-    </details>
+    </div>
   </section>
 
   <section class="view page" id="view-appliances-list" data-tab="appliances" data-sub="list" data-label="List" data-perm="appliances" aria-label="Appliances: List" hidden>
@@ -1123,7 +1116,7 @@
     </div>
   </section>
 
-  <section class="view page" id="view-appliances-outage" data-tab="appliances" data-sub="outage" data-label="Outage plan" data-perm="appliances" aria-label="Appliances: Outage plan" hidden>
+  <section class="view page" id="view-appliances-planning" data-tab="appliances" data-sub="planning" data-label="Planning" data-perm="appliances" aria-label="Appliances: Planning" hidden>
     <div class="pane">
       <h2>Plan for a power cut <button type="button" class="help" aria-label="About this plan" data-tip="Steady load, no sun or grid&#10;Down to the reserve&#10;Vs ticked, typical">?</button></h2>
       <p class="meta limits-line"></p>
@@ -1139,13 +1132,9 @@
       </div>
       <p class="note">Most it can carry is the battery's energy above its reserve, spread evenly over the power cut, less what the inverter uses and loses. Your current limit, such as a breaker's rating, caps it only if it's lower. So a shorter power cut allows a bigger load: halve the hours and it roughly doubles. Hover over or tap a figure to see the working.</p>
     </div>
-  </section>
 
-  <section class="view page" id="view-appliances-run" data-tab="appliances" data-sub="run" data-label="Run time" data-perm="appliances" aria-label="Appliances: Run time" hidden>
     <div class="pane">
       <h2>How much can I run? <button type="button" class="help" aria-label="About this plan" data-tip="The average load that would take the battery to its minimum by then.&#10;Only what&#39;s in the battery now: solar or the grid would stretch it.">?</button></h2>
-      <p class="meta limits-line"></p>
-      <p class="alert appliances-error" role="alert"></p>
       <form class="edit settings" id="run-settings">
         <label>Run until <input name="run_until_minutes" type="time"></label>
       </form>
@@ -1289,6 +1278,34 @@
     </div>
   </section>
 
+  <section class="view page" id="view-system-activity" data-tab="system" data-sub="activity" data-label="Activity" data-perm="history" aria-label="System: Activity" hidden>
+    <div class="pane">
+      <h2>Activity <button type="button" class="help" aria-label="About this list" data-tip="Who changed what, latest first&#10;Display choices not listed">?</button></h2>
+      <div class="range">
+        <label>Who
+          <select id="actions-user"><option value="">Everyone</option></select>
+        </label>
+        <label>What
+          <select id="actions-kind">
+            <option value="">Everything</option>
+            <option value="inverter">Inverter</option>
+            <option value="data">Data</option>
+            <option value="users">Accounts</option>
+            <option value="login">Log-ins</option>
+          </select>
+        </label>
+      </div>
+      <p class="alert" id="actions-error" role="alert"></p>
+      <div class="scroll" tabindex="0" role="region" aria-label="Activity table">
+        <table>
+          <thead><tr><th>When</th><th>Who</th><th>What</th><th>Change</th><th>Result</th></tr></thead>
+          <tbody id="actions-rows"></tbody>
+        </table>
+      </div>
+      <div class="edit"><button type="button" id="actions-older" hidden>Show older</button></div>
+    </div>
+  </section>
+
   <section class="view page" id="view-setup-tariffs" data-tab="setup" data-sub="tariffs" data-label="Tariffs" data-perm="appliances" aria-label="Setup: Tariffs" hidden>
     <div class="pane">
       <h2>Tariffs <button type="button" class="help" id="tariff-help" aria-label="About the tariffs" data-tip="Your rates per kWh, in any money unit. The results come out in the same unit.">?</button></h2>
@@ -1380,33 +1397,6 @@
     </div>
   </section>
 
-  <section class="view page" id="view-setup-activity" data-tab="setup" data-sub="activity" data-label="Activity" data-perm="history" aria-label="Setup: Activity" hidden>
-    <div class="pane">
-      <h2>Activity <button type="button" class="help" aria-label="About this list" data-tip="Who changed what, latest first&#10;Display choices not listed">?</button></h2>
-      <div class="range">
-        <label>Who
-          <select id="actions-user"><option value="">Everyone</option></select>
-        </label>
-        <label>What
-          <select id="actions-kind">
-            <option value="">Everything</option>
-            <option value="inverter">Inverter</option>
-            <option value="data">Data</option>
-            <option value="users">Accounts</option>
-            <option value="login">Log-ins</option>
-          </select>
-        </label>
-      </div>
-      <p class="alert" id="actions-error" role="alert"></p>
-      <div class="scroll" tabindex="0" role="region" aria-label="Activity table">
-        <table>
-          <thead><tr><th>When</th><th>Who</th><th>What</th><th>Change</th><th>Result</th></tr></thead>
-          <tbody id="actions-rows"></tbody>
-        </table>
-      </div>
-      <div class="edit"><button type="button" id="actions-older" hidden>Show older</button></div>
-    </div>
-  </section>
 </main>
 <div id="chart-tip" role="status" hidden></div>
 
@@ -5312,12 +5302,17 @@
     function presetRange(key) {
       const first = days[0].date;
       const last = days.at(-1).date;
+      if (key === "day") {
+        const whole = (days.findLast((day) => !day.flags.includes("p")) ?? days.at(-1)).date; // The last whole day.
+        return { from: whole, to: whole };
+      }
       const from = { 7: addDays(last, -6), 30: addDays(last, -29), "12m": `${monthsBack(last.slice(0, 7), 11)}-01`, all: first }[key];
       return { from: later(from, first), to: last };
     }
     const inFileSpan = (span) => span && span.from >= days[0].date && span.to <= days.at(-1).date && span.from <= span.to;
 
     const rangeDays = () => days.filter((day) => day.date >= range.from && day.date <= range.to);
+    const oneDay = () => range.from === range.to;
 
     /* The days to compare with. The period before is as many days just before, or as many months when the
        range starts on the 1st, so a month is compared with the month before whatever their lengths. */
@@ -5334,7 +5329,10 @@
       return { from: addDays(from, -n), to: addDays(from, -1) };
     }
     const VERSUS_NAMES = { previous: "The period before", year: "A year earlier", custom: "The dates chosen" };
-    const versusName = () => VERSUS_NAMES[versus];
+    const VERSUS_DAY_NAMES = { previous: "The day before", year: "A year earlier", custom: "The day chosen" };
+    const versusName = () => (oneDay() ? VERSUS_DAY_NAMES : VERSUS_NAMES)[versus];
+    // The day compared with, when one day is shown and the file has it.
+    const versusDay = () => (versus === "none" || !oneDay() ? null : days[dayIndex.get(versusRange().from)] ?? null);
 
     /* ---- Adding up days, which may be outside the file ---- */
     const emptySum = () => ({ kwh: [0, 0, 0], total: 0, present: 0, inFile: 0, inRange: 0, missing: 0, best: null });
@@ -5421,7 +5419,9 @@
       const cost = costOf(kwh);
       const share = (sum, x) => (sum.total > 0 ? `${number((100 * x) / sum.total, 0)}%` : "—");
       $("gm-t-total").textContent = `${kwhText(total)} kWh`;
-      $("gm-t-total-sub").textContent = present ? `About ${number(perDayOf(main, total), 1)} kWh a day` : "No readings in this range";
+      $("gm-t-total-sub").textContent = !present ? "No readings in this range"
+        : oneDay() ? dayNotes(days[dayIndex.get(range.from)]).join(" · ")
+        : `About ${number(perDayOf(main, total), 1)} kWh a day`;
       $("gm-t-cost").textContent = money(cost);
       $("gm-t-cost-sub").textContent = cost === null
         ? "Set your rates under Setup › Tariffs"
@@ -5437,7 +5437,8 @@
         $("gm-t-max-sub").textContent = "Nothing above 0 kW in this range";
       }
 
-      const shown = `${longDay(range.from)} to ${longDay(range.to)} · ${count(dayCount(range.from, range.to), "day")}`;
+      const spanText = ({ from, to }) => (from === to ? longDay(from) : `${longDay(from)} to ${longDay(to)}`);
+      const shown = oneDay() ? spanText(range) : `${spanText(range)} · ${count(dayCount(range.from, range.to), "day")}`;
       if (versus === "none") {
         for (const id of ["total", "cost", "night", "max"]) setVs(id, null);
         $("gm-range-note").textContent = shown;
@@ -5468,7 +5469,7 @@
         setVs("night", `${name}: ${share(then, then.kwh[0])}`);
         setVs("max", then.best ? `${name}: ${kw(then.best.w)} on ${dayMonthYear(then.best.day.date)}` : null);
       }
-      $("gm-range-note").textContent = `${shown} · compared with ${longDay(span.from)} to ${longDay(span.to)}${how}.`;
+      $("gm-range-note").textContent = `${shown} · compared with ${spanText(span)}${how}.`;
     }
 
     /* ---- Bars: kWh by band, each day, week, month or year ---- */
@@ -5524,7 +5525,6 @@
         ? `Click a ${group} to see its ${OPENS_TO[group]}.`
         : `Tap a ${group} to read it. Tap again to see its ${OPENS_TO[group]}.`)
         + (versusBars ? `\nThe dark tick is ${lowerFirst(versusName())}: its ${group}s in the same order.` : "");
-      $("gm-zoom-out").hidden = !zooms.length;
       $("gm-bars-col").textContent = GROUP_NAMES[group];
       $("gm-versus-key").hidden = !versusBars;
       $("gm-versus-key-text").textContent = versusBars ? versusName() : "";
@@ -5665,14 +5665,10 @@
     function openBar(i, fromPointer) {
       const bar = bars[i];
       if (!bar) return;
-      if (bar.kind === "day") {
-        selectDay(bar.key, true);
-        return;
-      }
       zooms.push({ range, preset, group, groupChosen });
       range = { from: bar.from, to: bar.to };
       preset = null;
-      group = bar.kind === "year" ? "month" : "day";
+      group = bar.kind === "year" ? "month" : "day"; // A day opens to its half-hours.
       groupChosen = false;
       barFocus = 0;
       cellFocus = null;
@@ -5736,20 +5732,28 @@
     });
     $("gm-zoom-out").addEventListener("click", zoomOut);
 
-    /* ---- One day ---- */
+    /* ---- One day's half-hours ---- */
     const daySvg = svgEl("svg", { tabindex: "0", role: "img" });
     const dayFocus = svgEl("rect", { class: "chart-focus", visibility: "hidden" });
     $("gm-day-chart").append(daySvg);
     let dayShape = null;
 
-    // A day opened from the bars or the carpet shows on the One day page.
-    function selectDay(iso, open) {
+    // A day opened from the carpet, which zooms in like a bar. Zoom out goes back.
+    function openDay(iso) {
       if (!dayIndex.has(iso)) return;
-      selected = iso;
-      renderDay();
-      drawBars();
-      drawCarpet();
-      if (open && location.hash !== "#grid-meter/day") location.hash = "#grid-meter/day";
+      zooms.push({ range, preset, group, groupChosen });
+      range = { from: iso, to: iso };
+      preset = null;
+      cellFocus = null;
+      showRange();
+    }
+
+    // The day before or after, or one entered, keeping the way back out.
+    function stepDay(iso) {
+      if (!dayIndex.has(iso)) return;
+      range = { from: iso, to: iso };
+      preset = null;
+      showRange();
     }
 
     const noHalfHour = (day, slot) => (day.flags.includes("s") && slot >= 2 && slot <= 3 ? "The clocks went forward, so this half-hour didn't happen" : "Not in the file");
@@ -5781,18 +5785,30 @@
 
     function slotTip(day, slot, x, y, extra = []) {
       const { rows, notes } = slotRows(day, slot);
+      const then = versusDay();
+      if (then) {
+        const w = then.slots[slot];
+        rows.push({ label: versusName(), value: w === null ? "No reading" : w === NOT_A_HALF_HOUR ? "—" : kw(w) });
+      }
       showTip(x, y, `${longDay(day.date)}, ${slotSpan(slot)}`, rows, sentences([...notes, ...extra]));
     }
 
     function renderDay() {
       const position = dayIndex.get(selected);
       const day = days[position];
-      const cost = costOf(day.kwh);
+      const then = versusDay();
       $("gm-day-input").value = selected;
       $("gm-prev-day").disabled = position === 0;
       $("gm-next-day").disabled = position === days.length - 1;
-      const split = `night ${number(day.kwh[0], 1)}, day ${number(day.kwh[1], 1)}, peak ${number(day.kwh[2], 1)}`;
-      $("gm-day-summary").textContent = [`${longDay(day.date)}: ${kwhText(day.total)} kWh`, ...(cost === null ? [] : [`cost ${money(cost)}`]), split, ...dayNotes(day)].join(" · ");
+      const against = versus === "none" ? "" : then ? `, against ${lowerFirst(versusName())}` : `. ${versusName()} isn't in the file`;
+      $("gm-day-sub").textContent = `Average kW, ${longDay(day.date)}${against}`;
+      $("gm-day-versus-key").hidden = !then;
+      $("gm-day-versus-key-text").textContent = then ? `${versusName()}, ${dayMonthYear(then.date)}` : "";
+      $("gm-day-vs-col").hidden = !then;
+      const thenCell = (slot) => {
+        const w = then.slots[slot];
+        return w === null || w === NOT_A_HALF_HOUR ? el("td", "num quiet", "—") : el("td", "num", number(w / 1000, 2));
+      };
       const rows = [];
       day.slots.forEach((w, slot) => {
         const twice = day.twice.find(([at]) => at === slot);
@@ -5809,6 +5825,7 @@
           } else {
             row.append(el("td", "num", number(reading / 1000, 2)), el("td", "num", number(reading / 2000, 2)));
           }
+          if (then) row.append(thenCell(slot));
           rows.push(row);
         }
       });
@@ -5820,6 +5837,7 @@
       const width = Math.floor($("gm-day-chart").clientWidth);
       if (!width || !selected) return;
       const day = days[dayIndex.get(selected)];
+      const then = versusDay();
       const height = 240;
       const m = { l: 40, r: 20, t: 12, b: 30 };
       const plotWidth = width - m.l - m.r;
@@ -5827,9 +5845,11 @@
       daySvg.setAttribute("width", width);
       daySvg.setAttribute("height", height);
       daySvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-      daySvg.setAttribute("aria-label", `Average kW in each half-hour of ${longDay(day.date)}. Use the arrow keys to read each half-hour. The same figures are in the table below.`);
+      const against = then ? `, with a tick for ${longDay(then.date)}` : "";
+      daySvg.setAttribute("aria-label", `Average kW in each half-hour of ${longDay(day.date)}${against}. Use the arrow keys to read each half-hour. The same figures are in the table below.`);
       const nodes = [];
-      const y = yAxis(nodes, m, width, plotHeight, Math.max(500, ...day.slots.filter((w) => w > 0)) / 1000);
+      const marks = [];
+      const y = yAxis(nodes, m, width, plotHeight, Math.max(500, ...day.slots.filter((w) => w > 0), ...(then?.slots ?? []).filter((w) => w > 0)) / 1000);
       const step = plotWidth / 48;
       const barWidth = Math.max(2, Math.min(24, step - 2));
       dayShape = { m, step, plotHeight };
@@ -5841,7 +5861,14 @@
           const tip = y(w / 1000);
           if (m.t + plotHeight - tip >= 1) nodes.push(svgEl("path", { d: columnPath(left, barWidth, m.t + plotHeight, tip), class: `b${bandOf[slot]}` }));
         }
+        const before = then?.slots[slot];
+        if (before !== null && before >= 0) { // Not null, which compares as 0.
+          const at = Math.round(y(before / 1000)) + 0.5;
+          const line = { x1: left - 2, x2: left + barWidth + 2, y1: at, y2: at };
+          marks.push(svgEl("line", { ...line, class: "vs-ring" }), svgEl("line", { ...line, class: "vs-mark" }));
+        }
       });
+      nodes.push(...marks); // Over every bar, like the ticks on the bars above.
       const zero = Math.round(y(0)) + 0.5;
       nodes.push(svgEl("line", { x1: m.l, x2: width - m.r, y1: zero, y2: zero, class: "chart-zero" }));
       const every = plotWidth < 330 ? 6 : 4;
@@ -5890,16 +5917,19 @@
       else if (event.key === "ArrowRight") slot += 1;
       else if (event.key === "Home") slot = 0;
       else if (event.key === "End") slot = 47;
-      else if (event.key === "Escape") return hideTip();
-      else return;
+      else if (event.key === "Escape") {
+        if (!zooms.length) return hideTip();
+        event.preventDefault();
+        return zoomOut();
+      } else return;
       event.preventDefault();
       slotFocus = clamp(slot, 0, 47);
       focusSlot();
     });
-    $("gm-prev-day").addEventListener("click", () => selectDay(days[dayIndex.get(selected) - 1].date));
-    $("gm-next-day").addEventListener("click", () => selectDay(days[dayIndex.get(selected) + 1].date));
+    $("gm-prev-day").addEventListener("click", () => stepDay(days[dayIndex.get(selected) - 1].date));
+    $("gm-next-day").addEventListener("click", () => stepDay(days[dayIndex.get(selected) + 1].date));
     $("gm-day-input").addEventListener("change", (event) => {
-      if (dayIndex.has(event.target.value)) selectDay(event.target.value);
+      if (dayIndex.has(event.target.value)) stepDay(event.target.value);
       else event.target.value = selected;
     });
 
@@ -5922,7 +5952,7 @@
 
     const canvas = $("gm-carpet-canvas");
     const cursor = $("gm-carpet-cursor");
-    if (!matchMedia("(pointer: fine)").matches) $("gm-carpet-help").dataset.tip = $("gm-carpet-help").dataset.tip.replace(/Click.*/, "Tap a day to read it. Tap again to open it above.");
+    if (!matchMedia("(pointer: fine)").matches) $("gm-carpet-help").dataset.tip = $("gm-carpet-help").dataset.tip.replace(/Click.*/, "Tap a day to read it. Tap again to open it.");
     let carpet = null;
     const token = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -6051,7 +6081,7 @@
         placeCursor(cell);
         cellTip(cell, event.clientX, event.clientY, hint);
       },
-      open: (cell) => selectDay(cell.date, true),
+      open: (cell) => openDay(cell.date),
       hide: () => {
         hideTip();
         if (!canvas.matches(":focus-visible")) cursor.hidden = true;
@@ -6071,7 +6101,7 @@
       const cell = cellFocus ?? { i: carpet.span.length - 1, slot: slotFocus };
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        selectDay(carpet.span[cell.i].date, true);
+        openDay(carpet.span[cell.i].date);
         return;
       }
       if (event.key === "Escape") return hideTip();
@@ -6248,7 +6278,15 @@
 
     /* ---- Putting it together ---- */
     function showRange(focusKey) {
-      for (const button of $("gm-range").querySelectorAll("button")) button.setAttribute("aria-pressed", String(button.dataset.range === preset));
+      const single = oneDay();
+      if (single) selected = range.from; // Still marked on the bars and carpet after zooming out.
+      $("view-grid-meter-overview").classList.toggle("one-day", single);
+      for (const button of $("gm-range").querySelectorAll("button")) {
+        button.setAttribute("aria-pressed", String(button.dataset.range === "day" ? single : !single && button.dataset.range === preset));
+      }
+      $("gm-versus").options[1].text = single ? "The day before" : "The period before";
+      $("gm-versus").options[3].text = single ? "Another day…" : "Dates starting on…";
+      $("gm-versus-start-text").textContent = single ? "Day" : "Starting";
       $("gm-from").value = range.from;
       $("gm-to").value = range.to;
       for (const option of $("gm-group").options) option.disabled = !groupFits(option.value);
@@ -6258,7 +6296,9 @@
       if (versus === "custom") $("gm-versus-start").value = versusStart;
       renderTiles();
       renderBars(focusKey);
-      drawCarpet();
+      $("gm-zoom-out").hidden = !zooms.length;
+      if (single) renderDay();
+      else drawCarpet();
     }
 
     function setRange(next, from) {
@@ -6352,7 +6392,6 @@
       renderNotes();
       renderCompare();
       showRange();
-      renderDay();
       drawTimeline();
     }
 
@@ -6387,7 +6426,7 @@
     The tab is in the address, so a reload or the back button stays where it was. The views'
     ids aren't the tabs' hashes, so choosing a tab doesn't make the browser jump to it.
   */
-  const PAGES = {}; // By hash, such as #appliances/outage: the view, its tab's hash and its name in the sub-tab row.
+  const PAGES = {}; // By hash, such as #appliances/planning: the view, its tab's hash and its name in the sub-tab row.
   for (const view of document.querySelectorAll("main > .view")) {
     const { tab, sub, label = "", perm = "" } = view.dataset;
     // The Dashboard is always open. The others each need a permission; the server refuses them anyway.
@@ -6405,7 +6444,11 @@
     "#counters": "#system/counters",
     "#fields": "#system/fields",
     "#app-data": "#setup/data",
-    "#history": "#setup/activity",
+    "#history": "#system/activity",
+    "#setup/activity": "#system/activity",
+    "#grid-meter/day": "#grid-meter/overview",
+    "#appliances/outage": "#appliances/planning",
+    "#appliances/run": "#appliances/planning",
   };
   const lastPage = {}; // Each tab opens on the sub-tab it was last left on.
   // The page a hash opens: a tab alone opens its last or first page, and one this account can't see the dashboard.
@@ -7078,7 +7121,7 @@
     if (view.dataset.perm === "appliances") refreshOverview();
     if (page === "#setup/data") refreshExport();
     if (tab === "#grid-meter" || (page === "#system/checks" && may("grid-meter"))) gridMeter.refresh();
-    if (page === "#setup/activity") refreshActions();
+    if (page === "#system/activity") refreshActions();
     if (tab === "#battery") {
       refreshTouWrites();
       refreshSettingWrites();
