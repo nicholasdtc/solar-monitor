@@ -31,6 +31,8 @@ CSV_QUERIES = {
     "settings": "SELECT key, value FROM settings ORDER BY key",
     "inverter_writes": "SELECT id, ts, datetime(ts, 'unixepoch', 'localtime') AS local_time, slot, old_percent, new_percent, "
     "outcome, old_bytes, new_bytes, held_bytes FROM inverter_writes ORDER BY id",
+    "setting_writes": "SELECT id, ts, datetime(ts, 'unixepoch', 'localtime') AS local_time, setting, old_value, new_value, "
+    "outcome, held_value FROM setting_writes ORDER BY id",
     "meter_readings": "SELECT day, slot, occurrence, kw FROM meter_readings ORDER BY day, slot, occurrence",
 }
 
@@ -49,6 +51,9 @@ appliances.csv      Your appliances, in watts. use_in_outage is 1 if ticked for 
 settings.csv        Your planning choices. Unset ones aren't listed.
 inverter_writes.csv Every change this app sent to the inverter. Confirmed means it read the change
                     back. The bytes are the whole TOU programme in hex, before and after.
+setting_writes.csv  Every change this app sent to Backup mode (backup, 1 is on) or the battery's
+                    limits in %: min_soc and reserve_soc stop discharging on-grid and in a power
+                    cut, max_soc stops charging. Outcomes are as in inverter_writes.csv.
 meter_readings.csv  The electricity meter's half-hours, as imported from ESB Networks. day and
                     slot are on Irish clock time: slot 0 starts at midnight, slot 47 at 23:30.
                     occurrence is 1 for the second half-hour with the same label when the

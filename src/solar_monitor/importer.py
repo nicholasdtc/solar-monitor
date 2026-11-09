@@ -67,7 +67,7 @@ LABELS = {
     "settings": "Settings",
     "meter_readings": "Meter half-hours",
 }
-WRITE_LOG = "inverter_writes"
+WRITE_LOGS = ("inverter_writes", "setting_writes")  # Only true of the copy that sent them.
 
 # ESB Networks' "HDF" download of half-hourly readings in kW, as it comes from their website.
 ESB_COLUMNS = ("MPRN", "Meter Serial Number", "Read Value", "Read Type", "Read Date and End Time")
@@ -133,10 +133,13 @@ class CsvZip:
             yield from reader
 
     def left_out(self) -> int:
-        if f"{WRITE_LOG}.csv" not in self.archive.namelist():  # Exports from before the log existed.
-            return 0
-        with self._reader(WRITE_LOG) as reader:
-            return sum(1 for _ in reader)
+        count = 0
+        for log in WRITE_LOGS:
+            if f"{log}.csv" not in self.archive.namelist():  # Exports from before the log existed.
+                continue
+            with self._reader(log) as reader:
+                count += sum(1 for _ in reader)
+        return count
 
     def close(self) -> None:
         self.archive.close()
@@ -152,7 +155,7 @@ class Database:
         # Immutable because nothing is writing to it, so there's no journal to look for or leave behind.
         self.conn = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
         self.columns = {**COLUMNS, "samples": (*COLUMNS["samples"], "raw")}
-        self.has_write_log = False
+        self.write_logs: tuple[str, ...] = ()
 
     def _damaged(self, error: sqlite3.Error) -> BadFile:
         return BadFile(f"This database file can't be read ({error}), so nothing was imported.")
@@ -169,7 +172,7 @@ class Database:
                     raise BadFile(NOT_AN_EXPORT)
         except sqlite3.Error as error:
             raise self._damaged(error) from error
-        self.has_write_log = WRITE_LOG in found  # Exports from before the log existed don't have it.
+        self.write_logs = tuple(log for log in WRITE_LOGS if log in found)  # Older exports lack them.
 
     def rows(self, table: str) -> Iterator[Row]:
         columns = self.columns[table]
@@ -180,10 +183,8 @@ class Database:
             raise self._damaged(error) from error
 
     def left_out(self) -> int:
-        if not self.has_write_log:
-            return 0
         try:
-            return self.conn.execute(f"SELECT COUNT(*) FROM {WRITE_LOG}").fetchone()[0]
+            return sum(self.conn.execute(f"SELECT COUNT(*) FROM {log}").fetchone()[0] for log in self.write_logs)
         except sqlite3.Error as error:
             raise self._damaged(error) from error
 

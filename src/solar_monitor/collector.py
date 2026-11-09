@@ -113,6 +113,23 @@ class Collector:
             finally:
                 self.latest["schedule"] = {**await read_schedule(self.inverter), "read_at": timestamp()}
 
+    async def set_setting(self, name: str, value: int, expected: int) -> dict[str, object]:
+        """Change Backup mode or a battery limit, between polls. Whatever happens, `latest` then shows what it holds."""
+        async with self.talking:
+            if self.inverter is None:
+                raise control.Refused("The inverter isn't connected at the moment, so nothing was sent.")
+            try:
+                result = await control.set_setting(self.inverter, self.conn, name, value, expected)
+                if result["outcome"] == "confirmed":
+                    log(f"Setting {name} changed: {result['old']} to {result['new']}")
+                return result
+            except control.Unconfirmed as problem:
+                log(f"Setting {name} change wasn't confirmed: {problem}")
+                raise
+            finally:
+                self.latest["battery_limits"] = await read_battery_limits(self.inverter)
+                self.latest["schedule"] = {**await read_schedule(self.inverter), "read_at": timestamp()}
+
     async def run(self) -> None:
         """Keep `latest` current. After a failure the last good readings stay, with `error` set."""
         flushed_at = time.monotonic()

@@ -556,7 +556,8 @@
   :root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after {
     animation: none !important; transition: none !important; scroll-behavior: auto !important;
   }
-  #tou-result:empty { display: none; }
+  #tou-result:empty, #limit-result:empty { display: none; }
+  #limit-change { margin-top: 12px; }
 
   /* Grid meter */
   .gm-empty { grid-auto-rows: auto; }
@@ -1098,9 +1099,24 @@
     </div>
     <div class="pane tall">
       <h2>Modes and limits</h2>
-      <table>
-        <tbody id="schedule-modes"></tbody>
-      </table>
+      <div class="edit">
+        <table>
+          <tbody id="schedule-modes"></tbody>
+        </table>
+      </div>
+      <p class="note" id="limit-restart" hidden>Restart the dashboard to change Backup mode and the limits from here.</p>
+      <form class="edit tou-change" id="limit-change" hidden>
+        <h3 id="limit-change-title"></h3>
+        <label><span id="limit-label"></span><input id="limit-value" type="number" step="1" required></label>
+        <p class="note" id="limit-range"></p>
+        <p class="note" id="limit-summary"></p>
+        <p class="note">Goes to the inverter at once: read again first, checked, then read back to confirm. SEMS+ may show the old value for a while: saving it there then would put the old one back.</p>
+        <div class="actions">
+          <button id="limit-send" disabled>Send to inverter</button>
+          <button id="limit-cancel" type="button">Cancel</button>
+        </div>
+      </form>
+      <p id="limit-result" role="status"></p>
     </div>
   </section>
 
@@ -2075,26 +2091,222 @@
     return row;
   }
 
-  // Redrawn on every reading: it has no buttons to lose focus, and the limits aren't part of the schedule.
+  /*
+    Modes and limits. Backup mode switches in place. A limit is changed in a panel under the table,
+    like a programme, so a new reading can't redraw it while someone is typing. The server reads the
+    value again before sending and refuses if it isn't what the page showed.
+  */
+  const LIMIT_NAMES = { min_soc: "On-grid floor", reserve_soc: "Power-cut floor", max_soc: "Ceiling" };
+  const SETTING_NAMES = { backup: "Backup mode", ...LIMIT_NAMES };
+  const LOWEST_FLOOR = 5; // As the server allows. SEMS+ can go lower.
+  const BACKUP_TIP = "Battery kept full\nGrid charges it too\nDischarges only in a power cut";
+  let settingSending = null; // While a setting is being sent: its name, and the value it'll have.
+  let settingWrites = [];
+  let settingsChangeable = null; // Known once the server's list of changes has been asked for.
+  let limitChange = null; // The limit the panel is changing, and the value it had when opened.
+  let modesShown = null;
+
+  // What the page last read, as the server takes it: Backup mode as 0 or 1, the limits in %. Null if unknown.
+  function settingValue(name) {
+    if (name === "backup") {
+      const on = latest?.schedule?.backup_on;
+      return typeof on === "boolean" ? Number(on) : null;
+    }
+    const value = latest?.battery_limits?.[name];
+    return Number.isInteger(value) ? value : null;
+  }
+  const settingText = (name, value) => name === "backup" ? (value ? "on" : "off") : `${value}%`;
+
+  // The lowest and highest a limit can be set to, from the others as last read. Null if they aren't known.
+  function limitRange(name) {
+    const floors = [settingValue("min_soc"), settingValue("reserve_soc")];
+    const ceiling = settingValue("max_soc");
+    if (name === "max_soc") return floors.includes(null) ? null : [Math.max(...floors) + 1, 100];
+    return ceiling === null ? null : [LOWEST_FLOOR, ceiling - 1];
+  }
+
+  function backupSwitch() {
+    const label = el("label", "tou-on");
+    const input = el("input", "switch");
+    input.type = "checkbox";
+    input.setAttribute("role", "switch");
+    input.setAttribute("aria-label", "Backup mode");
+    const held = settingValue("backup");
+    // Shows where it's going while it's sent.
+    input.checked = settingSending?.name === "backup" ? Boolean(settingSending.value) : Boolean(held);
+    input.disabled = Boolean(settingSending);
+    input.addEventListener("change", () => sendSetting("backup", held, input.checked ? 1 : 0));
+    label.append(input, el("span", "", input.checked ? "On" : "Off"));
+    return label;
+  }
+
+  // Redrawn only when something in it changes, so a new reading doesn't take focus off a switch or button.
   function renderModes() {
+    closeOutdatedLimitChange();
     const schedule = latest?.schedule;
+    const limits = latest?.battery_limits;
+    const shown = JSON.stringify([
+      schedule?.work_mode, schedule?.tou_on, schedule?.backup_on, schedule?.smart_charge_on, limits, settingsChangeable, settingSending,
+    ]);
+    if (shown === modesShown) return;
+    modesShown = shown;
     const onOff = (on) => on === null ? null : on ? "On" : "Off";
     const percent = (soc) => isNum(soc) ? `${soc}%` : null;
     const rows = [
       ["Working mode", schedule?.work_mode],
       ["TOU", onOff(schedule?.tou_on ?? null)],
-      ["Backup mode", onOff(schedule?.backup_on ?? null)],
+      ["Backup mode", onOff(schedule?.backup_on ?? null), "backup"],
       ["Smart charge", onOff(schedule?.smart_charge_on ?? null)],
-      ["Stops discharging at, on-grid", percent(latest?.battery_limits?.min_soc)],
-      ["Stops discharging at, in a power cut", percent(latest?.battery_limits?.reserve_soc)],
-      ["Never charges past", percent(latest?.battery_limits?.max_soc)],
-    ].map(([label, value]) => {
+      ["Stops discharging at, on-grid", percent(limits?.min_soc), "min_soc"],
+      ["Stops discharging at, in a power cut", percent(limits?.reserve_soc), "reserve_soc"],
+      ["Never charges past", percent(limits?.max_soc), "max_soc"],
+    ].map(([label, value, name]) => {
       const row = el("tr");
-      row.append(el("th", "", label), el("td", value ? "" : "no-value", value ?? "Unknown"));
+      const head = el("th", "", label);
+      const cell = el("td", value ? "" : "no-value", value ?? "Unknown");
+      const action = el("td");
+      if (name === "backup") {
+        const help = el("button", "help", "?");
+        help.type = "button";
+        help.setAttribute("aria-label", "About Backup mode");
+        help.dataset.tip = BACKUP_TIP;
+        head.append(" ", help);
+      }
+      if (settingsChangeable && name && settingValue(name) !== null) {
+        if (name === "backup") cell.replaceChildren(backupSwitch());
+        else if (limitRange(name)) {
+          const edit = touButton("Edit", () => openLimitChange(name, settingValue(name)));
+          edit.disabled = Boolean(settingSending);
+          action.append(edit);
+        }
+      }
+      row.append(head, cell, action);
       return row;
     });
     $("schedule-modes").replaceChildren(...rows);
+    $("limit-restart").hidden = settingsChangeable !== false;
+    if (limitChange) showLimitRange();
+    renderTouWrites(); // Whether a change can be reverted depends on what the inverter holds now.
   }
+
+  async function refreshSettingWrites() {
+    try {
+      const response = await fetch("/api/inverter-settings/writes", { cache: "no-store" });
+      if (response.status === 404) { // A dashboard still running a version from before these changes.
+        settingsChangeable = false;
+        settingWrites = [];
+      } else if (response.ok) {
+        settingWrites = (await response.json()).writes;
+        settingsChangeable = true;
+      }
+    } catch { /* Kept as it was until the server can be reached. */ }
+    renderModes();
+    renderTouWrites();
+  }
+
+  function showLimitRange() {
+    const { name } = limitChange;
+    const range = limitRange(name);
+    const input = $("limit-value");
+    input.min = range ? String(range[0]) : "";
+    input.max = range ? String(range[1]) : "";
+    const onGrid = settingText(name, settingValue("min_soc"));
+    const powerCut = settingText(name, settingValue("reserve_soc"));
+    const floors = onGrid === powerCut ? onGrid : `${onGrid} and ${powerCut}`;
+    $("limit-range").textContent = !range ? "Waiting for the other limits to be read."
+      : name === "max_soc" ? `Above both floors, ${floors}, up to 100%.`
+      : `From ${LOWEST_FLOOR}% up to below the ceiling, ${settingValue("max_soc")}%. Lower only in SEMS+.`;
+    updateLimitSend();
+  }
+
+  function updateLimitSend() {
+    if (!limitChange) return;
+    const input = $("limit-value");
+    const fine = input.value !== "" && input.checkValidity() && input.min !== "";
+    const value = Number(input.value);
+    $("limit-summary").textContent = !fine
+      ? `It has to be a whole number from ${input.min || "?"} to ${input.max || "?"}%.`
+      : value === limitChange.now ? "No changes yet." : `To send: ${limitChange.now}% to ${value}%.`;
+    $("limit-send").disabled = Boolean(settingSending) || !fine || value === limitChange.now;
+  }
+
+  // Opens the panel on a limit, filled in with `value`: what it holds now, or what it held before a change.
+  function openLimitChange(name, value) {
+    const now = settingValue(name);
+    if (now === null) return;
+    limitChange = { name, now };
+    $("limit-change-title").textContent = LIMIT_NAMES[name];
+    $("limit-label").textContent = name === "max_soc" ? "Never charges past, %" : "Stops discharging at, %";
+    $("limit-value").value = String(value);
+    $("limit-result").textContent = "";
+    $("limit-change").hidden = false;
+    showLimitRange();
+    $("limit-value").focus();
+  }
+
+  function closeLimitChange() {
+    limitChange = null;
+    $("limit-change").hidden = true;
+  }
+
+  // A change is worked out from the value the panel showed. Once that's gone it has to be started again.
+  function closeOutdatedLimitChange() {
+    if (!limitChange || settingSending || settingValue(limitChange.name) === limitChange.now) return;
+    const name = LIMIT_NAMES[limitChange.name];
+    closeLimitChange();
+    if (!$("limit-result").textContent) {
+      $("limit-result").textContent = `The ${name.toLowerCase()} no longer matches what this showed, so it was closed and nothing was sent. The table shows it as it is now.`;
+    }
+  }
+
+  // Sends one setting, from the switch, the panel or a revert, and says how it went. Only one at a time.
+  async function sendSetting(name, expected, value) {
+    if (settingSending || expected === null) return;
+    settingSending = { name, value };
+    renderModes();
+    updateLimitSend();
+    $("limit-cancel").disabled = true;
+    const label = SETTING_NAMES[name];
+    $("limit-result").textContent = `Sending ${label.toLowerCase()}, then reading it back…`;
+    let message;
+    try {
+      const response = await fetch(`/api/inverter-settings/${name}`, {
+        method: "PUT",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected, value }),
+      });
+      const answer = await response.json().catch(() => null);
+      if (response.ok) {
+        message = answer.outcome === "unchanged"
+          ? `${label} already holds that, so nothing was sent.`
+          : `${label}: ${settingText(name, answer.old)} to ${settingText(name, answer.new)}. Confirmed by reading it back.`;
+        if (limitChange?.name === name) closeLimitChange();
+      } else if (response.status === 405 || (response.status === 404 && answer?.detail === "Not Found")) {
+        message = "Restart the dashboard to change this from here. Nothing was sent.";
+      } else {
+        message = typeof answer?.detail === "string" ? answer.detail : `Couldn't do that: the server answered ${response.status}.`;
+      }
+    } catch {
+      message = `Can't reach the dashboard server, so it isn't known whether the change arrived. Check ${label.toLowerCase()} here or in SEMS+ before relying on it.`;
+    }
+    settingSending = null;
+    $("limit-cancel").disabled = false;
+    $("limit-result").textContent = message;
+    await refresh();
+    modesShown = null; // A switch that was refused goes back to what the inverter holds.
+    renderModes();
+    await refreshSettingWrites();
+    updateLimitSend();
+  }
+
+  $("limit-value").addEventListener("input", updateLimitSend);
+  $("limit-change").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!limitChange || settingSending || $("limit-send").disabled) return;
+    sendSetting(limitChange.name, limitChange.now, Number($("limit-value").value));
+  });
+  $("limit-cancel").addEventListener("click", closeLimitChange);
 
   /*
     TOU programmes, on the Battery schedule tab. The change panel sits outside the table, so a new
@@ -2244,14 +2456,42 @@
     renderTouWrites();
   }
 
+  // A change to Backup mode or a limit, for the list of changes. Only the latest to each can be reverted.
+  function settingWriteRow(write, undone) {
+    const undo = el("td");
+    const { setting } = write;
+    if (!undone.has(setting) && write.outcome === "confirmed" && settingsChangeable && settingValue(setting) === write.new_value
+        && (setting === "backup" || limitRange(setting))) {
+      const revert = touButton(`Revert to ${settingText(setting, write.old_value)}`, () => setting === "backup"
+        ? sendSetting("backup", write.new_value, write.old_value)
+        : openLimitChange(setting, write.old_value));
+      revert.disabled = Boolean(settingSending);
+      undo.append(revert);
+    }
+    undone.add(setting);
+    const change = setting === "backup"
+      ? `Backup mode switched ${write.new_value ? "on" : "off"}`
+      : `${SETTING_NAMES[setting] ?? setting} ${write.old_value}% to ${write.new_value}%`;
+    return [el("td", "num"), el("td", "", change), undo];
+  }
+
   function renderTouWrites() {
     const undone = new Set();
-    const rows = touWrites.map((write) => {
+    const writes = [
+      ...touWrites.map((write) => ({ ...write, kind: "tou" })),
+      ...settingWrites.map((write) => ({ ...write, kind: "setting" })),
+    ].sort((a, b) => b.ts - a.ts); // Each list is latest first already, and the sort keeps that order for a tie.
+    const rows = writes.map((write) => {
       const row = el("tr");
       const [kind, label] = WRITE_RESULTS[write.outcome] ?? ["warning", write.outcome];
       const when = dateTime(write.ts * 1000);
       const result = el("td");
       result.append(status(kind, label));
+      if (write.kind === "setting") {
+        const [slot, change, undo] = settingWriteRow(write, undone);
+        row.append(el("td", "", when), slot, change, result, undo);
+        return row;
+      }
       const undo = el("td");
       // Only the latest change to a programme can be reverted, and only while it still holds that change.
       const period = touPeriod(write.slot);
@@ -5902,7 +6142,10 @@
     if (tab === "#appliances") refreshOverview();
     if (tab === "#app-data") refreshExport();
     if (tab === "#grid-meter") gridMeter.refresh();
-    if (tab === "#schedule") refreshTouWrites();
+    if (tab === "#schedule") {
+      refreshTouWrites();
+      refreshSettingWrites();
+    }
     if (returning) {
       refreshHistory();
       refreshDaily();

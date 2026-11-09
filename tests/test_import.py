@@ -56,6 +56,8 @@ def source(tmp_path):
     db.save_settings(connection, {"tariff_day": 0.25, "outage_hours": 4})
     write = db.add_inverter_write(connection, 2, "aa" * 12, "bb" * 12, 50, 60)
     db.finish_inverter_write(connection, write, "confirmed", None)
+    write = db.add_setting_write(connection, "min_soc", 20, 5)
+    db.finish_setting_write(connection, write, "confirmed", 5)
     yield connection
     connection.close()
 
@@ -77,7 +79,7 @@ def run(tmp_path, conn, content, *, apply=True):
 
 def contents(conn):
     """Everything in the database, to check nothing changed."""
-    tables = ("samples", "daily_counters", "appliances", "settings", "inverter_writes", "meter_readings")
+    tables = ("samples", "daily_counters", "appliances", "settings", "inverter_writes", "setting_writes", "meter_readings")
     return {table: conn.execute(f"SELECT * FROM {table} ORDER BY 1, 2").fetchall() for table in tables}
 
 
@@ -157,7 +159,7 @@ def test_full_database_brings_back_everything_but_the_inverter_log(tmp_path, con
         assert actual[name] == expected[name], name
     assert appliances(conn) == appliances(source)
     assert db.daily_totals(conn) == db.daily_totals(source)
-    assert actual["inverter_writes"] == []
+    assert actual["inverter_writes"] == [] and actual["setting_writes"] == []
 
 
 def test_csv_brings_back_the_main_readings_and_what_can_be_rebuilt_from_them(tmp_path, conn, source):
@@ -325,19 +327,30 @@ def test_a_counter_that_dropped_is_real_data(tmp_path, conn, source):
 
 
 @pytest.mark.parametrize("name", ("csv", "sqlite"))
-def test_the_inverter_log_is_left_out_and_says_so(tmp_path, conn, source, name):
+def test_the_inverter_logs_are_left_out_and_say_so(tmp_path, conn, source, name):
     report = run(tmp_path, conn, exported(source, name))
-    assert contents(conn)["inverter_writes"] == []
-    assert any("inverter" in note and "1" in note for note in report["notes"])
+    assert contents(conn)["inverter_writes"] == contents(conn)["setting_writes"] == []
+    assert any("inverter" in note and "2" in note for note in report["notes"])
 
 
 def test_exports_from_before_the_inverter_log_still_work(tmp_path, conn, source):
-    older_zip = rezip(exported(source, "csv"), {"inverter_writes.csv": None})
-    older_database = with_sql(tmp_path, exported(source, "sqlite"), "DROP TABLE inverter_writes")
+    older_zip = rezip(exported(source, "csv"), {"inverter_writes.csv": None, "setting_writes.csv": None})
+    older_database = with_sql(
+        tmp_path, exported(source, "sqlite"), "DROP TABLE inverter_writes", "DROP TABLE setting_writes"
+    )
     for content in (older_zip, older_database):
         report = run(tmp_path, conn, content, apply=False)
         assert table(report, "samples")["new"] == 2
         assert not any("inverter" in note for note in report["notes"])
+
+
+def test_exports_from_before_the_settings_log_still_count_the_tou_log(tmp_path, conn, source):
+    older_zip = rezip(exported(source, "csv"), {"setting_writes.csv": None})
+    older_database = with_sql(tmp_path, exported(source, "sqlite"), "DROP TABLE setting_writes")
+    for content in (older_zip, older_database):
+        report = run(tmp_path, conn, content, apply=False)
+        assert table(report, "samples")["new"] == 2
+        assert any("inverter" in note and ": 1." in note for note in report["notes"])
 
 
 def test_settings_and_counters_from_a_newer_version_are_skipped_and_counted(tmp_path, conn, source):

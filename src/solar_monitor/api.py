@@ -1,7 +1,7 @@
 """The web app: serves the dashboard page, the latest readings, the logged history, appliances, exports and imports.
 
-The serial number is never sent to the page. The one route that changes the inverter is the TOU
-programme one, which hands over to control.py. PUT, JSON bodies and the content type an import insists
+The serial number is never sent to the page. The routes that change the inverter are the TOU
+programme one and the one for Backup mode and the battery's limits, which both hand over to control.py. PUT, JSON bodies and the content type an import insists
 on can't be sent cross-site without a preflight, which no other site passes, so a web page
 elsewhere can't change anything here.
 """
@@ -150,6 +150,13 @@ class PeriodIn(BaseModel):
             cutoff_soc=self.cutoff_soc,
             percent=self.percent,
         )
+
+
+class SettingIn(BaseModel):
+    """A new value for Backup mode (0 or 1) or a battery limit (%), and the value the page saw."""
+
+    expected: Annotated[int, Field(strict=True, ge=0, le=100)]
+    value: Annotated[int, Field(strict=True, ge=0, le=100)]
 
 
 def _write_details(write: dict[str, object]) -> dict[str, object]:
@@ -466,6 +473,24 @@ def create_app(collector: Collector) -> FastAPI:
             raise HTTPException(status_code=404, detail="no such programme")
         try:
             result = await collector.set_period(slot, change.wanted(), change.expected)
+        except control.Refused as refused:
+            raise HTTPException(status_code=409, detail=str(refused)) from None
+        except control.Unconfirmed as problem:
+            raise HTTPException(status_code=502, detail=str(problem)) from None
+        return result
+
+    @app.get("/api/inverter-settings/writes")
+    async def api_setting_writes() -> dict[str, object]:
+        return {"writes": db.list_setting_writes(collector.conn)}
+
+    @app.put("/api/inverter-settings/{name}")
+    async def api_set_setting(name: str, change: SettingIn, request: Request) -> dict[str, object]:
+        if not _may_change_inverter(request):
+            raise HTTPException(status_code=403, detail="Changing the inverter needs the app's login, so nothing was sent.")
+        if name not in control.SETTINGS:
+            raise HTTPException(status_code=404, detail="no such setting")
+        try:
+            result = await collector.set_setting(name, change.value, change.expected)
         except control.Refused as refused:
             raise HTTPException(status_code=409, detail=str(refused)) from None
         except control.Unconfirmed as problem:

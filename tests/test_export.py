@@ -74,7 +74,7 @@ def test_csv_zip_holds_each_table(filled, temp_folder):
     with zipfile.ZipFile(write(filled, "csv")) as archive:
         assert sorted(archive.namelist()) == [
             "README.txt", "appliances.csv", "daily_counters.csv", "inverter_writes.csv", "meter_readings.csv",
-            "samples.csv", "settings.csv",
+            "samples.csv", "setting_writes.csv", "settings.csv",
         ]
         samples = read_csv(archive, "samples.csv")
         counters = read_csv(archive, "daily_counters.csv")

@@ -1,9 +1,13 @@
-"""The only code that writes to the inverter, and all it can change is one TOU period.
+"""The only code that writes to the inverter. It can change one TOU period, or one of the few settings in SETTINGS.
 
 A change can set a period's times, days, months, cut-off, power and whether it's on. Never its type
 or whether it charges or discharges: those are kept from what the inverter holds.
 
-Protecting the equipment comes first, so every change goes the same way:
+A setting is a single number in a single register: Backup mode's switch, the two levels the battery
+stops discharging at, and the level it stops charging at. set_setting changes one of those the same
+careful way, with the steps that only make sense for a period left out.
+
+Protecting the equipment comes first, so every change to a period goes the same way:
 
 1. Read the period again, and stop if it isn't what the person was looking at.
 2. Make the new bytes from exactly what was read, with only what was asked for different.
@@ -256,3 +260,120 @@ async def set_period(
     await _check_overlaps(inverter, slot, old, new)
     await send_period(inverter, conn, slot, old, new)
     return {"outcome": "confirmed", "changes": describe_changes(old, new)}
+
+
+@dataclass(frozen=True)
+class Setting:
+    register: str  # The library's name for it.
+    label: str  # How messages name it.
+
+
+# Everything set_setting may change. Nothing else, so the library's other registers stay out of reach.
+SETTINGS = {
+    "backup": Setting("backup_mode_enable", "Backup mode"),
+    "min_soc": Setting("battery_discharge_depth", "The on-grid floor"),
+    "reserve_soc": Setting("battery_discharge_depth_offline", "The power-cut floor"),
+    "max_soc": Setting("soc_upper_limit", "The ceiling"),
+}
+FLOORS = ("min_soc", "reserve_soc")
+# The lowest floor this app sets, so the battery is never run flat from here. SEMS+ can still go lower.
+LOWEST_FLOOR = 5
+HIGHEST_CEILING = 100
+
+
+async def _read_number(inverter: goodwe.Inverter, name: str) -> int | None:
+    """A setting's value, or None unless the inverter gives a whole number that can mean something."""
+    value = await read_setting(inverter, SETTINGS[name].register)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if name == "backup":
+        return value if value in (0, 1) else None
+    return value if 0 <= value <= 100 else None
+
+
+async def _setting_problem(inverter: goodwe.Inverter, name: str, value: int) -> str | None:
+    """What's wrong with the new value, if anything. The other limits are read again, not taken from the page."""
+    if name == "backup":
+        return None if value in (0, 1) else "Backup mode can only be on or off"
+    if name in FLOORS:
+        if value < LOWEST_FLOOR:
+            return f"A floor can't be below {LOWEST_FLOOR}% from here"
+        ceiling = await _read_number(inverter, "max_soc")
+        if ceiling is None:
+            return "Couldn't read the ceiling to check the floor stays below it"
+        if value >= ceiling:
+            return f"A floor has to be below the ceiling, {ceiling}%"
+        return None
+    if value > HIGHEST_CEILING:
+        return f"The ceiling can't be above {HIGHEST_CEILING}%"
+    for floor in FLOORS:
+        held = await _read_number(inverter, floor)
+        if held is None:
+            return f"Couldn't read {SETTINGS[floor].label.lower()} to check the ceiling stays above it"
+        if value <= held:
+            return f"The ceiling has to be above {SETTINGS[floor].label.lower()}, {held}%"
+    return None
+
+
+async def _read_back_number(inverter: goodwe.Inverter, name: str, wanted: int) -> int | None:
+    """What the setting holds at the last look, or None if that look couldn't read it."""
+    held = None
+    for _ in range(READ_BACK_TRIES):
+        await asyncio.sleep(READ_BACK_WAIT_SECONDS)
+        held = await _read_number(inverter, name)
+        if held == wanted:
+            break
+    return held
+
+
+async def send_setting(inverter: goodwe.Inverter, conn: sqlite3.Connection, name: str, old: int, new: int) -> None:
+    """Log, send and read back. Raises Unconfirmed unless the inverter ends up holding `new`."""
+    write_id = db.add_setting_write(conn, name, old, new)
+    failure = ""
+    try:
+        await inverter.write_setting(SETTINGS[name].register, new)
+    except Exception as error:  # Only the read-back can tell: a reply can be lost after the write arrived.
+        failure = f" Sending it failed with {type(error).__name__}: {error}."
+
+    held = await _read_back_number(inverter, name, new)
+    if held == new:
+        db.finish_setting_write(conn, write_id, "confirmed", held)
+        return
+    label = SETTINGS[name].label
+    if held is None:
+        db.finish_setting_write(conn, write_id, "unknown", None)
+        raise Unconfirmed(
+            f"Couldn't read {label.lower()} back, so it isn't known whether the change arrived.{failure} "
+            "Check it in SEMS+ before relying on it."
+        )
+    if held == old:
+        db.finish_setting_write(conn, write_id, "not_applied", held)
+        raise Unconfirmed(f"The inverter still holds the old value, so nothing changed.{failure}")
+    db.finish_setting_write(conn, write_id, "mismatch", held)
+    raise Unconfirmed(
+        f"The inverter holds something other than what was sent: it had {old}, was sent {new} and now holds "
+        f"{held}.{failure} Check {label.lower()} in SEMS+ before relying on it."
+    )
+
+
+async def set_setting(
+    inverter: goodwe.Inverter, conn: sqlite3.Connection, name: str, value: int, expected: int
+) -> dict[str, object]:
+    """Change one setting to `value`. `expected` is what the person saw it hold."""
+    if name not in SETTINGS:
+        raise KeyError(name)
+    label = SETTINGS[name].label
+    old = await _read_number(inverter, name)
+    if old is None:
+        raise Refused(f"Couldn't read {label.lower()} from the inverter, so nothing was sent.")
+    if old != expected:
+        raise Refused(
+            f"{label} has changed on the inverter since the page showed it, so nothing was sent. Check it and try again."
+        )
+    if value == old:
+        return {"outcome": "unchanged", "old": old, "new": value}
+    problem = await _setting_problem(inverter, name, value)
+    if problem:
+        raise Refused(f"{problem}, so nothing was sent.")
+    await send_setting(inverter, conn, name, old, value)
+    return {"outcome": "confirmed", "old": old, "new": value}

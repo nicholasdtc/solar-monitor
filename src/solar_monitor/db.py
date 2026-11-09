@@ -60,6 +60,17 @@ CREATE TABLE IF NOT EXISTS inverter_writes (
     held_bytes  TEXT                    -- what the read-back found, in hex
 );
 
+-- Changes to one of the inverter's single-number settings: Backup mode and the battery's limits.
+CREATE TABLE IF NOT EXISTS setting_writes (
+    id         INTEGER PRIMARY KEY,
+    ts         INTEGER NOT NULL,        -- Unix seconds, from just before it was sent
+    setting    TEXT NOT NULL,           -- a key of control.SETTINGS, such as min_soc
+    old_value  INTEGER NOT NULL,        -- as read just before: what undo goes back to
+    new_value  INTEGER NOT NULL,        -- what was sent
+    outcome    TEXT NOT NULL,           -- as in inverter_writes
+    held_value INTEGER                  -- what the read-back found
+);
+
 -- The electricity meter's half-hours, imported from ESB Networks. Kept by the meter's own labels,
 -- in Irish clock time, so nothing is lost or merged when the clocks change.
 CREATE TABLE IF NOT EXISTS meter_readings (
@@ -514,5 +525,31 @@ def list_inverter_writes(conn: sqlite3.Connection, limit: int = 20) -> list[dict
     columns = ("id", "ts", "slot", "old_percent", "new_percent", "old_bytes", "new_bytes", "outcome")
     rows = conn.execute(
         f"SELECT {', '.join(columns)} FROM inverter_writes ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def add_setting_write(conn: sqlite3.Connection, setting: str, old_value: int, new_value: int) -> int:
+    """Called before a write is sent, so it's on record whatever happens next."""
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO setting_writes (ts, setting, old_value, new_value, outcome) VALUES (?, ?, ?, ?, 'sent')",
+            (int(time.time()), setting, old_value, new_value),
+        )
+    return cursor.lastrowid
+
+
+def finish_setting_write(conn: sqlite3.Connection, write_id: int, outcome: str, held_value: int | None) -> None:
+    with conn:
+        conn.execute(
+            "UPDATE setting_writes SET outcome = ?, held_value = ? WHERE id = ?", (outcome, held_value, write_id)
+        )
+
+
+def list_setting_writes(conn: sqlite3.Connection, limit: int = 20) -> list[dict[str, object]]:
+    """The latest first."""
+    columns = ("id", "ts", "setting", "old_value", "new_value", "outcome")
+    rows = conn.execute(
+        f"SELECT {', '.join(columns)} FROM setting_writes ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
     return [dict(zip(columns, row)) for row in rows]
