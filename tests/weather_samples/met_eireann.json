@@ -1,0 +1,64 @@
+[
+ {
+  "id": 5,
+  "capId": "2.49.0.1.372.0.261023085908.8c250866-df47-44ea-b365-2e3d0aa6152c",
+  "type": "Rain",
+  "severity": "Moderate",
+  "certainty": "Likely",
+  "level": "yellow",
+  "issued": "2026-10-23T08:59:08.685191+01:00",
+  "updated": "2026-10-23T08:59:08.685191+01:00",
+  "onset": "2026-10-24T04:00:00+01:00",
+  "expiry": "2026-10-24T15:00:00+01:00",
+  "headline": "Status Yellow - Rain warning for Clare, Cork, Donegal, Galway, Kerry, Leitrim, Limerick, Mayo, Sligo",
+  "description": "<p>Storm Boelo will bring spells of heavy rain.&nbsp;</p><p>Be aware of potential impacts:</p><ul><li>Difficult travelling conditions</li><li>Localised flooding possible</li><li>Outdoor events impacted</li></ul>",
+  "status": "Warning",
+  "regions": [
+   "EI10",
+   "EI14",
+   "EI20",
+   "EI03",
+   "EI11",
+   "EI25",
+   "EI16",
+   "EI06",
+   "EI04"
+  ]
+ },
+ {
+  "id": 7,
+  "capId": "2.49.0.1.372.0.261023091842.e947eb0b-d1f7-4798-a72f-dbea8742cce0",
+  "type": "Wind",
+  "severity": "Moderate",
+  "certainty": "Likely",
+  "level": "yellow",
+  "issued": "2026-10-23T09:14:07.4792+01:00",
+  "updated": "2026-10-23T09:18:42.827924+01:00",
+  "onset": "2026-10-24T13:00:00+01:00",
+  "expiry": "2026-10-25T15:00:00+00:00",
+  "headline": "Status Yellow - Wind warning for Donegal",
+  "description": "<p>Storm Boelo: Very strong southwest winds will veer westerly with severe gusts and coastal gales.</p><p>Be aware of potential impacts:</p><ul><li>Debris, loose objects displaced</li><li>Difficult driving and cycling conditions</li><li>Large coastal waves</li><li>Some fallen trees, branches</li><li>Outdoor events impacted</li></ul>",
+  "status": "Warning",
+  "regions": [
+   "EI06"
+  ]
+ },
+ {
+  "id": 8,
+  "capId": "2.49.0.1.372.0.261023091747.7cd5f885-adba-492b-a9e0-68b4e7efce69",
+  "type": "Rain",
+  "severity": "Severe",
+  "certainty": "Likely",
+  "level": "orange",
+  "issued": "2026-10-23T09:17:47.490498+01:00",
+  "updated": "2026-10-23T09:17:47.490498+01:00",
+  "onset": "2026-10-24T07:00:00+01:00",
+  "expiry": "2026-10-24T14:00:00+01:00",
+  "headline": "Status Orange - Rain warning for Kerry",
+  "description": "<p>Storm Boelo will bring spells of very heavy and intense rain.&nbsp;</p><p>Prepare for impacts:</p><ul><li>Damage to homes and businesses expected</li><li>Disruption and delays to public transport (rail, bus)</li><li>Flooding expected</li><li>Outdoor events severely disrupted</li><li>Very difficult travelling conditions</li></ul>",
+  "status": "Warning",
+  "regions": [
+   "EI11"
+  ]
+ }
+]

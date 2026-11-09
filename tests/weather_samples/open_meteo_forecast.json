@@ -1,0 +1,173 @@
+{
+ "latitude": 10.0,
+ "longitude": 20.0,
+ "utc_offset_seconds": 0,
+ "timezone": "GMT",
+ "elevation": 100.0,
+ "hourly_units": {
+  "time": "unixtime",
+  "temperature_2m": "°C",
+  "apparent_temperature": "°C",
+  "precipitation": "mm",
+  "precipitation_probability": "%",
+  "weather_code": "wmo code",
+  "cloud_cover": "%",
+  "cloud_cover_low": "%",
+  "cloud_cover_mid": "%",
+  "cloud_cover_high": "%",
+  "wind_speed_10m": "m/s",
+  "wind_gusts_10m": "m/s",
+  "wind_direction_10m": "°",
+  "shortwave_radiation": "W/m²",
+  "direct_radiation": "W/m²",
+  "diffuse_radiation": "W/m²",
+  "global_tilted_irradiance": "W/m²",
+  "is_day": ""
+ },
+ "hourly": {
+  "time": [
+   1794207600,
+   1794211200,
+   1794214800,
+   1794218400,
+   1794222000,
+   1794225600
+  ],
+  "temperature_2m": [
+   5.5,
+   6.3,
+   6.1,
+   6.5,
+   7.5,
+   8.1
+  ],
+  "apparent_temperature": [
+   3.6,
+   4.2,
+   3.5,
+   4.0,
+   4.6,
+   5.0
+  ],
+  "precipitation": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "precipitation_probability": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "weather_code": [
+   3,
+   3,
+   3,
+   3,
+   3,
+   3
+  ],
+  "cloud_cover": [
+   100,
+   100,
+   100,
+   100,
+   99,
+   95
+  ],
+  "cloud_cover_low": [
+   99,
+   100,
+   100,
+   100,
+   99,
+   90
+  ],
+  "cloud_cover_mid": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "cloud_cover_high": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "wind_speed_10m": [
+   1.2,
+   1.9,
+   2.8,
+   2.8,
+   3.5,
+   4.0
+  ],
+  "wind_gusts_10m": [
+   2.6,
+   3.6,
+   5.1,
+   5.2,
+   6.6,
+   7.5
+  ],
+  "wind_direction_10m": [
+   78,
+   94,
+   68,
+   78,
+   92,
+   92
+  ],
+  "shortwave_radiation": [
+   0.0,
+   7.0,
+   50.0,
+   88.0,
+   173.0,
+   173.0
+  ],
+  "direct_radiation": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   11.0,
+   18.0
+  ],
+  "diffuse_radiation": [
+   0.0,
+   7.0,
+   50.0,
+   88.0,
+   162.0,
+   155.0
+  ],
+  "global_tilted_irradiance": [
+   0.0,
+   6.3,
+   44.9,
+   79.0,
+   173.5,
+   183.7
+  ],
+  "is_day": [
+   0,
+   1,
+   1,
+   1,
+   1,
+   1
+  ]
+ }
+}
