@@ -13,6 +13,7 @@ Runs on a Raspberry Pi 5 (8GB, wired Ethernet). Developed on Windows.
 | 4 | Runs 24/7 on the Pi as a systemd service | 4 |
 | 5 | Nightly backup to the PC, and remote access via Tailscale only if it's ever wanted | 5 |
 | 6 | Control panel: battery schedule / settings writes (auth required) | 6 |
+| 7 | Weather forecast on the dashboard and its own tab, groundwork for forecast-driven automation | 7 |
 
 ## Hard rules
 
@@ -124,6 +125,11 @@ solar-monitor/
 - Without any accounts there's no login, and only the machine the app runs on can open it, as before.
 - The Action history tab lists what each person did: changes to the inverter from its two logs, and data, account and log-in changes from `actions`. Changes of display choices, which are each person's own, aren't listed.
 - Exports leave the accounts and sessions out. The full database export deletes them from the copy securely, so no password hash is left in it.
+
+**Phase 7: weather**
+- A forecast from Open-Meteo, fetched hourly by the Pi and kept in SQLite. Yr was considered, but it has no solar radiation.
+- A Dashboard widget, a Weather tab with the hourly detail, expected solar output learned from the log, and an automation stub that only recommends.
+- Details in [weather-spec.md](weather-spec.md).
 
 ## Open questions
 
