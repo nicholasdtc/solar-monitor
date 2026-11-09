@@ -322,13 +322,11 @@
   .tip-row strong { text-align: right; font-variant-numeric: tabular-nums; }
   .tip-row i { height: 2px; }
   .tip-row span { color: var(--ink-2); }
-  .tip-row small { grid-column: 3; margin-top: -3px; color: var(--muted); font-size: 12px; }
   .tip-note { margin-top: 4px; color: var(--ink-2); }
+  /* The tooltip keeps to the values. The lowest to highest reading is in the table. */
   #chart-tip:not(.help-tip) { max-width: min(36ch, calc(100vw - 16px)); }
-  /* On a phone the tooltip keeps to the values. The lowest to highest reading is in the table. */
   @media (max-width: 719.98px) {
     #chart-tip { padding: 6px 8px; }
-    .tip-row small { display: none; }
   }
   /* Explanations live in the tooltip: on a "?" or on dotted words, shown on hover, keyboard focus or a tap. */
   .help {
@@ -2166,7 +2164,6 @@
       const key = el("i");
       if (row.color) key.style.background = `var(${row.color})`;
       node.append(el("strong", "", row.value), key, el("span", "", row.label));
-      if (row.detail) node.append(el("small", "", row.detail));
       return node;
     }));
     if (note) tip.append(el("div", "tip-note", note));
@@ -2449,11 +2446,7 @@
     if (!isNum(value)) return null;
     const format = series.unit === "W" ? power : (v) => `${number(v, 0)}${series.unit === "%" ? "" : " "}${series.unit}`;
     const word = series.above && Math.abs(value) >= FLOW_MIN_W ? (value > 0 ? series.above : series.below) : "";
-    const [low, high] = [point[`${series.key}_min`], point[`${series.key}_max`]];
-    return {
-      value: format(value), label: word ? `${series.label}, ${word}` : series.label, color: series.color,
-      detail: isNum(low) && isNum(high) && low !== high ? `${format(low)} to ${format(high)}` : undefined,
-    };
+    return { value: format(value), label: word ? `${series.label}, ${word}` : series.label, color: series.color };
   }
 
   /* Which of `names` a schedule's "Mon, Tue" or "Jan,Feb" covers, by index. Null when it can't tell. */
