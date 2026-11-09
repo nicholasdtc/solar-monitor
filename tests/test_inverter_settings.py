@@ -416,6 +416,6 @@ def test_a_refused_change_still_refreshes_what_the_page_shows(collector):
 
 def test_the_modes_and_limits_can_change_from_the_page(collector):
     page = get(collector, "/").text
-    tab = page.split('id="view-schedule"', 1)[1].split("</section>", 1)[0]
+    tab = page.split('id="view-battery-modes"', 1)[1].split("</section>", 1)[0]
     for part in ("schedule-modes", "limit-change", "limit-value", "limit-send", "limit-result"):
         assert f'id="{part}"' in tab

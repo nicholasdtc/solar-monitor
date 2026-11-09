@@ -7,7 +7,7 @@
 <meta name="server-time-zone" content="">
 <meta name="session-user" content="">
 <script>
-  // The theme and motion picked in Settings go on <html> before the page paints, so it never shows the others first.
+  // The theme and motion picked in Preferences go on <html> before the page paints, so it never shows the others first.
   // Each account's are kept under its name, as PREFS_KEY below.
   try {
     const user = JSON.parse(document.querySelector('meta[name="session-user"]').content || "null");
@@ -56,6 +56,7 @@
     --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
     --gutter: clamp(16px, 2vw, 28px);
     --tabs-h: 48px;
+    --subs-h: 0px; /* The sub-tab row under the bar, when the open tab has one. */
     --board-max: 1840px;
   }
   /* Dark follows the device unless the user menu picks a theme, which the script in <head> puts on <html>. */
@@ -164,7 +165,7 @@
     .sections { position: relative; }
     .menu {
       position: absolute; top: 100%; left: 0; width: 320px;
-      max-height: calc(100dvh - var(--tabs-h) - 16px); overflow-y: auto; margin-top: 1px;
+      max-height: calc(100dvh - var(--tabs-h) - var(--subs-h) - 16px); overflow-y: auto; margin-top: 1px;
       background: var(--surface); border: 1px solid var(--rule-strong); border-top: 0;
       box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
     }
@@ -187,6 +188,23 @@
     .menu li { flex: none; display: flex; }
     .menu a { padding: 0 16px; white-space: nowrap; border-left: 1px solid var(--rule); }
   }
+  /*
+    The open tab's pages, as a row of pills under the bar that scrolls sideways when they don't fit.
+    It's part of the sticky bar, so it stays put too, and --subs-h moves the table header rows under it.
+  */
+  :root.has-subs { --subs-h: 45px; }
+  .subtabs {
+    display: flex; gap: 6px; height: 44px; align-items: center; overflow-x: auto; scrollbar-width: none; position: relative;
+    max-width: var(--board-max); margin: 0 auto; padding: 0 var(--gutter); border-top: 1px solid var(--rule);
+  }
+  .subtabs[hidden] { display: none; }
+  .subtabs::-webkit-scrollbar { display: none; }
+  .subtabs a {
+    flex: none; display: flex; align-items: center; min-height: 32px; padding: 0 14px; border: 1px solid var(--rule-strong);
+    border-radius: 999px; color: var(--ink-2); font-weight: 500; text-decoration: none; white-space: nowrap;
+  }
+  .subtabs a:hover { background: var(--page); color: var(--ink); }
+  .subtabs a[aria-current="page"] { background: var(--ink); border-color: var(--ink); color: var(--surface); font-weight: 600; }
   .conn { flex: none; display: flex; align-items: center; padding: 0 12px; border-left: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); }
   .conn .long { display: none; }
   /* Wide enough for the tab row and the whole label. */
@@ -239,7 +257,7 @@
     .user-menu { width: 100%; border-inline: 0; }
   }
 
-  /* Settings and the log out check open as modal dialogs over the page. */
+  /* Preferences and the log out check open as modal dialogs over the page. */
   .modal {
     width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; overflow: auto;
     background: var(--surface); color: var(--ink); border: 1px solid var(--rule-strong); box-shadow: 0 12px 40px rgb(0 0 0 / 0.3);
@@ -378,18 +396,9 @@
     .dash { grid-template-columns: minmax(0, 1fr) 800px; }
   }
 
-  /* Statistics */
-  .stats, .counters, .schedule, .appliances { grid-template-columns: minmax(0, 1fr); grid-auto-rows: min-content; }
-  @media (min-width: 1200px) {
-    .stats { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
-    .appliances { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  }
-  @media (min-width: 1100px) {
-    .counters { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); grid-template-rows: auto 1fr; }
-    .counters .tall { grid-column: 2; grid-row: 1 / span 2; }
-    .schedule { grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); grid-template-rows: auto 1fr; }
-    .schedule .tall { grid-column: 2; grid-row: 1 / span 2; }
-  }
+  /* A sub-tab's page: its panes one under another, the last taking up the rest of the screen. */
+  .page { display: flex; flex-direction: column; }
+  .page > :last-child { flex-grow: 1; }
   .range { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
   .range label { display: inline-flex; gap: 8px; align-items: center; color: var(--ink-2); }
   .range input, .range select { min-height: 36px; padding: 4px 8px; background: var(--surface); border: 1px solid var(--rule-strong); }
@@ -502,7 +511,7 @@
   /* Header rows stay in view under the bar (50px with its borders) while their table passes beneath.
      The rule under them is a shadow because a collapsed border stays behind with the row below. */
   thead th {
-    position: sticky; top: calc(var(--tabs-h) + 2px); z-index: 1; box-shadow: 0 1px 0 var(--rule);
+    position: sticky; top: calc(var(--tabs-h) + var(--subs-h) + 2px); z-index: 1; box-shadow: 0 1px 0 var(--rule);
     border-top: 0; color: var(--muted); font-size: 13px; font-weight: 500; white-space: nowrap; background: var(--surface);
   }
   /* Sticky only follows the nearest box that scrolls, so in a box that scrolls sideways it can't follow the page.
@@ -597,7 +606,7 @@
     :root:not([data-motion="full"]) .edit input[type="checkbox"].switch,
     :root:not([data-motion="full"]) .edit input[type="checkbox"].switch::before { transition: none; }
   }
-  /* Reduced motion picked in Settings, whatever the device says: nothing moves on its own or slides. */
+  /* Reduced motion picked in Preferences, whatever the device says: nothing moves on its own or slides. */
   :root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after {
     animation: none !important; transition: none !important; scroll-behavior: auto !important;
   }
@@ -605,9 +614,8 @@
   #limit-change { margin-top: 12px; }
 
   /* Grid meter */
-  .gm-empty { grid-auto-rows: auto; }
-  #view-grid-meter .chart-head { align-items: flex-start; }
-  #view-grid-meter .legend span { white-space: nowrap; }
+  [data-tab="grid-meter"] .chart-head { align-items: flex-start; }
+  [data-tab="grid-meter"] .legend span { white-space: nowrap; }
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 16px 32px; margin-top: 4px; }
   .tile { display: flex; flex-direction: column; gap: 2px; padding-top: 10px; border-top: 1px solid var(--rule); min-width: 0; }
   .tile-label { color: var(--ink-2); font-weight: 500; }
@@ -637,8 +645,7 @@
   .carpet canvas { display: block; cursor: pointer; touch-action: pan-y; }
   .carpet canvas:focus-visible { outline: 2px solid var(--flow-grid); outline-offset: 2px; }
   .cursor { position: absolute; pointer-events: none; outline: 2px solid var(--ink); }
-  #gm-day-pane { scroll-margin-top: calc(var(--tabs-h) + 8px); }
-  #view-grid-meter thead th { position: sticky; top: 0; }
+  .gm-scroll thead th { position: sticky; top: 0; }
   .gm-scroll { max-height: 360px; overflow-y: auto; }
   .gm-scroll th[scope="row"] { white-space: nowrap; } /* The table scrolls sideways, so a date can stay on one line. */
   td.quiet { color: var(--muted); }
@@ -663,14 +670,12 @@
       <div class="menu" id="menu">
         <ul id="tab-links">
           <li><a href="#dashboard" aria-current="page">Dashboard</a></li>
-          <li><a href="#statistics">Statistics</a></li>
+          <li><a href="#statistics">History</a></li>
           <li><a href="#grid-meter">Grid meter</a></li>
-          <li><a href="#counters">Counters &amp; checks</a></li>
-          <li><a href="#appliances">Appliances &amp; tariffs</a></li>
-          <li><a href="#schedule">Battery schedule</a></li>
-          <li><a href="#fields">All fields</a></li>
-          <li><a href="#app-data">App Data</a></li>
-          <li><a href="#history">Action history</a></li>
+          <li><a href="#appliances">Appliances</a></li>
+          <li><a href="#battery">Battery</a></li>
+          <li><a href="#system">System</a></li>
+          <li><a href="#setup">Setup</a></li>
         </ul>
       </div>
     </nav>
@@ -687,7 +692,7 @@
           <button type="button" data-theme="light" aria-pressed="false">Light</button>
           <button type="button" data-theme="dark" aria-pressed="false">Dark</button>
         </div>
-        <button type="button" class="item" id="open-prefs">Settings…</button>
+        <button type="button" class="item" id="open-prefs">Preferences…</button>
         <button type="button" class="item" id="open-users" hidden>Users…</button>
         <button type="button" class="item" id="kiosk" aria-pressed="false">
           <span>Kiosk mode<small id="kiosk-note">Full screen, screen kept on</small></span><span class="switch" aria-hidden="true"></span>
@@ -698,11 +703,12 @@
       </div>
     </div>
   </div>
+  <nav class="subtabs" id="subtabs" aria-label="Pages" hidden></nav>
 </header>
 
 <dialog class="modal" id="prefs" aria-labelledby="prefs-title">
   <form method="dialog" id="prefs-form">
-    <h2 id="prefs-title">Settings</h2>
+    <h2 id="prefs-title">Preferences</h2>
     <h3>Dates and times</h3>
     <label>Date format
       <select name="date">
@@ -868,7 +874,7 @@
 <p class="alert" id="storage-error" role="alert"></p>
 
 <main>
-  <section class="view dash" id="view-dashboard" aria-label="Dashboard">
+  <section class="view dash" data-tab="dashboard" id="view-dashboard" aria-label="Dashboard">
     <div class="pane flow-pane frozen" id="flow">
       <div class="flow-test" id="flow-test" hidden>
         <div class="flow-test-head"><span>Test mode: made-up readings, not the inverter</span><a href="/">Back to live</a></div>
@@ -885,13 +891,13 @@
       <button type="button" class="help flow-help" aria-label="About the paths" data-tip="Each box's total is measured. The split between paths is estimated: solar feeds the house first, then the battery, then the grid.">?</button>
     </div>
     <div class="pane now-pane" id="now-pane">
-      <div class="now-head"><h2>Last 24 hours</h2><a href="#statistics">Statistics →</a></div>
+      <div class="now-head"><h2>Last 24 hours</h2><a href="#statistics">History →</a></div>
       <div class="charts compact" id="now-charts" data-swipe></div>
       <p class="meta" id="now-note"></p>
     </div>
   </section>
 
-  <section class="view stats" id="view-statistics" aria-label="Statistics" hidden>
+  <section class="view page" id="view-statistics-charts" data-tab="statistics" data-sub="charts" data-label="Charts" data-perm="statistics" aria-label="History: Charts" hidden>
     <div class="pane">
       <h2>History <button type="button" class="help" id="history-help" aria-label="About these charts" data-tip="">?</button></h2>
       <div class="range">
@@ -914,6 +920,9 @@
         </div>
       </details>
     </div>
+  </section>
+
+  <section class="view page" id="view-statistics-daily" data-tab="statistics" data-sub="daily" data-label="Daily" data-perm="statistics" aria-label="History: Daily" hidden>
     <div class="pane">
       <h2>Daily energy <button type="button" class="help" aria-label="About these totals" data-tip="From the inverter's lifetime counters. Today's can be up to 5 minutes behind.&#10;The first day counts from its first reading. Days the app wasn't running count toward the next day it ran.">?</button></h2>
       <div class="charts" id="daily-charts"></div>
@@ -923,7 +932,8 @@
         <div class="charts" id="flow-charts"></div>
       </div>
     </div>
-    <div class="pane span-all">
+
+    <div class="pane">
       <h3>Daily energy as a table</h3>
       <div class="scroll" tabindex="0" role="region" aria-label="Daily energy table">
         <table>
@@ -932,7 +942,10 @@
         </table>
       </div>
     </div>
-    <div class="pane span-all" id="money-pane" hidden>
+  </section>
+
+  <section class="view page" id="view-statistics-money" data-tab="statistics" data-sub="money" data-label="Money" data-perm="statistics" aria-label="History: Money" hidden>
+    <div class="pane" id="money-pane">
       <h2>Grid money</h2>
       <p class="meta" id="money-note"></p>
       <div id="money-data">
@@ -953,8 +966,8 @@
     </div>
   </section>
 
-  <section class="view stats" id="view-grid-meter" aria-label="Grid meter" hidden>
-    <div class="pane span-all">
+  <section class="view page" id="view-grid-meter-overview" data-tab="grid-meter" data-sub="overview" data-label="Overview" data-perm="grid-meter" aria-label="Grid meter: Overview" hidden>
+    <div class="pane">
       <h2>Grid meter <button type="button" class="help" aria-label="About this tab" data-tip="Half-hourly grid import from your smart meter, as downloaded from ESB Networks. Priced at your rates.">?</button></h2>
       <p class="meta" id="gm-intro"></p>
       <div class="range gm-data">
@@ -1006,6 +1019,23 @@
       </details>
     </div>
 
+    <div class="pane gm-data">
+      <div class="chart-head">
+        <div class="head-text"><h2>Every half-hour <button type="button" class="help" id="gm-carpet-help" aria-label="About this chart" data-tip="A column for each day, a row for each half-hour, coloured by the average kW.&#10;Click a day to open it.">?</button></h2></div>
+      </div>
+      <div class="legend bars" id="gm-heat-legend"></div>
+      <div class="carpet" id="gm-carpet">
+        <canvas id="gm-carpet-canvas" tabindex="0" role="img"></canvas>
+        <div class="cursor" id="gm-carpet-cursor" hidden></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="view page" id="view-grid-meter-day" data-tab="grid-meter" data-sub="day" data-label="One day" data-perm="grid-meter" aria-label="Grid meter: One day" hidden>
+    <div class="pane gm-none" hidden>
+      <p class="note">No meter readings yet. Import an ESB Networks half-hourly kW file under <a href="#setup/data">Setup › Data</a>.</p>
+    </div>
+
     <div class="pane gm-data" id="gm-day-pane">
       <h2>One day <button type="button" class="help" aria-label="About this chart" data-tip="Each bar is the average kW over a half-hour. Its kWh is half that.">?</button></h2>
       <div class="range">
@@ -1031,32 +1061,11 @@
         </div>
       </details>
     </div>
+  </section>
 
-    <div class="pane span-all gm-data">
-      <div class="chart-head">
-        <div class="head-text"><h2>Every half-hour <button type="button" class="help" id="gm-carpet-help" aria-label="About this chart" data-tip="A column for each day, a row for each half-hour, coloured by the average kW.&#10;Click a day to open it above.">?</button></h2></div>
-      </div>
-      <div class="legend bars" id="gm-heat-legend"></div>
-      <div class="carpet" id="gm-carpet">
-        <canvas id="gm-carpet-canvas" tabindex="0" role="img"></canvas>
-        <div class="cursor" id="gm-carpet-cursor" hidden></div>
-      </div>
-    </div>
-
-    <div class="pane gm-data">
-      <h2>Cross-checks with the inverter <button type="button" class="help" aria-label="About the cross-checks" data-tip="This app's figure is the change in the inverter's lifetime grid import counter. It counts in 0.1 kWh steps, so a day can be out by that much.&#10;Only days the file has in full, and this app logged just before both midnights.">?</button></h2>
-      <div class="empty" id="gm-compare-empty" hidden></div>
-      <div id="gm-compare" hidden>
-        <p class="note" id="gm-compare-summary"></p>
-        <!-- In the page from the start, so its header row is copied under the bar like the other tables'. -->
-        <div class="scroll gm-scroll" tabindex="0" role="region" aria-label="Each day's import, from the meter and from this app">
-          <table>
-            <thead><tr><th>Day</th><th class="num">Meter kWh</th><th class="num">This app kWh</th><th class="num">Difference kWh</th><th class="num">Difference</th></tr></thead>
-            <tbody id="gm-compare-table"></tbody>
-          </table>
-        </div>
-      </div>
-      <div class="chart" id="gm-timeline"></div>
+  <section class="view page" id="view-grid-meter-about" data-tab="grid-meter" data-sub="about" data-label="About" data-perm="grid-meter" aria-label="Grid meter: About" hidden>
+    <div class="pane gm-none" hidden>
+      <p class="note">No meter readings yet. Import an ESB Networks half-hourly kW file under <a href="#setup/data">Setup › Data</a>.</p>
     </div>
 
     <details class="pane gm-data about">
@@ -1065,36 +1074,11 @@
     </details>
   </section>
 
-  <section class="view counters" id="view-counters" aria-label="Counters and checks" hidden>
+  <section class="view page" id="view-appliances-list" data-tab="appliances" data-sub="list" data-label="List" data-perm="appliances" aria-label="Appliances: List" hidden>
     <div class="pane">
-      <h2>Energy counters <button type="button" class="help" aria-label="About the counters" data-tip="Compare these with the GoodWe app and your electricity meter.">?</button></h2>
-      <table>
-        <thead><tr><th>Counter</th><th class="num">Today</th><th class="num">Lifetime</th></tr></thead>
-        <tbody id="energy"></tbody>
-      </table>
-    </div>
-    <div class="pane">
-      <h2>Inverter overhead <button type="button" class="help" aria-label="About the overhead" data-tip="Battery power that never reaches the house: the inverter uses or loses it.&#10;Measured only while the battery alone supplies the house. A reading can jump as a load switches on or off.">?</button></h2>
-      <table>
-        <thead><tr><th class="num">House</th><th class="num">Battery</th><th class="num">Overhead</th><th class="num">% of battery</th></tr></thead>
-        <tbody id="overhead"></tbody>
-      </table>
-      <p class="meta"><span id="overhead-source"></span><button type="button" class="help" id="overhead-help" aria-label="Where this comes from" data-tip="" hidden>?</button></p>
-    </div>
-    <div class="pane tall">
-      <h2>Checks <button type="button" class="help" aria-label="About the checks" data-tip="Whether the readings agree with each other. A warning means a field needs a closer look, not that the equipment has a fault.">?</button></h2>
-      <div class="tally" id="tally"></div>
-      <table class="stacked checks">
-        <thead><tr><th>Check</th><th>Values</th><th>Result</th></tr></thead>
-        <tbody id="checks"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="view appliances" id="view-appliances" aria-label="Appliances and tariffs" hidden>
-    <div class="pane span-all">
       <h2>Your appliances <button type="button" class="help" aria-label="About this table" data-tip="Saved as you type. Tick what you&#39;d keep running in a power cut.">?</button></h2>
-      <p class="alert" id="appliances-error" role="alert"></p>
+      <p class="meta limits-line"></p>
+      <p class="alert appliances-error" role="alert"></p>
       <p class="note" id="appliances-view-only" hidden>Viewing only: changes need Edit data.</p>
       <div class="scroll edit" tabindex="0" role="region" aria-label="Appliances table">
         <table>
@@ -1113,37 +1097,18 @@
         <button type="submit">Add appliance</button>
       </form>
     </div>
+  </section>
 
-    <div class="pane span-all">
+  <section class="view page" id="view-appliances-load" data-tab="appliances" data-sub="load" data-label="Load" data-perm="appliances" aria-label="Appliances: Load" hidden>
+    <div class="pane">
       <h2>What it adds up to <button type="button" class="help" aria-label="About this table" data-tip="The current each load draws, what&#39;s left of your limit, and how long the battery could carry it with no sun or grid.">?</button></h2>
+      <p class="meta limits-line"></p>
+      <p class="alert appliances-error" role="alert"></p>
       <div class="scroll" tabindex="0" role="region" aria-label="Load combinations table">
         <table>
           <thead><tr><th>Load</th><th class="num">Watts</th><th class="num">Amps</th><th class="num">Of limit</th><th class="num">Room left</th><th class="num">Runs for, from now</th><th class="num">Runs for, from full</th></tr></thead>
           <tbody id="cases"></tbody>
         </table>
-      </div>
-    </div>
-
-    <div class="pane">
-      <h2>Plan for a power cut <button type="button" class="help" aria-label="About this plan" data-tip="The biggest steady load the battery could carry this long, with no sun or grid, down to its reserve.&#10;Compared with the ticked appliances at their typical draw.">?</button></h2>
-      <form class="edit settings" id="outage-settings">
-        <label>Length of power cut (hours) <input name="outage_hours" type="number" min="0.1" max="8760" step="any"></label>
-      </form>
-      <div class="scroll" id="outage-plan-card" tabindex="0" role="region" aria-label="Power cut plan">
-        <table>
-          <thead><tr><th>Starting from</th><th class="num">Most it can carry</th><th class="num">Ticked, typical</th><th>Does it fit?</th></tr></thead>
-          <tbody id="outage-plan"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="pane">
-      <h2>How much can I run? <button type="button" class="help" aria-label="About this plan" data-tip="The average load that would take the battery to its minimum by then.&#10;Only what&#39;s in the battery now: solar or the grid would stretch it.">?</button></h2>
-      <form class="edit settings" id="run-settings">
-        <label>Run until <input name="run_until_minutes" type="time"></label>
-      </form>
-      <div id="run-plan-card">
-        <table><tbody id="run-plan"></tbody></table>
       </div>
     </div>
 
@@ -1156,57 +1121,40 @@
         </table>
       </div>
     </div>
+  </section>
 
+  <section class="view page" id="view-appliances-outage" data-tab="appliances" data-sub="outage" data-label="Outage plan" data-perm="appliances" aria-label="Appliances: Outage plan" hidden>
     <div class="pane">
-      <h2>Your choices <button type="button" class="help" aria-label="About these" data-tip="All optional. Anything the inverter reports, or the log can measure, needn&#39;t be entered.">?</button></h2>
-      <form class="edit settings" id="settings">
-        <label for="limit-amps"><span>Current limit (A) <button type="button" class="help" aria-label="About the current limit" data-tip="What to stay under in a power cut, such as a breaker&#39;s rating. Of limit, Room left and Can add need it.">?</button></span><input id="limit-amps" name="limit_amps" type="number" min="0" step="any"></label>
-        <label for="surge-limit"><span>Surge limit (W) <button type="button" class="help" aria-label="About the surge limit" data-tip="The most your system can supply for a few seconds.">?</button></span><input id="surge-limit" name="surge_limit_w" type="number" min="0" step="any"></label>
-        <label for="capacity"><span>Starting battery capacity (kWh) <button type="button" class="help" id="capacity-help" aria-label="About the capacity" data-tip="">?</button></span><input id="capacity" name="capacity_kwh" type="number" min="0" step="any"></label>
+      <h2>Plan for a power cut <button type="button" class="help" aria-label="About this plan" data-tip="The biggest steady load the battery could carry this long, with no sun or grid, down to its reserve.&#10;Compared with the ticked appliances at their typical draw.">?</button></h2>
+      <p class="meta limits-line"></p>
+      <p class="alert appliances-error" role="alert"></p>
+      <form class="edit settings" id="outage-settings">
+        <label>Length of power cut (hours) <input name="outage_hours" type="number" min="0.1" max="8760" step="any"></label>
       </form>
-      <p class="meta"><span id="appliance-sources"></span><button type="button" class="help" id="appliance-sources-help" aria-label="Where these come from" data-tip="">?</button></p>
-    </div>
-
-    <div class="pane">
-      <h2>Solar panels and location <button type="button" class="help" aria-label="About these" data-tip="For the weather and expected solar&#10;Not reported by the inverter">?</button></h2>
-      <form class="edit settings" id="panel-settings">
-        <label>Panels' total rating (kWp) <input name="pv_capacity_kwp" type="number" min="0" max="10000" step="any"></label>
-        <label for="panel-tilt"><span>Panel tilt (°) <button type="button" class="help" aria-label="About the tilt" data-tip="0 flat, 90 upright">?</button></span><input id="panel-tilt" name="panel_tilt_deg" type="number" min="0" max="90" step="any"></label>
-        <label for="panel-azimuth"><span>Panels face (°) <button type="button" class="help" aria-label="About the direction" data-tip="Compass: 90 east, 180 south, 270 west">?</button></span><input id="panel-azimuth" name="panel_azimuth_deg" type="number" min="0" max="359.99" step="any"></label>
-        <label for="panel-azimuth-2"><span>Second facing (°) <button type="button" class="help" aria-label="About the second facing" data-tip="Optional&#10;Half the panels">?</button></span><input id="panel-azimuth-2" name="panel_azimuth_2_deg" type="number" min="0" max="359.99" step="any"></label>
-        <label for="latitude"><span>Latitude <button type="button" class="help" aria-label="About the location" data-tip="Rounded to 2 decimals, about 1 km&#10;North +, south −">?</button></span><input id="latitude" name="latitude" type="number" min="-90" max="90" step="any"></label>
-        <label for="longitude"><span>Longitude <button type="button" class="help" aria-label="About the longitude" data-tip="East +, west −">?</button></span><input id="longitude" name="longitude" type="number" min="-180" max="180" step="any"></label>
-        <label for="forecast-provider">Forecast from <select id="forecast-provider" name="forecast_provider"></select></label>
-        <label for="warnings-provider">Warnings from <select id="warnings-provider" name="warnings_provider"><option value="">None</option></select></label>
-        <label for="warnings-region">Warnings region <select id="warnings-region" name="warnings_region"><option value="">All</option></select></label>
-      </form>
-    </div>
-
-    <div class="pane span-all">
-      <h2>Tariffs <button type="button" class="help" id="tariff-help" aria-label="About the tariffs" data-tip="Your rates per kWh, in any money unit. The results come out in the same unit.">?</button></h2>
-      <form class="edit settings" id="tariff-settings">
-        <label>Day rate <input name="tariff_day" type="number" min="0" step="any"></label>
-        <label>Peak rate <input name="tariff_peak" type="number" min="0" step="any"></label>
-        <label>Night rate <input name="tariff_night" type="number" min="0" step="any"></label>
-        <label>Export rate <input name="tariff_export" type="number" min="0" step="any"></label>
-      </form>
-      <div class="scroll" tabindex="0" role="region" aria-label="Tariff results">
+      <div class="scroll" id="outage-plan-card" tabindex="0" role="region" aria-label="Power cut plan">
         <table>
-          <thead><tr><th>Per kWh</th><th class="num">Amount</th><th>Verdict</th></tr></thead>
-          <tbody id="tariff-values"></tbody>
+          <thead><tr><th>Starting from</th><th class="num">Most it can carry</th><th class="num">Ticked, typical</th><th>Does it fit?</th></tr></thead>
+          <tbody id="outage-plan"></tbody>
         </table>
       </div>
-      <h3>When each rate applies <button type="button" class="help" aria-label="About the rate times" data-tip="For the Grid meter tab. On the hour or half-hour.&#10;Blank: night 23:00 to 08:00, peak 17:00 to 19:00, day the rest.">?</button></h3>
-      <form class="edit settings" id="band-settings">
-        <label>Night starts <input name="band_night_start_minutes" type="time" step="1800"></label>
-        <label>Night ends <input name="band_night_end_minutes" type="time" step="1800"></label>
-        <label>Peak starts <input name="band_peak_start_minutes" type="time" step="1800"></label>
-        <label>Peak ends <input name="band_peak_end_minutes" type="time" step="1800"></label>
-      </form>
     </div>
   </section>
 
-  <section class="view schedule" id="view-schedule" aria-label="Battery schedule" hidden>
+  <section class="view page" id="view-appliances-run" data-tab="appliances" data-sub="run" data-label="Run time" data-perm="appliances" aria-label="Appliances: Run time" hidden>
+    <div class="pane">
+      <h2>How much can I run? <button type="button" class="help" aria-label="About this plan" data-tip="The average load that would take the battery to its minimum by then.&#10;Only what&#39;s in the battery now: solar or the grid would stretch it.">?</button></h2>
+      <p class="meta limits-line"></p>
+      <p class="alert appliances-error" role="alert"></p>
+      <form class="edit settings" id="run-settings">
+        <label>Run until <input name="run_until_minutes" type="time"></label>
+      </form>
+      <div id="run-plan-card">
+        <table><tbody id="run-plan"></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <section class="view page" id="view-battery-programmes" data-tab="battery" data-sub="programmes" data-label="Programmes" data-perm="schedule" aria-label="Battery: Programmes" hidden>
     <div class="pane">
       <h2>TOU programmes <button type="button" class="help" aria-label="About the programmes" data-tip="On the inverter now, SEMS+ order&#10;Read every 5 min and after a change&#10;SEMS+ AI Mode: not found, not listed">?</button></h2>
       <div class="scroll edit" tabindex="0" role="region" aria-label="TOU programmes table">
@@ -1247,16 +1195,10 @@
       </form>
       <p id="tou-result" role="status"></p>
     </div>
+  </section>
+
+  <section class="view page" id="view-battery-modes" data-tab="battery" data-sub="modes" data-label="Modes &amp; limits" data-perm="schedule" aria-label="Battery: Modes and limits" hidden>
     <div class="pane">
-      <h2>Changes made from this app <button type="button" class="help" aria-label="About this list" data-tip="Every change sent to the inverter, latest first. Changes made in SEMS+ aren't listed.">?</button></h2>
-      <div class="scroll edit" tabindex="0" role="region" aria-label="Changes made from this app">
-        <table>
-          <thead><tr><th>When</th><th><span tabindex="0" data-tip="—: from before accounts">Who</span></th><th class="num">#</th><th>Change</th><th>Result</th><th></th></tr></thead>
-          <tbody id="tou-writes"></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="pane tall">
       <h2>Modes and limits</h2>
       <div class="edit">
         <table>
@@ -1279,7 +1221,65 @@
     </div>
   </section>
 
-  <section class="view" id="view-fields" aria-label="All fields" hidden>
+  <section class="view page" id="view-battery-changes" data-tab="battery" data-sub="changes" data-label="Changes" data-perm="schedule" aria-label="Battery: Changes" hidden>
+    <div class="pane">
+      <h2>Changes made from this app <button type="button" class="help" aria-label="About this list" data-tip="Every change sent to the inverter, latest first. Changes made in SEMS+ aren't listed.">?</button></h2>
+      <div class="scroll edit" tabindex="0" role="region" aria-label="Changes made from this app">
+        <table>
+          <thead><tr><th>When</th><th><span tabindex="0" data-tip="—: from before accounts">Who</span></th><th class="num">#</th><th>Change</th><th>Result</th><th></th></tr></thead>
+          <tbody id="tou-writes"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="view page" id="view-system-counters" data-tab="system" data-sub="counters" data-label="Counters" data-perm="counters" aria-label="System: Counters" hidden>
+    <div class="pane">
+      <h2>Energy counters <button type="button" class="help" aria-label="About the counters" data-tip="Compare these with the GoodWe app and your electricity meter.">?</button></h2>
+      <table>
+        <thead><tr><th>Counter</th><th class="num">Today</th><th class="num">Lifetime</th></tr></thead>
+        <tbody id="energy"></tbody>
+      </table>
+    </div>
+
+    <div class="pane">
+      <h2>Inverter overhead <button type="button" class="help" aria-label="About the overhead" data-tip="Battery power that never reaches the house: the inverter uses or loses it.&#10;Measured only while the battery alone supplies the house. A reading can jump as a load switches on or off.">?</button></h2>
+      <table>
+        <thead><tr><th class="num">House</th><th class="num">Battery</th><th class="num">Overhead</th><th class="num">% of battery</th></tr></thead>
+        <tbody id="overhead"></tbody>
+      </table>
+      <p class="meta"><span id="overhead-source"></span><button type="button" class="help" id="overhead-help" aria-label="Where this comes from" data-tip="" hidden>?</button></p>
+    </div>
+  </section>
+
+  <section class="view page" id="view-system-checks" data-tab="system" data-sub="checks" data-label="Checks" data-perm="counters grid-meter" aria-label="System: Checks" hidden>
+    <div class="pane">
+      <h2>Checks <button type="button" class="help" aria-label="About the checks" data-tip="Whether the readings agree with each other. A warning means a field needs a closer look, not that the equipment has a fault.">?</button></h2>
+      <div class="tally" id="tally"></div>
+      <table class="stacked checks">
+        <thead><tr><th>Check</th><th>Values</th><th>Result</th></tr></thead>
+        <tbody id="checks"></tbody>
+      </table>
+    </div>
+
+    <div class="pane" id="gm-compare-pane" hidden>
+      <h2>Cross-checks with the inverter <button type="button" class="help" aria-label="About the cross-checks" data-tip="This app's figure is the change in the inverter's lifetime grid import counter. It counts in 0.1 kWh steps, so a day can be out by that much.&#10;Only days the file has in full, and this app logged just before both midnights.">?</button></h2>
+      <div class="empty" id="gm-compare-empty" hidden></div>
+      <div id="gm-compare" hidden>
+        <p class="note" id="gm-compare-summary"></p>
+        <!-- In the page from the start, so its header row is copied under the bar like the other tables'. -->
+        <div class="scroll gm-scroll" tabindex="0" role="region" aria-label="Each day's import, from the meter and from this app">
+          <table>
+            <thead><tr><th>Day</th><th class="num">Meter kWh</th><th class="num">This app kWh</th><th class="num">Difference kWh</th><th class="num">Difference</th></tr></thead>
+            <tbody id="gm-compare-table"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="chart" id="gm-timeline"></div>
+    </div>
+  </section>
+
+  <section class="view page" id="view-system-fields" data-tab="system" data-sub="fields" data-label="All fields" data-perm="fields" aria-label="System: All fields" hidden>
     <div class="pane">
       <h2>All fields</h2>
       <p class="meta" id="device"></p>
@@ -1288,7 +1288,64 @@
     </div>
   </section>
 
-  <section class="view" id="view-app-data" aria-label="App data" hidden>
+  <section class="view page" id="view-setup-tariffs" data-tab="setup" data-sub="tariffs" data-label="Tariffs" data-perm="appliances" aria-label="Setup: Tariffs" hidden>
+    <div class="pane">
+      <h2>Tariffs <button type="button" class="help" id="tariff-help" aria-label="About the tariffs" data-tip="Your rates per kWh, in any money unit. The results come out in the same unit.">?</button></h2>
+      <p class="alert appliances-error" role="alert"></p>
+      <form class="edit settings" id="tariff-settings">
+        <label>Day rate <input name="tariff_day" type="number" min="0" step="any"></label>
+        <label>Peak rate <input name="tariff_peak" type="number" min="0" step="any"></label>
+        <label>Night rate <input name="tariff_night" type="number" min="0" step="any"></label>
+        <label>Export rate <input name="tariff_export" type="number" min="0" step="any"></label>
+      </form>
+      <div class="scroll" tabindex="0" role="region" aria-label="Tariff results">
+        <table>
+          <thead><tr><th>Per kWh</th><th class="num">Amount</th><th>Verdict</th></tr></thead>
+          <tbody id="tariff-values"></tbody>
+        </table>
+      </div>
+      <h3>When each rate applies <button type="button" class="help" aria-label="About the rate times" data-tip="For the Grid meter. On the hour or half-hour.&#10;Blank: night 23:00 to 08:00, peak 17:00 to 19:00, day the rest.">?</button></h3>
+      <form class="edit settings" id="band-settings">
+        <label>Night starts <input name="band_night_start_minutes" type="time" step="1800"></label>
+        <label>Night ends <input name="band_night_end_minutes" type="time" step="1800"></label>
+        <label>Peak starts <input name="band_peak_start_minutes" type="time" step="1800"></label>
+        <label>Peak ends <input name="band_peak_end_minutes" type="time" step="1800"></label>
+      </form>
+    </div>
+  </section>
+
+  <section class="view page" id="view-setup-limits" data-tab="setup" data-sub="limits" data-label="Limits" data-perm="appliances" aria-label="Setup: Limits" hidden>
+    <div class="pane">
+      <h2>Your choices <button type="button" class="help" aria-label="About these" data-tip="All optional. Anything the inverter reports, or the log can measure, needn&#39;t be entered.">?</button></h2>
+      <p class="alert appliances-error" role="alert"></p>
+      <form class="edit settings" id="settings">
+        <label for="limit-amps"><span>Current limit (A) <button type="button" class="help" aria-label="About the current limit" data-tip="What to stay under in a power cut, such as a breaker&#39;s rating. Of limit, Room left and Can add need it.">?</button></span><input id="limit-amps" name="limit_amps" type="number" min="0" step="any"></label>
+        <label for="surge-limit"><span>Surge limit (W) <button type="button" class="help" aria-label="About the surge limit" data-tip="The most your system can supply for a few seconds.">?</button></span><input id="surge-limit" name="surge_limit_w" type="number" min="0" step="any"></label>
+        <label for="capacity"><span>Starting battery capacity (kWh) <button type="button" class="help" id="capacity-help" aria-label="About the capacity" data-tip="">?</button></span><input id="capacity" name="capacity_kwh" type="number" min="0" step="any"></label>
+      </form>
+      <p class="meta"><span id="appliance-sources"></span><button type="button" class="help" id="appliance-sources-help" aria-label="Where these come from" data-tip="">?</button></p>
+    </div>
+  </section>
+
+  <section class="view page" id="view-setup-panels" data-tab="setup" data-sub="panels" data-label="Panels &amp; weather" data-perm="appliances" aria-label="Setup: Panels and weather" hidden>
+    <div class="pane">
+      <h2>Solar panels and location <button type="button" class="help" aria-label="About these" data-tip="For the weather and expected solar&#10;Not reported by the inverter">?</button></h2>
+      <p class="alert appliances-error" role="alert"></p>
+      <form class="edit settings" id="panel-settings">
+        <label>Panels' total rating (kWp) <input name="pv_capacity_kwp" type="number" min="0" max="10000" step="any"></label>
+        <label for="panel-tilt"><span>Panel tilt (°) <button type="button" class="help" aria-label="About the tilt" data-tip="0 flat, 90 upright">?</button></span><input id="panel-tilt" name="panel_tilt_deg" type="number" min="0" max="90" step="any"></label>
+        <label for="panel-azimuth"><span>Panels face (°) <button type="button" class="help" aria-label="About the direction" data-tip="Compass: 90 east, 180 south, 270 west">?</button></span><input id="panel-azimuth" name="panel_azimuth_deg" type="number" min="0" max="359.99" step="any"></label>
+        <label for="panel-azimuth-2"><span>Second facing (°) <button type="button" class="help" aria-label="About the second facing" data-tip="Optional&#10;Half the panels">?</button></span><input id="panel-azimuth-2" name="panel_azimuth_2_deg" type="number" min="0" max="359.99" step="any"></label>
+        <label for="latitude"><span>Latitude <button type="button" class="help" aria-label="About the location" data-tip="Rounded to 2 decimals, about 1 km&#10;North +, south −">?</button></span><input id="latitude" name="latitude" type="number" min="-90" max="90" step="any"></label>
+        <label for="longitude"><span>Longitude <button type="button" class="help" aria-label="About the longitude" data-tip="East +, west −">?</button></span><input id="longitude" name="longitude" type="number" min="-180" max="180" step="any"></label>
+        <label for="forecast-provider">Forecast from <select id="forecast-provider" name="forecast_provider"></select></label>
+        <label for="warnings-provider">Warnings from <select id="warnings-provider" name="warnings_provider"><option value="">None</option></select></label>
+        <label for="warnings-region">Warnings region <select id="warnings-region" name="warnings_region"><option value="">All</option></select></label>
+      </form>
+    </div>
+  </section>
+
+  <section class="view page" id="view-setup-data" data-tab="setup" data-sub="data" data-label="Data" data-perm="app-data" aria-label="Setup: Data" hidden>
     <div class="pane">
       <h2>Export <button type="button" class="help" aria-label="About exporting" data-tip="A copy of what this app has saved, readings right up to the latest. Nothing is removed.&#10;The download starts once the file is ready: longer with more readings.">?</button></h2>
       <p class="meta" id="export-contents"></p>
@@ -1297,6 +1354,7 @@
         <div class="edit"><button id="export-button" disabled>Export</button></div>
       </form>
     </div>
+
     <div class="pane">
       <h2>Import <button type="button" class="help" aria-label="About importing" data-tip="A file exported from this app, in any format above, or your smart meter's half-hourly kW readings from ESB Networks.&#10;Only what's missing is added: nothing here is changed or removed. You see what it would add before anything is saved.">?</button></h2>
       <div class="import">
@@ -1321,7 +1379,7 @@
     </div>
   </section>
 
-  <section class="view" id="view-history" aria-label="Action history" hidden>
+  <section class="view page" id="view-setup-activity" data-tab="setup" data-sub="activity" data-label="Activity" data-perm="history" aria-label="Setup: Activity" hidden>
     <div class="pane">
       <h2>Action history <button type="button" class="help" aria-label="About this list" data-tip="Who changed what, latest first&#10;Display choices not listed">?</button></h2>
       <div class="range">
@@ -1431,11 +1489,11 @@
   }
   const watts = (x) => (isNum(x) ? `${number(x, 0)} W` : "—");
   const kwh = (x) => (isNum(x) ? `${number(x, 1)} kWh` : "—");
-  // The diagram's live power, in W unless Settings picks kW for all.
+  // The diagram's live power, in W unless Preferences picks kW for all.
   const livePower = (x) => (isNum(x) && prefs.power === "kW" ? `${number(x / 1000, 2)} kW` : watts(x));
 
   /*
-    Money, with the currency picked in Settings, or as a plain number with none picked. The rates are kept as plain
+    Money, with the currency picked in Preferences, or as a plain number with none picked. The rates are kept as plain
     numbers in any unit, so picking a currency only changes how they're shown.
   */
   const moneyFormats = new Map();
@@ -1456,7 +1514,7 @@
   }
 
   /*
-    Dates and times. Settings, in the user menu, picks a date format, a time format and a time zone, kept in `prefs`
+    Dates and times. Preferences, in the user menu, picks a date format, a time format and a time zone, kept in `prefs`
     with the theme and the other choices. Times show in that zone, the monitor's own unless another is picked. HOME_ZONE
     is the monitor's: the tariff periods, the history buckets and the inverter's clock follow it whatever the viewer
     picks, as the server and the inverter do. Dates given as "YYYY-MM-DD", such as a day's totals, are calendar dates
@@ -2513,7 +2571,7 @@
   $("limit-cancel").addEventListener("click", closeLimitChange);
 
   /*
-    TOU programmes, on the Battery schedule tab. The change panel sits outside the table, so a new
+    TOU programmes, on the Battery tab. The change panel sits outside the table, so a new
     reading can't redraw it while someone is typing. It holds the bytes the programme had when it
     was opened, and the server refuses the change if the inverter no longer holds those.
   */
@@ -2525,7 +2583,7 @@
     mismatch: ["critical", "Holds something else: check SEMS+"],
     unknown: ["warning", "Couldn't read it back: check SEMS+"],
   };
-  // Each by its bit, the week from the day picked in Settings. Bit 0 is Sunday, and bit 0 of the months is January.
+  // Each by its bit, the week from the day picked in Preferences. Bit 0 is Sunday, and bit 0 of the months is January.
   const MONDAY_FIRST = [["Mon", 1], ["Tue", 2], ["Wed", 3], ["Thu", 4], ["Fri", 5], ["Sat", 6], ["Sun", 0]];
   const dayBits = () => (prefs.week === "sun" ? [MONDAY_FIRST[6], ...MONDAY_FIRST.slice(0, 6)] : MONDAY_FIRST);
   const MONTH_BITS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((name, bit) => [name, bit]);
@@ -2749,7 +2807,7 @@
   function setTicks(container, bits) {
     for (const input of container.querySelectorAll("input")) input.checked = Boolean(bits & (1 << Number(input.dataset.bit)));
   }
-  // Puts the day ticks in the order of the week picked in Settings, keeping what's ticked.
+  // Puts the day ticks in the order of the week picked in Preferences, keeping what's ticked.
   function orderDayTicks() {
     const bits = tickedBits($("tou-days"));
     makeTicks($("tou-days"), dayBits());
@@ -2890,7 +2948,7 @@
     if (stopsAt !== chartsStopAt) {
       chartsStopAt = stopsAt;
       renderNow();
-      if (!$("view-statistics").hidden) renderHistory();
+      if (!$("view-statistics-charts").hidden) renderHistory();
     }
     if (latest?.device) {
       const d = latest.device;
@@ -3102,7 +3160,7 @@
   let pan = null; // A drag along the charts while the pointer is down.
 
   const clamp = (x, low, high) => Math.min(Math.max(x, low), high);
-  // In kW from 1,000 W, unless Settings picks one unit for all.
+  // In kW from 1,000 W, unless Preferences picks one unit for all.
   const inKilowatts = (w) => prefs.power === "kW" || (prefs.power === "auto" && Math.abs(w) >= 1000);
   const power = (w) => (inKilowatts(w) ? `${number(w / 1000, 2)} kW` : `${number(w, 0)} W`);
 
@@ -3121,7 +3179,7 @@
     return [low, high];
   }
 
-  /* Ticks switch to kW once they reach 1000 W, unless Settings picks one unit. Only the top tick carries the unit.
+  /* Ticks switch to kW once they reach 1000 W, unless Preferences picks one unit. Only the top tick carries the unit.
      Taller plots get more ticks, about one every `spacing` px. */
   function yScale(low, high, top, bottom, unit, spacing = 28) {
     const ticks = niceTicks(low, high, clamp(Math.floor((bottom - top) / spacing), 2, 6));
@@ -3166,7 +3224,7 @@
     if (step < 1) minute -= minute % (step * 60);
     else [hour, minute] = [step < 24 ? hour - (hour % step) : 0, 0];
     if (step > 24) {
-      // Days counted from the first day of the week picked in Settings, so weekly labels fall on it. Day 0 was a Thursday.
+      // Days counted from the first day of the week picked in Preferences, so weekly labels fall on it. Day 0 was a Thursday.
       const days = step / 24;
       const dayNumber = Math.round(Date.UTC(year, month - 1, day) / 86400000) + (prefs.week === "sun" ? 4 : 3);
       day -= ((dayNumber % days) + days) % days;
@@ -3797,7 +3855,7 @@
     const box = $("history-charts");
     $("chart-tip").hidden = true;
     showHistoryControls(view);
-    if (!loaded || $("view-statistics").hidden) return; // Charts need a width, and a hidden box has none.
+    if (!loaded || $("view-statistics-charts").hidden) return; // Charts need a width, and a hidden box has none.
     // Until a new interval loads, the old one's points stay up, dimmed, in the new view.
     const { bucket, points } = loaded;
     const { start, end } = view;
@@ -3922,13 +3980,14 @@
 
   function renderDaily() {
     const box = $("daily-charts");
-    if (!daily || $("view-statistics").hidden) return;
+    if (!daily) return;
+    renderMoney(); // On its own page, from the same totals.
+    if ($("view-statistics-daily").hidden) return; // Charts need a width, and a hidden box has none.
     const days = daily.days;
     const anyData = days.some((day) => Object.keys(day).length > 1);
     const hasFlows = days.some((day) => day.solar_home !== undefined);
     $("daily-note").textContent = "";
     renderDailyTable();
-    renderMoney();
     $("flow-section").hidden = !anyData || !hasFlows;
     if (!anyData) {
       box.replaceChildren(el("p", "no-value", "No daily totals yet. The first come within 5 minutes of the app starting."));
@@ -4080,17 +4139,15 @@
   }
 
   function renderMoney() {
-    const pane = $("money-pane");
     const box = $("money-charts");
-    if (!daily?.tariff || $("view-statistics").hidden) return;
+    if (!daily?.tariff || $("view-statistics-money").hidden) return;
     const { rates, bands, bandsSet } = daily.tariff;
     const priced = ["night", "day", "peak", "export"].every((key) => isNum(rates[key]));
     const days = daily.days.map((day) => moneyDay(day, rates));
     const known = days.filter((day) => day.net !== null);
-    pane.hidden = !daily.days.some((day) => Object.keys(day).length > 1);
     $("money-data").hidden = !priced || !known.length;
     $("money-note").textContent = !priced
-      ? "Set your rates under Appliances & tariffs to see what the grid earned and cost."
+      ? "Set your rates under Setup › Tariffs to see what the grid earned and cost."
       : known.length ? `Last ${known.length} day${known.length === 1 ? "" : "s"} at your rates. Today's is so far.` : "No grid totals yet.";
     if (!priced || !known.length) return;
 
@@ -4491,6 +4548,7 @@
         return;
       }
       const width = box.clientWidth;
+      if (!width) drawnWidth = 0; // Hidden with its page, so it's drawn again when the page shows.
       if (!width || width === drawnWidth) return;
       drawnWidth = width;
       draw();
@@ -4579,7 +4637,8 @@
 
   async function sendOverview(method, url, body) {
     const request = ++overviewRequest;
-    const error = $("appliances-error");
+    // Shown on whichever Appliances or Setup page made the request.
+    const error = { set textContent(text) { for (const node of document.querySelectorAll(".appliances-error")) node.textContent = text; } };
     try {
       const response = await fetch(url, {
         method,
@@ -4892,8 +4951,24 @@
     ].filter(Boolean).join("\n");
   }
 
+  // Under each Appliances page's heading: the limits its figures use, and a link to change them.
+  function renderLimitsLine() {
+    const { settings, capacity } = overview;
+    const text = [
+      isNum(settings.limit_amps) ? `Limit ${number(settings.limit_amps, 0)} A` : "No current limit",
+      isNum(settings.surge_limit_w) ? `Surge ${number(settings.surge_limit_w, 0)} W` : "No surge limit",
+      `Battery ${capacity.kwh === null ? "unknown" : kwh(capacity.kwh)}`,
+    ].join(" · ");
+    for (const line of document.querySelectorAll(".limits-line")) {
+      const link = el("a", "", "Edit");
+      link.href = "#setup/limits";
+      line.replaceChildren(`${text} · `, link);
+    }
+  }
+
   function renderOverview() {
     if (!overview) return;
+    renderLimitsLine();
     renderApplianceRows();
     renderCases();
     renderOutagePlan();
@@ -5008,7 +5083,7 @@
   $("appliances-view-only").hidden = may("edit");
   $("tou-view-only").hidden = may("inverter");
   if (!may("edit")) {
-    for (const field of $("view-appliances").querySelectorAll(".edit input, .edit textarea, .edit select")) field.disabled = true;
+    for (const field of document.querySelectorAll('[data-perm="appliances"] .edit :is(input, textarea, select)')) field.disabled = true;
     $("add-appliance").hidden = true;
     $("appliances-add-note").hidden = true;
     $("import-button").hidden = true;
@@ -5075,9 +5150,9 @@
   });
 
   /*
-    Grid meter: the electricity meter's half-hours, imported from ESB Networks under App Data.
+    Grid meter: the electricity meter's half-hours, imported from ESB Networks under Setup › Data.
     Days are calendar days on the meter's Irish clock, handled as UTC so neither the browser's
-    time zone nor the one picked in Settings moves them. Only the date and time formats apply. A slot is a half-hour from midnight, 0 to 47, and holds the average
+    time zone nor the one picked in Preferences moves them. Only the date and time formats apply. A slot is a half-hour from midnight, 0 to 47, and holds the average
     draw over it in whole watts, null where the file has a gap, or -1 where there was no
     half-hour: the clocks went forward, or it's outside what the file covers.
   */
@@ -5270,7 +5345,7 @@
     const GROUP_NAMES = { day: "Day", week: "Week", month: "Month", year: "Year" };
     const OPENS_TO = { day: "half-hours", week: "days", month: "days", year: "months" };
     const MAX_BARS = 400; // More than this and a bar is under a pixel wide on most screens.
-    // The period a day falls in. Weeks start on the day picked in Settings and are keyed by it.
+    // The period a day falls in. Weeks start on the day picked in Preferences and are keyed by it.
     function periodOf(iso, kind) {
       if (kind === "day") return { key: iso, start: iso, end: iso };
       if (kind === "week") {
@@ -5309,8 +5384,8 @@
     }
 
     function renderEmpty() {
-      const link = el("a", "", "App Data");
-      link.href = "#app-data";
+      const link = el("a", "", "Setup › Data");
+      link.href = "#setup/data";
       $("gm-intro").className = "note";
       $("gm-intro").replaceChildren("No meter readings yet. Import an ESB Networks half-hourly kW file under ", link, ".");
     }
@@ -5334,7 +5409,7 @@
       $("gm-t-total-sub").textContent = present ? `About ${number(perDayOf(main, total), 1)} kWh a day` : "No readings in this range";
       $("gm-t-cost").textContent = money(cost);
       $("gm-t-cost-sub").textContent = cost === null
-        ? "Set your rates under Appliances & tariffs"
+        ? "Set your rates under Setup › Tariffs"
         : total > 0 ? `${moneyText(cost / total, cost / total < 1 ? 3 : 2)} a kWh on average` : "";
       $("gm-t-night").textContent = share(main, kwh[0]);
       $("gm-t-night-sub").textContent = `Day ${share(main, kwh[1])}, peak ${share(main, kwh[2])}`;
@@ -5576,7 +5651,7 @@
       const bar = bars[i];
       if (!bar) return;
       if (bar.kind === "day") {
-        selectDay(bar.key, fromPointer);
+        selectDay(bar.key, true);
         return;
       }
       zooms.push({ range, preset, group, groupChosen });
@@ -5652,16 +5727,14 @@
     $("gm-day-chart").append(daySvg);
     let dayShape = null;
 
-    function selectDay(iso, fromPointer) {
+    // A day opened from the bars or the carpet shows on the One day page.
+    function selectDay(iso, open) {
       if (!dayIndex.has(iso)) return;
       selected = iso;
       renderDay();
       drawBars();
       drawCarpet();
-      if (fromPointer) {
-        const box = $("gm-day-pane").getBoundingClientRect();
-        if (box.top > innerHeight - 80 || box.bottom < 120) $("gm-day-pane").scrollIntoView({ block: "start", behavior: reduceMotion() ? "auto" : "smooth" });
-      }
+      if (open && location.hash !== "#grid-meter/day") location.hash = "#grid-meter/day";
     }
 
     const noHalfHour = (day, slot) => (day.flags.includes("s") && slot >= 2 && slot <= 3 ? "The clocks went forward, so this half-hour didn't happen" : "Not in the file");
@@ -5983,7 +6056,7 @@
       const cell = cellFocus ?? { i: carpet.span.length - 1, slot: slotFocus };
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        selectDay(carpet.span[cell.i].date);
+        selectDay(carpet.span[cell.i].date, true);
         return;
       }
       if (event.key === "Escape") return hideTip();
@@ -6115,10 +6188,10 @@
       const items = [
         ["Readings", `${count(file.readings, "reading")}, ${stampText(file.first)} to ${endText(fileEnd())}. Each is the average kW over a half-hour, so its kWh is half that.`],
         ["Time labels", "ESB Networks labels each half-hour by its end. Here each shows from its start, so the file's 23:30 is 23:00–23:30, and its 00:00 is the day before's last."],
-        ["Rate bands", `${hours[0].toUpperCase()}${hours.slice(1)}${bandsSet ? ", from Appliances & tariffs" : " (the usual hours, until you set your own under Appliances & tariffs)"}. A half-hour takes the rate at its start.`],
+        ["Rate bands", `${hours[0].toUpperCase()}${hours.slice(1)}${bandsSet ? ", from Setup › Tariffs" : " (the usual hours, until you set your own under Setup › Tariffs)"}. A half-hour takes the rate at its start.`],
         ["Costs", rates.every(isNum)
           ? `Today's rates (night ${rateText(rates[0])}, day ${rateText(rates[1])}, peak ${rateText(rates[2])}) for every half-hour, even older ones. No standing charge.`
-          : "Set your rates under Appliances & tariffs to see costs."],
+          : "Set your rates under Setup › Tariffs to see costs."],
         ["Gaps", file.gapCount
           ? list([...file.gaps.map(gapText), ...(file.gapCount > file.gaps.length ? [`and ${number(file.gapCount - file.gaps.length, 0)} more`] : [])])
           : "None."],
@@ -6148,7 +6221,7 @@
       }
       items.push(
         ["Identifiers", "The file's MPRN and meter serial number are skipped on import: never stored or shown."],
-        ["Updating", "Import a newer download under App Data at any time. Only new half-hours are added."],
+        ["Updating", "Import a newer download under Setup › Data at any time. Only new half-hours are added."],
       );
       $("gm-notes").replaceChildren(...items.flatMap(([term, body]) => {
         const detail = el("dd");
@@ -6238,8 +6311,9 @@
       days = answer.days.map(dayFrom);
       dayIndex = new Map(days.map((day, i) => [day.date, i]));
       const empty = !days.length;
-      $("view-grid-meter").classList.toggle("gm-empty", empty);
-      for (const node of document.querySelectorAll("#view-grid-meter .gm-data")) node.hidden = empty;
+      for (const node of document.querySelectorAll(".gm-data")) node.hidden = empty;
+      for (const node of document.querySelectorAll(".gm-none")) node.hidden = !empty;
+      $("gm-compare-pane").hidden = empty;
       if (empty) {
         renderEmpty();
         return;
@@ -6282,11 +6356,15 @@
       if (mine === request) load(answer);
     }
 
-    redrawOnWidthChange($("view-grid-meter"), drawAll);
+    // Each is on its own page, so each is drawn once its page shows.
+    redrawOnWidthChange($("gm-bars"), drawBars);
+    redrawOnWidthChange($("gm-day-chart"), drawDay);
+    redrawOnWidthChange($("gm-carpet"), drawCarpet);
+    redrawOnWidthChange($("gm-timeline"), drawTimeline);
     document.fonts.ready.then(drawAll); // The carpet's labels are drawn in the web font.
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCarpet);
 
-    // A theme picked in the user menu changes the colours the carpet is drawn in, and Settings the dates and times.
+    // A theme picked in the user menu changes the colours the carpet is drawn in, and Preferences the dates and times.
     return { refresh, repaint: drawCarpet, redraw: () => meter && load(meter) };
   })();
 
@@ -6294,22 +6372,52 @@
     The tab is in the address, so a reload or the back button stays where it was. The views'
     ids aren't the tabs' hashes, so choosing a tab doesn't make the browser jump to it.
   */
-  const TABS = {
-    "#dashboard": "view-dashboard",
-    "#statistics": "view-statistics",
-    "#grid-meter": "view-grid-meter",
-    "#counters": "view-counters",
-    "#appliances": "view-appliances",
-    "#schedule": "view-schedule",
-    "#fields": "view-fields",
-    "#app-data": "view-app-data",
-    "#history": "view-history",
+  const PAGES = {}; // By hash, such as #appliances/outage: the view, its tab's hash and its name in the sub-tab row.
+  for (const view of document.querySelectorAll("main > .view")) {
+    const { tab, sub, label = "", perm = "" } = view.dataset;
+    // The Dashboard is always open. The others each need a permission; the server refuses them anyway.
+    if (tab !== "dashboard" && !perm.split(" ").some(may)) continue;
+    PAGES[sub ? `#${tab}/${sub}` : `#${tab}`] = { view, tab: `#${tab}`, label };
+  }
+  for (const link of [...$("tab-links").querySelectorAll("a")]) {
+    if (!Object.values(PAGES).some((page) => page.tab === link.hash)) link.parentElement.remove();
+  }
+  // Links from before the sub-tabs, and from when the first tab was called Live, still open the same thing.
+  const OLD_HASHES = {
+    "#live": "#dashboard",
+    "#tou": "#battery",
+    "#schedule": "#battery",
+    "#counters": "#system/counters",
+    "#fields": "#system/fields",
+    "#app-data": "#setup/data",
+    "#history": "#setup/activity",
   };
-  // The Dashboard is always open. The others each need their permission; the server refuses them anyway.
-  for (const hash of Object.keys(TABS)) {
-    if (hash === "#dashboard" || may(hash.slice(1))) continue;
-    delete TABS[hash];
-    $("tab-links").querySelector(`a[href="${hash}"]`)?.parentElement.remove();
+  const lastPage = {}; // Each tab opens on the sub-tab it was last left on.
+  // The page a hash opens: a tab alone opens its last or first page, and one this account can't see the dashboard.
+  function pageFor(hash) {
+    hash = OLD_HASHES[hash] ?? hash;
+    if (PAGES[hash]) return hash;
+    const tab = hash.split("/")[0];
+    if (PAGES[lastPage[tab]]) return lastPage[tab];
+    return Object.keys(PAGES).find((page) => PAGES[page].tab === tab) ?? "#dashboard";
+  }
+  const shownPage = () => Object.keys(PAGES).find((hash) => !PAGES[hash].view.hidden);
+  // The pills under the bar for the open tab's pages. A tab with none, such as the dashboard, has no row.
+  function renderSubtabs(tab, open) {
+    const row = $("subtabs");
+    const pages = Object.entries(PAGES).filter(([, page]) => page.tab === tab && page.label);
+    row.replaceChildren(...pages.map(([hash, page]) => {
+      const link = el("a");
+      link.innerHTML = page.label; // From the page's own markup, such as "Modes &amp; limits".
+      link.href = hash;
+      if (hash === open) link.setAttribute("aria-current", "page");
+      return link;
+    }));
+    row.hidden = !pages.length;
+    document.documentElement.classList.toggle("has-subs", !row.hidden);
+    // The open one scrolled into the row, when the row is wider than the screen.
+    const current = row.querySelector("[aria-current]");
+    if (current) row.scrollLeft = current.offsetLeft - (row.clientWidth - current.offsetWidth) / 2;
   }
 
   /*
@@ -6335,7 +6443,7 @@
   TAB_ROW.addEventListener("change", () => setMenu(false));
 
   /*
-    The user menu, at the end of the bar: the theme, Settings, kiosk mode, About and logging out. The theme and the
+    The user menu, at the end of the bar: the theme, Preferences, kiosk mode, About and logging out. The theme and the
     settings are kept in `prefs`. The head's script puts the theme and motion on before the page shows.
   */
   const userOpen = () => $("user-button").getAttribute("aria-expanded") === "true";
@@ -6367,7 +6475,7 @@
   });
   showTheme();
 
-  // Motion follows this device's setting unless Settings picks one. The CSS stops what moves, and reduceMotion() the scripts.
+  // Motion follows this device's setting unless Preferences picks one. The CSS stops what moves, and reduceMotion() the scripts.
   function showMotion() {
     if (prefs.motion === "system") delete document.documentElement.dataset.motion;
     else document.documentElement.dataset.motion = prefs.motion;
@@ -6450,7 +6558,7 @@
   }
 
   /*
-    Settings. Each format is shown with the time now, in the zone picked, so the choice is easy to see.
+    Preferences. Each format is shown with the time now, in the zone picked, so the choice is easy to see.
     A change is saved and shown at once.
   */
   const prefsForm = $("prefs-form");
@@ -6497,7 +6605,8 @@
       }
     }
     for (const name of PREF_FIELDS) form[name].value = prefs[name];
-    if (!TABS[`#${prefs.section}`]) form.section.value = "dashboard"; // A section that's gone opens the dashboard.
+    // A section from before the sub-tabs shows as the tab it is now in, and one that is gone as the dashboard.
+    form.section.value = PAGES[pageFor(`#${prefs.section}`)].tab.slice(1);
     $("prefs-now").textContent = `Now ${dateText(now, { year: true, weekday: true })}, ${clockTime(now)}, ${shownZone().replaceAll("_", " ")}`;
     $("prefs-where").textContent = `${prefsOnServer ? "Kept on the monitor, so they follow you to every device" : "Kept in this browser"}. Appliance ratings stay in W.`;
   }
@@ -6518,7 +6627,7 @@
     renderDaily();
     renderOverview();
     gridMeter.redraw();
-    if (!$("view-app-data").hidden) refreshExport();
+    if (!$("view-setup-data").hidden) refreshExport();
   }
   /* Shows a change of prefs, made here or on another device. */
   function prefsChanged(old) {
@@ -6538,7 +6647,7 @@
     savePrefs();
     prefsChanged(old);
   });
-  // Puts back everything in Settings. The theme is the user menu's.
+  // Puts back everything in Preferences. The theme is the user menu's.
   $("prefs-reset").addEventListener("click", () => {
     const old = prefs;
     prefs = { ...PREF_DEFAULTS, theme: prefs.theme };
@@ -6671,16 +6780,16 @@
 
   /*
     Users, for admins: everyone's account and what it may use. A tick is saved at once, and the table is drawn
-    again from the server's answer. Admin covers everything, and Write to inverter opens Battery schedule, so
+    again from the server's answer. Admin covers everything, and Write to inverter opens Battery, so
     those boxes show ticked and can't be changed. The owner's row and your own aren't changed here.
   */
   const USER_HEADINGS = {
-    inverter: "Inverter", edit: "Edit", statistics: "Stats", "grid-meter": "Meter", counters: "Counters",
-    appliances: "Appliances", schedule: "Schedule", fields: "Fields", "app-data": "Data", history: "History",
+    inverter: "Inverter", edit: "Edit", statistics: "History", "grid-meter": "Meter", counters: "Counters",
+    appliances: "Appliances", schedule: "Battery", fields: "Fields", "app-data": "Data", history: "Activity",
   };
   const USER_TIPS = {
     admin: "Everything\nManages users",
-    inverter: "Write to inverter\nOpens Battery schedule",
+    inverter: "Write to inverter\nOpens Battery",
     edit: "Edit data\nAppliances, tariffs, imports",
   };
   let usersListing = null;
@@ -6931,15 +7040,16 @@
   $("actions-older").addEventListener("click", () => refreshActions(true));
 
   function showTab() {
-    // Links saved when the first tab was called Live still open it.
-    if (location.hash === "#live") window.history.replaceState(null, "", "#dashboard");
-    // The TOU tab was folded into the Battery schedule one, so its links open that.
-    if (location.hash === "#tou") window.history.replaceState(null, "", "#schedule");
     // Test mode stays on the dashboard, so its made-up readings can't reach a tab that acts on them.
-    const tab = !FLOW_TEST && TABS[location.hash] ? location.hash : "#dashboard";
-    const returning = tab === "#statistics" && $("view-statistics").hidden;
-    const backToDashboard = tab === "#dashboard" && $("view-dashboard").hidden;
-    for (const [hash, view] of Object.entries(TABS)) $(view).hidden = hash !== tab;
+    const page = FLOW_TEST ? "#dashboard" : pageFor(location.hash);
+    // A tab alone, or an old link, is put in the address as the page it opened.
+    if (!FLOW_TEST && location.hash && location.hash !== page) window.history.replaceState(null, "", page);
+    const { view, tab } = PAGES[page];
+    const before = shownPage();
+    const returning = tab === "#statistics" && PAGES[before]?.tab !== "#statistics";
+    const backToDashboard = page === "#dashboard" && before !== "#dashboard";
+    lastPage[tab] = page;
+    for (const [hash, other] of Object.entries(PAGES)) other.view.hidden = hash !== page;
     for (const link of $("tab-links").querySelectorAll("a")) {
       if (link.hash !== tab) link.removeAttribute("aria-current");
       else {
@@ -6947,24 +7057,26 @@
         $("menu-current").textContent = link.textContent;
       }
     }
+    renderSubtabs(tab, page);
     setMenu(false);
     $("chart-tip").hidden = true;
-    if (tab === "#appliances") refreshOverview();
-    if (tab === "#app-data") refreshExport();
-    if (tab === "#grid-meter") gridMeter.refresh();
-    if (tab === "#history") refreshActions();
-    if (tab === "#schedule") {
+    if (view.dataset.perm === "appliances") refreshOverview();
+    if (page === "#setup/data") refreshExport();
+    if (tab === "#grid-meter" || (page === "#system/checks" && may("grid-meter"))) gridMeter.refresh();
+    if (page === "#setup/activity") refreshActions();
+    if (tab === "#battery") {
       refreshTouWrites();
       refreshSettingWrites();
     }
     if (returning) {
       refreshHistory();
       refreshDaily();
-    }
+    } else if (page === "#statistics/charts") renderHistory(); // Charts aren't drawn while their page is hidden.
+    else if (tab === "#statistics") renderDaily();
     if (backToDashboard && !FLOW_TEST) refreshNow();
   }
   /*
-    Opened with no section in the address, the page opens on the one picked in Settings, and puts it in the address.
+    Opened with no section in the address, the page opens on the one picked in Preferences, and puts it in the address.
     The monitor's prefs come after the page opens, so a section picked on another device is taken up then, unless
     another section has been chosen here meanwhile.
   */
@@ -6972,8 +7084,8 @@
   let sectionChosen = false;
   function openOnSection() {
     if (!OPENED_WITHOUT_SECTION || sectionChosen || FLOW_TEST) return false;
-    const hash = `#${prefs.section}`;
-    window.history.replaceState(null, "", TABS[hash] && hash !== "#dashboard" ? hash : location.pathname + location.search);
+    const page = pageFor(`#${prefs.section}`);
+    window.history.replaceState(null, "", page !== "#dashboard" ? page : location.pathname + location.search);
     return true;
   }
   let afterTabChange = null; // Set by a swipe, to drop its sliding once the new section shows.
@@ -7004,7 +7116,7 @@
       "svg, canvas, .stage, input, select, textarea, button, a, label, summary, [role=slider], [contenteditable], [tabindex], [data-tip], [data-no-swipe], dialog, .user-menu";
     const NOT_SWIPED_IN_AREA = "input, select, textarea, [contenteditable], [data-no-swipe], dialog";
     const notSwiped = (target) => Boolean(target.closest(target.closest("[data-swipe]") ? NOT_SWIPED_IN_AREA : NOT_SWIPED));
-    const order = Object.keys(TABS);
+    const order = Object.keys(PAGES);
     const main = document.querySelector("main");
     let swipe = null;
     let settling = false;
@@ -7033,7 +7145,7 @@
     };
 
     const lineUp = function (hash, { mainTop, barTop, below, screen }) {
-      const view = $(TABS[hash]);
+      const { view } = PAGES[hash];
       view.hidden = false;
       view.classList.add("swipe-next", "swipe-move");
       // Where the page will be scrolled once it's showing: brought up to the bar by the hash
@@ -7095,7 +7207,7 @@
     main.addEventListener("pointerdown", (event) => {
       if (swipe || settling || FLOW_TEST || !event.isPrimary || event.button !== 0 || zoomed()) return;
       if (menuOpen() || userOpen() || notSwiped(event.target) || scrollsSideways(event.target)) return;
-      const tab = Object.keys(TABS).find((hash) => !$(TABS[hash]).hidden);
+      const tab = shownPage();
       if (tab) swipe = { id: event.pointerId, x: event.clientX, y: event.clientY, tab, moving: false, dx: 0, samples: [] };
     });
 
@@ -7113,7 +7225,7 @@
         getSelection()?.removeAllRanges();
         if (!$("chart-tip").hidden) dropTip();
         const at = order.indexOf(swipe.tab);
-        swipe.current = $(TABS[swipe.tab]);
+        swipe.current = PAGES[swipe.tab].view;
         swipe.current.classList.add("swipe-move");
         swipe.width = main.clientWidth;
         const page = measurePage();
@@ -7145,7 +7257,7 @@
     main.addEventListener("pointerup", (event) => letGo(event, false));
     main.addEventListener("pointercancel", (event) => letGo(event, true));
   }
-  setInterval(() => { if (!$("view-appliances").hidden) refreshOverview(); }, APPLIANCES_REFRESH_MS);
+  setInterval(() => { if (PAGES[shownPage()]?.view.dataset.perm === "appliances") refreshOverview(); }, APPLIANCES_REFRESH_MS);
 
   /*
     A table that scrolls sideways sits in a box that scrolls, and a sticky header only follows the
@@ -7234,7 +7346,7 @@
     // Redrawing would drop the tooltip and keyboard focus from under someone reading a chart.
     // A full-screen button keeps its focus through a redraw.
     if (pan || !$("chart-tip").hidden || document.activeElement?.closest(".charts svg")) return;
-    if (!$("view-statistics").hidden) {
+    if (PAGES[shownPage()]?.tab === "#statistics") {
       refreshHistory();
       refreshDaily();
     }

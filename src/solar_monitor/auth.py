@@ -46,19 +46,19 @@ USERNAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,31}")
 MIN_PASSWORD = 8
 MAX_PASSWORD = 200
 
-# The tabs that can be given or withheld, by their id in the page. The Dashboard is for everyone.
+# What can be given or withheld, by the id the page's views name in data-perm. The Dashboard is for everyone.
 TABS = {
-    "statistics": "Statistics",
+    "statistics": "History",
     "grid-meter": "Grid meter",
     "counters": "Counters & checks",
     "appliances": "Appliances & tariffs",
-    "schedule": "Battery schedule",
+    "schedule": "Battery",
     "fields": "All fields",
     "app-data": "App Data",
-    "history": "Action history",
+    "history": "Activity",
 }
 PERMISSIONS = {
-    "inverter": "Write to inverter",  # Includes seeing the Battery schedule.
+    "inverter": "Write to inverter",  # Includes seeing the Battery tab.
     "edit": "Edit data",  # Appliances, tariffs and planning choices, and applying an import.
     **TABS,
 }

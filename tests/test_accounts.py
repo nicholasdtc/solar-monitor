@@ -25,7 +25,7 @@ def conn(tmp_path):
 
 @pytest.fixture
 def ids(conn):
-    """The owner, another admin, and someone who can see Statistics."""
+    """The owner, another admin, and someone who can see History."""
     return {
         "admin": add_account(conn, auth.OWNER, admin=True),
         "carol": add_account(conn, "carol", admin=True),
@@ -109,7 +109,7 @@ def test_adding_an_account(app, conn):
     assert "dave" in names(response)
     dave = Browser(app).log_in("dave", NEW)
     assert dave.get("/api/session").json()["user"]["permissions"] == ["statistics", "history"]
-    assert actions(conn)[0] == ("carol", "Added dave, with Statistics, Action history")
+    assert actions(conn)[0] == ("carol", "Added dave, with History, Activity")
 
 
 def test_adding_an_admin(app, conn):
@@ -156,7 +156,7 @@ def test_changing_what_an_account_may_do_applies_at_once(app, conn, ids):
     response = as_(app, "carol").put(f"/api/users/{ids['bob']}", json={"admin": False, "permissions": ["history"]})
     assert response.status_code == 200
     assert bob.get("/api/actions").status_code == 200
-    assert actions(conn)[0] == ("carol", "Changed bob: given Action history; lost Statistics")
+    assert actions(conn)[0] == ("carol", "Changed bob: given Activity; lost History")
 
 
 def test_making_an_admin(app, conn, ids):
@@ -414,14 +414,23 @@ def test_without_accounts_the_page_knows_its_this_machine(conn):
     assert (user["local"], user["admin"]) == (True, True)
 
 
-def test_every_tab_but_the_dashboard_has_a_permission(app):
+def test_every_page_but_the_dashboard_needs_a_permission(app):
     page = as_(app, "admin").get("/").text
     links = re.search(r'<ul id="tab-links">(.*?)</ul>', page, re.S).group(1)
     tabs = re.findall(r'href="#([\w-]+)"', links)
     assert tabs[0] == "dashboard"
-    assert set(tabs[1:]) == set(auth.TABS)
-    for tab in tabs:
-        assert f'id="view-{tab}"' in page
+    views = [dict(re.findall(r'([\w-]+)="([^"]*)"', tag)) for tag in re.findall(r'<section [^>]*class="view\b[^>]*>', page)]
+    assert [view["data-tab"] for view in views if view["data-tab"] not in tabs] == []
+    assert {view["data-tab"] for view in views} == set(tabs)
+    given = set()
+    for view in views:
+        if view["data-tab"] == "dashboard":
+            assert "data-perm" not in view
+            continue
+        assert view["id"] == f'view-{view["data-tab"]}-{view["data-sub"]}'
+        assert set(view["data-perm"].split()) <= set(auth.TABS), view["id"]
+        given.update(view["data-perm"].split())
+    assert given == set(auth.TABS)
 
 
 def test_everything_the_script_looks_up_is_on_the_page(app):

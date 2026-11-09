@@ -97,7 +97,7 @@ class WarningsProvider(Protocol):
 
 ### Settings
 
-All of these are in the "Solar panels and location" pane on the Appliances & tariffs tab. The provider choices list only the providers the registry has, and the region list follows the warnings provider. A region kept from another provider means all of them. All have the same permission as the other settings, and each change is recorded in the Action history (the location only as "changed").
+All of these are in the "Solar panels and location" pane on the Setup tab's "Panels & weather" page. The provider choices list only the providers the registry has, and the region list follows the warnings provider. A region kept from another provider means all of them. All have the same permission as the other settings, and each change is recorded in the Action history (the location only as "changed").
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -259,7 +259,7 @@ The shape of the automation, so the data, the screens and the log are ready befo
 
 Once the weather has run for a while and the forecast's error is known. Example: TOU charges from the grid overnight to 90%. If tomorrow morning will be sunny, charging only to 60% leaves room for free solar instead of bought grid power.
 
-**The rule's settings**, chosen by the user on the Weather tab or Battery schedule tab:
+**The rule's settings**, chosen by the user on the Weather tab or Battery tab:
 
 - Which TOU period (one of the inverter's charge periods, read live).
 - The usual cut-off, and the sunny cut-off. Both are checked against the range `control.py` already enforces.

@@ -1,4 +1,4 @@
-"""Changing a TOU programme from the Battery schedule tab: the web route, who may use it, and how it fits around polling."""
+"""Changing a TOU programme from the Battery tab: the web route, who may use it, and how it fits around polling."""
 
 import asyncio
 
@@ -320,13 +320,23 @@ def test_on_the_network_only_a_logged_in_request_reaches_the_inverter(collector,
     assert [write["username"] for write in db.list_inverter_writes(collector.conn)] == ["user"]
 
 
-def test_the_battery_schedule_tab_is_where_programmes_change(collector):
+def test_the_battery_tab_is_where_programmes_change(collector):
     page = get(collector, "/").text
     assert 'href="#tou"' not in page and 'id="view-tou"' not in page
-    assert page.count('href="#schedule"') == 1
-    tab = page.split('id="view-schedule"', 1)[1].split("</section>", 1)[0]
-    for part in ("tou-periods", "tou-change", "tou-writes", "schedule-modes"):
-        assert f'id="{part}"' in tab
+    assert page.count('href="#battery"') == 1
+    # Links from before still open it.
+    assert '"#tou": "#battery"' in page and '"#schedule": "#battery"' in page
+
+    def section(view):
+        return page.split(f'id="{view}"', 1)[1].split("</section>", 1)[0]
+
+    for view, parts in (
+        ("view-battery-programmes", ("tou-periods", "tou-change")),
+        ("view-battery-modes", ("schedule-modes",)),
+        ("view-battery-changes", ("tou-writes",)),
+    ):
+        for part in parts:
+            assert f'id="{part}"' in section(view)
 
 
 def test_a_write_never_overlaps_polling_and_polling_carries_on(monkeypatch, collector):
