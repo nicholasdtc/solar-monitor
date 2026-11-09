@@ -129,6 +129,7 @@ solar-monitor/
 **Phase 7: weather**
 - Pluggable forecast and warnings providers, with nothing about a place or a service hardcoded outside them. Defaults: Open-Meteo forecasts (Yr has no solar radiation) and Met Éireann warnings.
 - Weather kept for every hour of the log, a Weather section on the Dashboard with sections that fold up, a Weather tab with the hourly detail, expected solar output, and an automation stub that only recommends.
+- The panels' rating (kWp), tilt and facing, and the location, are entered in the app. They're the exception to not storing hardware specs: the inverter can't report them, and the solar estimate needs them.
 - V2: lower a chosen TOU period's charge cut-off before a sunny morning, through `control.py`.
 - Details in [weather-spec.md](weather-spec.md).
 

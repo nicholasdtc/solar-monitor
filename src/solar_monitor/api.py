@@ -204,7 +204,14 @@ SETTING_LABELS = {
     "band_night_end_minutes": "Night ends",
     "band_peak_start_minutes": "Peak starts",
     "band_peak_end_minutes": "Peak ends",
+    "pv_capacity_kwp": "Panels' total rating (kWp)",
+    "panel_tilt_deg": "Panel tilt (°)",
+    "panel_azimuth_deg": "Panels face (°)",
+    "latitude": "Latitude",
+    "longitude": "Longitude",
 }
+# The location is personal, so the history says only that it changed.
+PRIVATE_SETTINGS = ("latitude", "longitude")
 APPLIANCE_LABELS = {
     "name": "name",
     "typical_w": "typical W",
@@ -229,7 +236,9 @@ def _shown(name: str, value: object) -> str:
 
 def _settings_changes(old: dict[str, object], new: dict[str, object]) -> list[str]:
     return [
-        f"{SETTING_LABELS.get(name, name)} {_shown(name, old.get(name))} → {_shown(name, value)}"
+        SETTING_LABELS.get(name, name)
+        if name in PRIVATE_SETTINGS
+        else f"{SETTING_LABELS.get(name, name)} {_shown(name, old.get(name))} → {_shown(name, value)}"
         for name, value in new.items()
         if old.get(name) != value
     ]

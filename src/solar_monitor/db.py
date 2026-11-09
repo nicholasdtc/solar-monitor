@@ -178,6 +178,14 @@ SETTINGS = (
     "band_night_end_minutes",
     "band_peak_start_minutes",
     "band_peak_end_minutes",
+    # The solar panels, entered because the inverter can't report them: their total rating in kWp,
+    # their tilt from flat and the compass direction they face (180 is south), in degrees.
+    "pv_capacity_kwp",
+    "panel_tilt_deg",
+    "panel_azimuth_deg",
+    # Where the house is, for the weather. Personal: rounded to 2 decimals and kept only here.
+    "latitude",
+    "longitude",
 )
 
 # Settings older versions kept. They're removed on start, and skipped quietly in an import.

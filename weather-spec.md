@@ -83,16 +83,17 @@ class WarningsProvider(Protocol):
 
 ### Settings
 
-All are on the Settings screen, with the same permission as the other settings. Each change is recorded in the Action history.
+The numbers are in the "Solar panels and location" pane on the Appliances & tariffs tab, done already. The provider choices join them when W1 lands. All have the same permission as the other settings, and each change is recorded in the Action history (the location only as "changed").
 
 | Setting | Default | Notes |
 |---|---|---|
 | Location | none | Latitude and longitude, rounded to 2 decimals. Without one, nothing is fetched and the Weather tab asks for it |
+| Panels' total rating | none | kWp, as installed. The inverter can't report it |
+| Panel tilt and facing | none | Degrees from flat, and the compass direction (180 is south). Entered by hand: the inverter can't report them, and SEMS+ shows what the installer typed |
 | Forecast provider | Open-Meteo | From the registry |
 | Warnings provider | none | From the registry. Met Éireann for this house |
 | Warnings region | none | From the provider's list, when it has one. For Met Éireann, the county |
 | Provider options | per provider | For example Open-Meteo's model (default "best match") and base URL |
-| Panel arrays | none | Optional, for W5: tilt and facing per array |
 | Units | the user's display preferences | Temperature, wind and rain units, alongside the existing date and time choices. Stored in the app's units, converted on the page |
 
 `settings` holds numbers only, so the names and region go in a new key-value table for text settings.
@@ -100,7 +101,7 @@ All are on the Settings screen, with the same permission as the other settings. 
 ### Requests (Open-Meteo, as the first provider)
 
 - Forecast: `/v1/forecast` with the hourly fields the `Hour` record needs (temperature, feels like, precipitation and its probability, weather code, cloud cover total, low, mid and high, wind, gusts, direction, shortwave, direct and diffuse radiation, is_day), and daily sunrise, sunset and sunshine. `forecast_days=7`, `timeformat=unixtime`, `timezone=GMT`, `wind_speed_unit=ms`.
-- With panel arrays set, global tilted irradiance per array as well. Open-Meteo takes one tilt and facing per request, so that's one extra request per array.
+- With the panel tilt set, global tilted irradiance (GTI) for that tilt and facing as well (facing south if it isn't set). The provider converts the app's compass bearing to its own convention: Open-Meteo counts 0 as south, −90 east, 90 west. A second array, if anyone needs one, would be one extra request each.
 - Past: the same fields from `historical-forecast-api.open-meteo.com/v1/forecast`, with start and end dates.
 - User-Agent: the app and its public repo, `solar-monitor (github.com/nicholasdtc/solar-monitor)`. No email address.
 - Open-Meteo labels radiation and precipitation by the end of the hour they cover, while temperature, cloud and wind are the value at that instant. The provider moves the first group back one hour, so every `Hour` is labelled by its start. Check against a sunny day's log.
@@ -203,12 +204,12 @@ With no forecast, the section shows "No forecast" and the age of the last one, a
 
 The aim is expected PV per hour in kWh.
 
-- **With panel arrays set** (tilt and facing per array, optional on the Settings screen): use each array's tilted irradiance. A learned factor per array still absorbs the panels' size, shading and losses, so no rating is entered.
+- **With the tilt and rating set**: expected PV = tilted irradiance ÷ 1000 W/m² × the panels' kWp × a learned performance ratio. The ratio absorbs shading, heat, wiring and inverter losses; a typical 0.75 to 0.85 is the starting guess until the log has enough to fit it.
 - **Without them**: use GHI, with a factor learned for each time of day and time of year.
-- **The ceiling** is the most PV seen in the log, never a rating.
+- **The ceiling** is the lower of the panels' rating and the most PV seen in the log.
 - **Learning**: each night, pair each logged hour's mean `pv_w` with the irradiance for that hour from `weather_hours` and from the day-ahead forecast run, over the last 30 to 60 days, and fit the factors. With the W2 backfill, learning can start on the first day, from the whole log. The tab says "learning" until the fit is good enough.
 - **Scoring**: each day, record expected against actual, by day and by hour, for the day-ahead run. The Weather tab shows yesterday's comparison and a 30-day error. Automation uses the error to decide how far to trust a forecast.
-- If the GHI fit turns out as good as the tilted one, the arrays setting can stay empty.
+- If the GHI fit turns out as good as the tilted one, the panel settings stay optional.
 
 This lives in `solar_forecast.py`, with tests on made-up logs.
 
@@ -271,7 +272,6 @@ Fixtures use made-up coordinates, never the house's.
 
 ## Open questions
 
-- Where SEMS+ gets the panel angle it shows: entered by the installer, or reported by the system. If the inverter reports it, read it live instead of asking for it.
 - Whether the Open-Meteo past-forecast service has the same free terms as the forecast. Its pages don't say; check before the backfill runs.
 - Whether Met Éireann's warnings feed needs anything beyond credit under its custom licence.
 - How long the forecast needs to run before V2's suggestions are trusted enough to offer the "Do it" button.

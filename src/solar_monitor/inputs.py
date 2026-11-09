@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 Watts = Annotated[float, Field(ge=0, le=1_000_000, allow_inf_nan=False)]
 Positive = Annotated[float, Field(gt=0, le=1_000_000, allow_inf_nan=False)]
@@ -36,6 +36,17 @@ class SettingsIn(BaseModel):
     band_night_end_minutes: HalfHour | None = None
     band_peak_start_minutes: HalfHour | None = None
     band_peak_end_minutes: HalfHour | None = None
+    pv_capacity_kwp: Annotated[float, Field(gt=0, le=10_000, allow_inf_nan=False)] | None = None
+    panel_tilt_deg: Annotated[float, Field(ge=0, le=90, allow_inf_nan=False)] | None = None
+    panel_azimuth_deg: Annotated[float, Field(ge=0, lt=360, allow_inf_nan=False)] | None = None
+    latitude: Annotated[float, Field(ge=-90, le=90, allow_inf_nan=False)] | None = None
+    longitude: Annotated[float, Field(ge=-180, le=180, allow_inf_nan=False)] | None = None
+
+    # About 1 km: close enough for the weather, and no closer to the house than that.
+    @field_validator("latitude", "longitude")
+    @classmethod
+    def _round_location(cls, value: float | None) -> float | None:
+        return None if value is None else round(value, 2)
 
 
 class DisplayPrefsIn(BaseModel):

@@ -1140,6 +1140,17 @@
       <p class="meta"><span id="appliance-sources"></span><button type="button" class="help" id="appliance-sources-help" aria-label="Where these come from" data-tip="">?</button></p>
     </div>
 
+    <div class="pane">
+      <h2>Solar panels and location <button type="button" class="help" aria-label="About these" data-tip="For the weather and expected solar&#10;Not reported by the inverter">?</button></h2>
+      <form class="edit settings" id="panel-settings">
+        <label>Panels' total rating (kWp) <input name="pv_capacity_kwp" type="number" min="0" max="10000" step="any"></label>
+        <label for="panel-tilt"><span>Panel tilt (°) <button type="button" class="help" aria-label="About the tilt" data-tip="0 flat, 90 upright">?</button></span><input id="panel-tilt" name="panel_tilt_deg" type="number" min="0" max="90" step="any"></label>
+        <label for="panel-azimuth"><span>Panels face (°) <button type="button" class="help" aria-label="About the direction" data-tip="Compass: 90 east, 180 south, 270 west">?</button></span><input id="panel-azimuth" name="panel_azimuth_deg" type="number" min="0" max="359.99" step="any"></label>
+        <label for="latitude"><span>Latitude <button type="button" class="help" aria-label="About the location" data-tip="Rounded to 2 decimals, about 1 km&#10;North +, south −">?</button></span><input id="latitude" name="latitude" type="number" min="-90" max="90" step="any"></label>
+        <label for="longitude"><span>Longitude <button type="button" class="help" aria-label="About the longitude" data-tip="East +, west −">?</button></span><input id="longitude" name="longitude" type="number" min="-180" max="180" step="any"></label>
+      </form>
+    </div>
+
     <div class="pane span-all">
       <h2>Tariffs <button type="button" class="help" id="tariff-help" aria-label="About the tariffs" data-tip="Your rates per kWh, in any money unit. The results come out in the same unit.">?</button></h2>
       <form class="edit settings" id="tariff-settings">

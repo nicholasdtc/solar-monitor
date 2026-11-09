@@ -247,6 +247,11 @@ def test_invalid_appliances_are_refused(call, body):
     {"run_until_minutes": 1.5},
     {"tariff_day": -1},
     {"tariff_export": "lots"},
+    {"pv_capacity_kwp": 0},
+    {"panel_tilt_deg": 91},
+    {"panel_azimuth_deg": 360},
+    {"latitude": 90.5},
+    {"longitude": -181},
 ])
 def test_invalid_settings_are_refused(call, body):
     assert call("PUT", "/api/settings", json=body).status_code == 422
@@ -257,6 +262,14 @@ def test_saving_one_setting_leaves_the_others_and_null_clears_it(call):
     settings = call("PUT", "/api/settings", json={"tariff_day": None}).json()["settings"]
     assert settings["limit_amps"] == 10
     assert settings["tariff_day"] is None
+
+
+def test_the_location_is_rounded_and_the_history_doesnt_show_it(call, collector):
+    settings = call("PUT", "/api/settings", json={"latitude": 12.3456, "longitude": -45.6789, "panel_tilt_deg": 30}).json()["settings"]
+    assert (settings["latitude"], settings["longitude"], settings["panel_tilt_deg"]) == (12.35, -45.68, 30)
+    summary = collector.conn.execute("SELECT summary FROM actions ORDER BY id DESC").fetchone()[0]
+    assert summary == "Changed Panel tilt (°) blank → 30; Latitude; Longitude"
+    assert "12.3" not in summary and "45.6" not in summary
 
 
 def test_the_planners_stay_empty_until_asked(call):
