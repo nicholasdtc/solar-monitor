@@ -529,6 +529,10 @@ def test_a_weak_old_password_is_used_with_a_warning(env, conn, tmp_path, capsys)
     assert main.prepare_accounts(conn, tmp_path / "test.db", "0.0.0.0") is True
     assert auth.check_password("pw", db.find_user(conn, "admin")["password_hash"])
     assert "weak" in capsys.readouterr().err
+    # It still logs in, and can be changed for a stronger one.
+    browser = Browser(real_app(conn)).log_in(auth.OWNER, "pw")
+    assert browser.put("/api/password", json={"current": "pw", "new": NEW}).status_code == 200
+    browser.elsewhere().log_in(auth.OWNER, NEW)
 
 
 @pytest.mark.parametrize("left", ["DASHBOARD_USER", "DASHBOARD_PASSWORD"])
