@@ -1,4 +1,4 @@
-"""Battery time remaining, load sums, load planners and tariffs. Plain arithmetic, with no I/O.
+"""Battery time remaining, load sums and load planners. Plain arithmetic, with no I/O.
 
 Ratings printed on the hardware aren't used where the inverter or the log says better:
 voltage, state of health and minimum charge are read live, and capacity and the inverter's
@@ -32,8 +32,6 @@ MIN_MEASURED_POINTS = 10
 # pbattery1 is measured on the battery side, so the time remaining doesn't need them.
 CONVERSION_EFFICIENCY = 0.93
 STANDBY_W = 40
-# Typical figure for grid to battery to home. The log has no way to measure that whole path.
-ROUND_TRIP_EFFICIENCY = 0.90
 
 # The battery only counts as supplying the house alone with next to nothing from solar or the
 # grid. This is tight because a flow of 50 W would be as big as the overhead being measured.
@@ -340,28 +338,6 @@ def run_until_plan(
         **_allowance(energy_wh, hours, limit_w, selected_w, overhead),
         "energy_kwh": energy_wh / 1000,
         "max_battery_w": energy_wh / hours,
-    }
-
-
-def tariff_values(
-    day: float | None, peak: float | None, night: float | None, export: float | None
-) -> dict[str, float | None]:
-    """What a battery kWh is worth at these rates, in the same units as the rates."""
-
-    def less(rate: float | None, cost: float | None) -> float | None:
-        return None if rate is None or cost is None else rate - cost
-
-    delivered = None if night is None else night / ROUND_TRIP_EFFICIENCY
-    return {
-        "round_trip_efficiency": ROUND_TRIP_EFFICIENCY,
-        "delivery_efficiency": CONVERSION_EFFICIENCY,
-        "night_kwh_cost": delivered,
-        "saving_day": less(day, delivered),
-        "saving_peak": less(peak, delivered),
-        "gain_export": less(export, delivered),
-        # A kWh still in the battery as the night rate starts: export it, or use it instead of buying one?
-        "leftover_export": less(None if export is None else export * CONVERSION_EFFICIENCY, night),
-        "solar_export": export,
     }
 
 

@@ -427,7 +427,8 @@ def test_every_page_but_the_dashboard_and_weather_needs_a_permission(app):
         if view["data-tab"] in ("dashboard", "weather"):  # Their data is open to everyone.
             assert "data-perm" not in view
             continue
-        assert view["id"] == f'view-{view["data-tab"]}-{view["data-sub"]}'
+        # A tab of one page, such as Setup, has no sub-page.
+        assert view["id"] == (f'view-{view["data-tab"]}-{view["data-sub"]}' if "data-sub" in view else f'view-{view["data-tab"]}')
         assert set(view["data-perm"].split()) <= set(auth.TABS), view["id"]
         given.update(view["data-perm"].split())
     assert given == set(auth.TABS)
@@ -439,11 +440,22 @@ def test_old_links_open_a_page_that_exists(app):
     assert old["#grid-meter/day"] == "#grid-meter/overview"
     assert old["#appliances/outage"] == old["#appliances/run"] == "#appliances/planning"
     assert old["#history"] == old["#setup/activity"] == "#system/activity"
+    assert old["#app-data"] == old["#setup/tariffs"] == old["#setup/panels"] == old["#setup/data"] == "#setup"
+    assert old["#setup/limits"] == "#appliances/planning"
     views = re.findall(r'<section [^>]*data-tab="([\w-]+)"(?: data-sub="([\w-]+)")?', page)
     pages = {f"#{tab}/{sub}" if sub else f"#{tab}" for tab, sub in views}
     tabs = {f"#{tab}" for tab, _ in views}
     for target in old.values():
         assert target in pages or target in tabs, target
+
+
+def test_setup_shows_each_account_only_the_panes_it_may_use(app):
+    page = as_(app, "admin").get("/").text
+    setup = re.search(r'<section [^>]*id="view-setup"[^>]*>(.*?)</section>', page, re.S).group(1)
+    assert re.findall(r'<div class="pane" data-needs="([\w-]+)">', setup) == ["appliances", "appliances", "app-data", "app-data"]
+    assert "tariff-values" not in page
+    planning = re.search(r'<section [^>]*id="view-appliances-planning"[^>]*>(.*?)</section>', page, re.S).group(1)
+    assert 'id="settings"' in planning and "limits-line" not in planning
 
 
 def test_everything_the_script_looks_up_is_on_the_page(app):

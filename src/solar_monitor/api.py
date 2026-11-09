@@ -443,9 +443,6 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
                 battery_w=smoothed_battery_w(),
                 overhead=allowance,
             ),
-            "tariffs": planning.tariff_values(
-                settings["tariff_day"], settings["tariff_peak"], settings["tariff_night"], settings["tariff_export"]
-            ),
             "settings": settings,
             "capacity": known,
             "volts": volts,

@@ -249,30 +249,6 @@ def test_run_until_still_reports_the_time_when_a_figure_is_missing(missing):
     assert plan["max_battery_w"] is None
 
 
-def test_tariffs_cost_night_energy_after_round_trip_losses():
-    values = planning.tariff_values(day=20, peak=30, night=9, export=8)
-    assert values["night_kwh_cost"] == pytest.approx(10)
-    assert values["saving_day"] == pytest.approx(10)
-    assert values["saving_peak"] == pytest.approx(20)
-    assert values["gain_export"] == pytest.approx(-2)
-    assert values["solar_export"] == 8
-
-
-def test_tariffs_price_a_leftover_kwh_on_the_way_out_only():
-    values = planning.tariff_values(day=None, peak=None, night=5, export=10)
-    assert values["leftover_export"] == pytest.approx(10 * planning.CONVERSION_EFFICIENCY - 5)
-
-
-def test_tariffs_leave_out_what_needs_a_missing_rate():
-    values = planning.tariff_values(day=20, peak=None, night=None, export=8)
-    assert values["night_kwh_cost"] is None
-    assert values["saving_day"] is None
-    assert values["saving_peak"] is None
-    assert values["gain_export"] is None
-    assert values["leftover_export"] is None
-    assert values["solar_export"] == 8
-
-
 def appliance(name="Lamp", typical_w=100, peak_w=None, surge_w=None, use_in_outage=False):
     return {"id": 1, "name": name, "typical_w": typical_w, "peak_w": peak_w, "surge_w": surge_w,
             "use_in_outage": use_in_outage, "notes": ""}

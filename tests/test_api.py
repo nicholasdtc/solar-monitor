@@ -314,15 +314,6 @@ def test_run_plan_has_no_live_power_when_the_inverter_stops_answering(call, coll
     assert call("PUT", "/api/settings", json={"run_until_minutes": 90}).json()["run_plan"]["battery_w"] is None
 
 
-def test_overview_works_out_the_tariffs(call):
-    tariffs = call("GET", "/api/appliances").json()["tariffs"]
-    assert tariffs["saving_peak"] is None
-    tariffs = call("PUT", "/api/settings", json={"tariff_peak": 30, "tariff_night": 9}).json()["tariffs"]
-    assert tariffs["night_kwh_cost"] == pytest.approx(10)
-    assert tariffs["saving_peak"] == pytest.approx(20)
-    assert tariffs["saving_day"] is None
-
-
 def test_the_page_has_an_input_for_every_setting(call):
     page = call("GET", "/").text
     for name in db.SETTINGS:

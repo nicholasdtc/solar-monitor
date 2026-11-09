@@ -948,7 +948,7 @@
   <section class="view page" id="view-weather" data-tab="weather" aria-label="Weather" hidden>
     <div class="pane" id="wx-unset" hidden>
       <h2>Weather</h2>
-      <p class="note">Set where the panels are under <a href="#setup/panels">Setup › Panels &amp; weather</a> to see the forecast.</p>
+      <p class="note">Set where the panels are under <a href="#setup">Setup</a> to see the forecast.</p>
     </div>
     <div class="pane wx-warnings" id="wx-warnings" hidden>
       <h2>Warnings</h2>
@@ -1150,7 +1150,7 @@
 
   <section class="view page" id="view-grid-meter-about" data-tab="grid-meter" data-sub="about" data-label="About" data-perm="grid-meter" aria-label="Grid meter: About" hidden>
     <div class="pane gm-none" hidden>
-      <p class="note">No meter readings yet. Import an ESB Networks half-hourly kW file under <a href="#setup/data">Setup › Data</a>.</p>
+      <p class="note">No meter readings yet. Import an ESB Networks half-hourly kW file under <a href="#setup">Setup</a>.</p>
     </div>
 
     <div class="pane gm-data">
@@ -1210,9 +1210,18 @@
 
   <section class="view page" id="view-appliances-planning" data-tab="appliances" data-sub="planning" data-label="Planning" data-perm="appliances" aria-label="Appliances: Planning" hidden>
     <div class="pane">
-      <h2>Plan for a power cut <button type="button" class="help" aria-label="About this plan" data-tip="Steady load, no sun or grid&#10;Down to the reserve&#10;Vs ticked, typical">?</button></h2>
-      <p class="meta limits-line"></p>
+      <h2>Limits <button type="button" class="help" aria-label="About the limits" data-tip="All optional&#10;Also used on Load">?</button></h2>
       <p class="alert appliances-error" role="alert"></p>
+      <form class="edit settings" id="settings">
+        <label for="limit-amps"><span>Current limit (A) <button type="button" class="help" aria-label="About the current limit" data-tip="What to stay under in a power cut, such as a breaker&#39;s rating. Of limit, Room left and Can add need it.">?</button></span><input id="limit-amps" name="limit_amps" type="number" min="0" step="any"></label>
+        <label for="surge-limit"><span>Surge limit (W) <button type="button" class="help" aria-label="About the surge limit" data-tip="The most your system can supply for a few seconds.">?</button></span><input id="surge-limit" name="surge_limit_w" type="number" min="0" step="any"></label>
+        <label for="capacity"><span>Starting battery capacity (kWh) <button type="button" class="help" id="capacity-help" aria-label="About the capacity" data-tip="">?</button></span><input id="capacity" name="capacity_kwh" type="number" min="0" step="any"></label>
+      </form>
+      <p class="meta"><span id="appliance-sources"></span><button type="button" class="help" id="appliance-sources-help" aria-label="Where these come from" data-tip="">?</button></p>
+    </div>
+
+    <div class="pane">
+      <h2>Plan for a power cut <button type="button" class="help" aria-label="About this plan" data-tip="Steady load, no sun or grid&#10;Down to the reserve&#10;Vs ticked, typical">?</button></h2>
       <form class="edit settings" id="outage-settings">
         <label for="outage-hours"><span>Length of power cut (hours) <button type="button" class="help" aria-label="About the length" data-tip="Shorter cut, bigger load&#10;Half the hours, about twice the W">?</button></span><input id="outage-hours" name="outage_hours" type="number" min="0.1" max="8760" step="any"></label>
       </form>
@@ -1398,9 +1407,9 @@
     </div>
   </section>
 
-  <section class="view page" id="view-setup-tariffs" data-tab="setup" data-sub="tariffs" data-label="Tariffs" data-perm="appliances" aria-label="Setup: Tariffs" hidden>
-    <div class="pane">
-      <h2>Tariffs <button type="button" class="help" id="tariff-help" aria-label="About the tariffs" data-tip="Your rates per kWh, in any money unit. The results come out in the same unit.">?</button></h2>
+  <section class="view page" id="view-setup" data-tab="setup" data-perm="appliances app-data" aria-label="Setup" hidden>
+    <div class="pane" data-needs="appliances">
+      <h2>Tariffs <button type="button" class="help" id="tariff-help" aria-label="About the tariffs" data-tip="Per kWh, any money unit">?</button></h2>
       <p class="alert appliances-error" role="alert"></p>
       <form class="edit settings" id="tariff-settings">
         <label>Day rate <input name="tariff_day" type="number" min="0" step="any"></label>
@@ -1408,12 +1417,6 @@
         <label>Night rate <input name="tariff_night" type="number" min="0" step="any"></label>
         <label>Export rate <input name="tariff_export" type="number" min="0" step="any"></label>
       </form>
-      <div class="scroll" tabindex="0" role="region" aria-label="Tariff results">
-        <table>
-          <thead><tr><th>Per kWh</th><th class="num">Amount</th><th>Verdict</th></tr></thead>
-          <tbody id="tariff-values"></tbody>
-        </table>
-      </div>
       <h3>When each rate applies <button type="button" class="help" aria-label="About the rate times" data-tip="For the Grid meter. On the hour or half-hour.&#10;Blank: night 23:00 to 08:00, peak 17:00 to 19:00, day the rest.">?</button></h3>
       <form class="edit settings" id="band-settings">
         <label>Night starts <input name="band_night_start_minutes" type="time" step="1800"></label>
@@ -1422,25 +1425,9 @@
         <label>Peak ends <input name="band_peak_end_minutes" type="time" step="1800"></label>
       </form>
     </div>
-  </section>
 
-  <section class="view page" id="view-setup-limits" data-tab="setup" data-sub="limits" data-label="Limits" data-perm="appliances" aria-label="Setup: Limits" hidden>
-    <div class="pane">
-      <h2>Your choices <button type="button" class="help" aria-label="About these" data-tip="All optional. Anything the inverter reports, or the log can measure, needn&#39;t be entered.">?</button></h2>
-      <p class="alert appliances-error" role="alert"></p>
-      <form class="edit settings" id="settings">
-        <label for="limit-amps"><span>Current limit (A) <button type="button" class="help" aria-label="About the current limit" data-tip="What to stay under in a power cut, such as a breaker&#39;s rating. Of limit, Room left and Can add need it.">?</button></span><input id="limit-amps" name="limit_amps" type="number" min="0" step="any"></label>
-        <label for="surge-limit"><span>Surge limit (W) <button type="button" class="help" aria-label="About the surge limit" data-tip="The most your system can supply for a few seconds.">?</button></span><input id="surge-limit" name="surge_limit_w" type="number" min="0" step="any"></label>
-        <label for="capacity"><span>Starting battery capacity (kWh) <button type="button" class="help" id="capacity-help" aria-label="About the capacity" data-tip="">?</button></span><input id="capacity" name="capacity_kwh" type="number" min="0" step="any"></label>
-      </form>
-      <p class="meta"><span id="appliance-sources"></span><button type="button" class="help" id="appliance-sources-help" aria-label="Where these come from" data-tip="">?</button></p>
-    </div>
-  </section>
-
-  <section class="view page" id="view-setup-panels" data-tab="setup" data-sub="panels" data-label="Panels &amp; weather" data-perm="appliances" aria-label="Setup: Panels and weather" hidden>
-    <div class="pane">
+    <div class="pane" data-needs="appliances">
       <h2>Solar panels and location <button type="button" class="help" aria-label="About these" data-tip="For the weather and expected solar&#10;Not reported by the inverter">?</button></h2>
-      <p class="alert appliances-error" role="alert"></p>
       <form class="edit settings" id="panel-settings">
         <label>Panels' total rating (kWp) <input name="pv_capacity_kwp" type="number" min="0" max="10000" step="any"></label>
         <label for="panel-tilt"><span>Panel tilt (°) <button type="button" class="help" aria-label="About the tilt" data-tip="0 flat, 90 upright">?</button></span><input id="panel-tilt" name="panel_tilt_deg" type="number" min="0" max="90" step="any"></label>
@@ -1453,10 +1440,8 @@
         <label for="warnings-region">Warnings region <select id="warnings-region" name="warnings_region"><option value="">All</option></select></label>
       </form>
     </div>
-  </section>
 
-  <section class="view page" id="view-setup-data" data-tab="setup" data-sub="data" data-label="Data" data-perm="app-data" aria-label="Setup: Data" hidden>
-    <div class="pane">
+    <div class="pane" data-needs="app-data">
       <h2>Export <button type="button" class="help" aria-label="About exporting" data-tip="A copy of what this app has saved, readings right up to the latest. Nothing is removed.&#10;The download starts once the file is ready: longer with more readings.">?</button></h2>
       <p class="meta" id="export-contents"></p>
       <form class="export" method="get" action="/api/export/download">
@@ -1465,7 +1450,7 @@
       </form>
     </div>
 
-    <div class="pane">
+    <div class="pane" data-needs="app-data">
       <h2>Import <button type="button" class="help" aria-label="About importing" data-tip="A file exported from this app, in any format above, or your smart meter's half-hourly kW readings from ESB Networks.&#10;Only what's missing is added: nothing here is changed or removed. You see what it would add before anything is saved.">?</button></h2>
       <div class="import">
         <input type="file" id="import-file" accept=".zip,.db,.json,.csv" aria-label="File to import">
@@ -4241,7 +4226,7 @@
     const known = days.filter((day) => day.net !== null);
     $("money-data").hidden = !priced || !known.length;
     $("money-note").textContent = !priced
-      ? "Set your rates under Setup › Tariffs to see what the grid earned and cost."
+      ? "Set your rates under Setup to see what the grid earned and cost."
       : known.length ? `Last ${known.length} day${known.length === 1 ? "" : "s"} at your rates. Today's is so far.` : "No grid totals yet.";
     if (!priced || !known.length) return;
 
@@ -4957,30 +4942,8 @@
     $("run-plan").replaceChildren(...rows);
   }
 
-  const TARIFF_ROWS = [
-    { key: "night_kwh_cost", label: "Cost if charged at the night rate", tip: "The night rate, plus what's lost on the way in and out", verdict: () => "" },
-    { key: "saving_day", label: "Used instead of buying at the day rate", verdict: (x) => (x > 0 ? status("good", "Worth doing") : status("warning", "Not worth doing")) },
-    { key: "saving_peak", label: "Used instead of buying at the peak rate", verdict: (x) => (x > 0 ? status("good", "Worth doing") : status("warning", "Not worth doing")) },
-    { key: "gain_export", label: "Charged at the night rate, then exported", verdict: (x) => (x > 0 ? status("good", "Makes money") : status("warning", "Loses money")) },
-    { key: "leftover_export", label: "Left when the night rate starts, exported", tip: "Compared with keeping it, to save buying a kWh at the night rate", verdict: (x) => (x > 0 ? "Export it" : "Keep it") },
-    { key: "solar_export", label: "Solar you can't store, exported", tip: "The battery is full and the sun is still out", verdict: () => "Export it" },
-  ];
-
-  function renderTariffs() {
-    const { tariffs } = overview;
-    const rows = TARIFF_ROWS.map(({ key, label, tip, verdict }) => {
-      const value = tariffs[key];
-      const row = el("tr");
-      const so = el("td");
-      so.append(isNum(value) ? verdict(value) : "—");
-      row.append(loadCell(label, "", tip), el("td", "num", isNum(value) ? moneyText(value, 2) : "—"), so);
-      return row;
-    });
-    $("tariff-values").replaceChildren(...rows);
-    $("tariff-help").dataset.tip = [
-      prefs.currency === "none" ? "Your rates per kWh, in any money unit. The results come out in the same unit." : `Rates per kWh, in ${prefs.currency}`,
-      `Assumes ${number(tariffs.round_trip_efficiency * 100, 0)}% of grid charging comes back out to the house, and ${number(tariffs.delivery_efficiency * 100, 0)}% of what's already in the battery: typical figures, not measured.`,
-    ].join("\n");
+  function renderTariffHelp() {
+    $("tariff-help").dataset.tip = prefs.currency === "none" ? "Per kWh, any money unit" : `Per kWh, in ${prefs.currency}`;
   }
 
   const SETTINGS_FORMS = document.querySelectorAll("form.settings");
@@ -5059,7 +5022,7 @@
     ].filter(Boolean).join("\n");
   }
 
-  // Under each Appliances page's heading: the limits its figures use, and a link to change them.
+  // Under the List's and Load's headings: the limits their figures use, and a link to change them on Planning.
   function renderLimitsLine() {
     const { settings, capacity } = overview;
     const text = [
@@ -5069,7 +5032,7 @@
     ].join(" · ");
     for (const line of document.querySelectorAll(".limits-line")) {
       const link = el("a", "", "Edit");
-      link.href = "#setup/limits";
+      link.href = "#appliances/planning";
       line.replaceChildren(`${text} · `, link);
     }
   }
@@ -5084,7 +5047,7 @@
     renderSurge();
     renderChoices();
     renderSources();
-    renderTariffs();
+    renderTariffHelp();
   }
 
   const refreshOverview = () => sendOverview("GET", "/api/appliances");
@@ -5191,7 +5154,7 @@
   $("appliances-view-only").hidden = may("edit");
   $("tou-view-only").hidden = may("inverter");
   if (!may("edit")) {
-    for (const field of document.querySelectorAll('[data-perm="appliances"] .edit :is(input, textarea, select)')) field.disabled = true;
+    for (const field of document.querySelectorAll('[data-perm~="appliances"] .edit :is(input, textarea, select)')) field.disabled = true;
     $("add-appliance").hidden = true;
     $("appliances-add-note").hidden = true;
     $("import-button").hidden = true;
@@ -5258,7 +5221,7 @@
   });
 
   /*
-    Weather: the forecast from the provider picked under Setup › Panels & weather, with the warnings, the
+    Weather: the forecast from the provider picked under Setup, with the warnings, the
     last 12 hours as recorded, and how much the panels made in them. Kept in °C, mm, m/s and W/m²; shown in
     the units picked in Preferences. Nothing here is tied to one provider: the server says what it has.
   */
@@ -5776,7 +5739,7 @@
   })();
 
   /*
-    Grid meter: the electricity meter's half-hours, imported from ESB Networks under Setup › Data.
+    Grid meter: the electricity meter's half-hours, imported from ESB Networks under Setup.
     Days are calendar days on the meter's Irish clock, handled as UTC so neither the browser's
     time zone nor the one picked in Preferences moves them. Only the date and time formats apply. A slot is a half-hour from midnight, 0 to 47, and holds the average
     draw over it in whole watts, null where the file has a gap, or -1 where there was no
@@ -6018,8 +5981,8 @@
     }
 
     function renderEmpty() {
-      const link = el("a", "", "Setup › Data");
-      link.href = "#setup/data";
+      const link = el("a", "", "Setup");
+      link.href = "#setup";
       $("gm-intro").className = "note";
       $("gm-intro").replaceChildren("No meter readings yet. Import an ESB Networks half-hourly kW file under ", link, ".");
     }
@@ -6045,7 +6008,7 @@
         : `About ${number(perDayOf(main, total), 1)} kWh a day`;
       $("gm-t-cost").textContent = money(cost);
       $("gm-t-cost-sub").textContent = cost === null
-        ? "Set your rates under Setup › Tariffs"
+        ? "Set your rates under Setup"
         : total > 0 ? `${moneyText(cost / total, cost / total < 1 ? 3 : 2)} a kWh on average` : "";
       $("gm-t-night").textContent = share(main, kwh[0]);
       $("gm-t-night-sub").textContent = `Day ${share(main, kwh[1])}, peak ${share(main, kwh[2])}`;
@@ -6854,10 +6817,10 @@
       const items = [
         ["Readings", `${count(file.readings, "reading")}, ${stampText(file.first)} to ${endText(fileEnd())}. Each is the average kW over a half-hour, so its kWh is half that.`],
         ["Time labels", "ESB Networks labels each half-hour by its end. Here each shows from its start, so the file's 23:30 is 23:00–23:30, and its 00:00 is the day before's last."],
-        ["Rate bands", `${hours[0].toUpperCase()}${hours.slice(1)}${bandsSet ? ", from Setup › Tariffs" : " (the usual hours, until you set your own under Setup › Tariffs)"}. A half-hour takes the rate at its start.`],
+        ["Rate bands", `${hours[0].toUpperCase()}${hours.slice(1)}${bandsSet ? ", from Setup" : " (the usual hours, until you set your own under Setup)"}. A half-hour takes the rate at its start.`],
         ["Costs", rates.every(isNum)
           ? `Today's rates (night ${rateText(rates[0])}, day ${rateText(rates[1])}, peak ${rateText(rates[2])}) for every half-hour, even older ones. No standing charge.`
-          : "Set your rates under Setup › Tariffs to see costs."],
+          : "Set your rates under Setup to see costs."],
         ["Gaps", file.gapCount
           ? list([...file.gaps.map(gapText), ...(file.gapCount > file.gaps.length ? [`and ${number(file.gapCount - file.gaps.length, 0)} more`] : [])])
           : "None."],
@@ -6887,7 +6850,7 @@
       }
       items.push(
         ["Identifiers", "The file's MPRN and meter serial number are skipped on import: never stored or shown."],
-        ["Updating", "Import a newer download under Setup › Data at any time. Only new half-hours are added."],
+        ["Updating", "Import a newer download under Setup at any time. Only new half-hours are added."],
       );
       $("gm-notes").replaceChildren(...items.flatMap(([term, body]) => {
         const detail = el("dd");
@@ -7058,6 +7021,10 @@
   for (const link of [...$("tab-links").querySelectorAll("a")]) {
     if (!Object.values(PAGES).some((page) => page.tab === link.hash)) link.parentElement.remove();
   }
+  // A page open to more than one permission, such as Setup, shows each its panes only to an account that has it.
+  for (const pane of document.querySelectorAll("[data-needs]")) pane.hidden = !may(pane.dataset.needs);
+  // The pages showing the appliance overview, refreshed while open: those open to Appliances.
+  const usesOverview = (view) => (view.dataset.perm ?? "").split(" ").includes("appliances") && may("appliances");
   // Links from before the sub-tabs, and from when the first tab was called Live, still open the same thing.
   const OLD_HASHES = {
     "#live": "#dashboard",
@@ -7065,12 +7032,16 @@
     "#schedule": "#battery",
     "#counters": "#system/counters",
     "#fields": "#system/fields",
-    "#app-data": "#setup/data",
+    "#app-data": "#setup",
     "#history": "#system/activity",
     "#setup/activity": "#system/activity",
     "#grid-meter/day": "#grid-meter/overview",
     "#appliances/outage": "#appliances/planning",
     "#appliances/run": "#appliances/planning",
+    "#setup/tariffs": "#setup",
+    "#setup/limits": "#appliances/planning",
+    "#setup/panels": "#setup",
+    "#setup/data": "#setup",
   };
   const lastPage = {}; // Each tab opens on the sub-tab it was last left on.
   // The page a hash opens: a tab alone opens its last or first page, and one this account can't see the dashboard.
@@ -7308,7 +7279,7 @@
     renderOverview();
     gridMeter.redraw();
     weatherTab.redraw();
-    if (!$("view-setup-data").hidden) refreshExport();
+    if (!$("view-setup").hidden && may("app-data")) refreshExport();
   }
   /* Shows a change of prefs, made here or on another device. */
   function prefsChanged(old) {
@@ -7744,8 +7715,8 @@
     renderSubtabs(tab, page);
     setMenu(false);
     $("chart-tip").hidden = true;
-    if (view.dataset.perm === "appliances") refreshOverview();
-    if (page === "#setup/data") refreshExport();
+    if (usesOverview(view)) refreshOverview();
+    if (page === "#setup" && may("app-data")) refreshExport();
     if (tab === "#grid-meter" || (page === "#system/checks" && may("grid-meter"))) gridMeter.refresh();
     if (page === "#system/activity") refreshActions();
     if (tab === "#weather") weatherTab.refresh();
@@ -7942,7 +7913,7 @@
     main.addEventListener("pointerup", (event) => letGo(event, false));
     main.addEventListener("pointercancel", (event) => letGo(event, true));
   }
-  setInterval(() => { if (PAGES[shownPage()]?.view.dataset.perm === "appliances") refreshOverview(); }, APPLIANCES_REFRESH_MS);
+  setInterval(() => { if (PAGES[shownPage()] && usesOverview(PAGES[shownPage()].view)) refreshOverview(); }, APPLIANCES_REFRESH_MS);
 
   /*
     A table that scrolls sideways sits in a box that scrolls, and a sticky header only follows the
