@@ -232,6 +232,7 @@ SETTINGS = (
     "pv_capacity_kwp",
     "panel_tilt_deg",
     "panel_azimuth_deg",
+    "panel_azimuth_2_deg",  # optional: half the panels face this way instead
     # Where the house is, for the weather. Personal: rounded to 2 decimals and kept only here.
     "latitude",
     "longitude",

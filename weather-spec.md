@@ -104,6 +104,7 @@ All of these are in the "Solar panels and location" pane on the Appliances & tar
 | Location | none | Latitude and longitude, rounded to 2 decimals. Without one, nothing is fetched and the Weather tab asks for it |
 | Panels' total rating | none | kWp, as installed. The inverter can't report it |
 | Panel tilt and facing | none | Degrees from flat, and the compass direction (180 is south). Entered by hand: the inverter can't report them, and SEMS+ shows what the installer typed |
+| Second facing | none | Optional. For panels split between two directions, such as east and west roofs. The split is taken as even; a share setting can come if anyone has an uneven one |
 | Forecast provider | Open-Meteo | From the registry |
 | Warnings provider | none | From the registry. Met Éireann for this house |
 | Warnings region | none | From the provider's list, when it has one. For Met Éireann, the county |
@@ -115,7 +116,7 @@ All of these are in the "Solar panels and location" pane on the Appliances & tar
 ### Requests (Open-Meteo, as the first provider)
 
 - Forecast: `/v1/forecast` with the hourly fields the `Hour` record needs (temperature, feels like, precipitation and its probability, weather code, cloud cover total, low, mid and high, wind, gusts, direction, shortwave, direct and diffuse radiation, is_day), and daily sunrise, sunset and sunshine. `forecast_days=7`, `timeformat=unixtime`, `timezone=GMT`, `wind_speed_unit=ms`. W1 asks for the hours only: the daily figures are summed from them, and sunrise and sunset come in W3, worked out from the location or asked for then.
-- With the panel tilt set, global tilted irradiance (GTI) for that tilt and facing as well (facing south if it isn't set). The provider converts the app's compass bearing to its own convention: Open-Meteo counts 0 as south, −90 east, 90 west. A second array, if anyone needs one, would be one extra request each.
+- With the panel tilt set, global tilted irradiance (GTI) for that tilt and facing as well (facing south if it isn't set). The provider converts the app's compass bearing to its own convention: Open-Meteo counts 0 as south, −90 east, 90 west. With a second facing set, each forecast or past request is followed by one more for that facing's GTI only, and each hour's GTI is the mean of the two.
 - Past: the same fields from `historical-forecast-api.open-meteo.com/v1/forecast`, with start and end dates.
 - User-Agent: the app and its public repo, `solar-monitor (github.com/nicholasdtc/solar-monitor)`. No email address.
 - Open-Meteo labels radiation and precipitation by the end of the hour they cover, while temperature, cloud and wind are the value at that instant. The provider moves the first group back one hour, so every `Hour` is labelled by its start. Check against a sunny day's log.

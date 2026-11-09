@@ -40,6 +40,7 @@ class Location:
     longitude: float
     panel_tilt: float | None = None  # degrees from flat
     panel_facing: float | None = None  # compass degrees: 90 east, 180 south, 270 west
+    panel_facing_2: float | None = None  # optional: half the panels face this way instead
 
 
 @dataclass(frozen=True)
@@ -62,7 +63,7 @@ class Hour:
     ghi_wm2: float | None = None  # sunshine on flat ground: global horizontal irradiance, the hour's mean
     direct_wm2: float | None = None
     diffuse_wm2: float | None = None
-    gti_wm2: float | None = None  # sunshine on the panels' tilt and facing
+    gti_wm2: float | None = None  # sunshine on the panels' tilt and facing; with two facings, their mean
     is_day: bool | None = None
 
 

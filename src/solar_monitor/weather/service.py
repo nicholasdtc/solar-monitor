@@ -51,7 +51,13 @@ def location(settings: dict[str, object]) -> Location | None:
     if lat is None or lon is None:
         return None
     tilt, facing = settings.get("panel_tilt_deg"), settings.get("panel_azimuth_deg")
-    return Location(float(lat), float(lon), panel_tilt=tilt, panel_facing=facing)  # type: ignore[arg-type]
+    return Location(
+        float(lat),
+        float(lon),
+        panel_tilt=tilt,  # type: ignore[arg-type]
+        panel_facing=facing,  # type: ignore[arg-type]
+        panel_facing_2=settings.get("panel_azimuth_2_deg"),  # type: ignore[arg-type]
+    )
 
 
 def next_slot(now: float, interval: int, minute: int) -> float:

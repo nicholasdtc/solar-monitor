@@ -8,6 +8,7 @@ an hour later.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -113,17 +114,31 @@ class OpenMeteo:
         params["hourly"] = ",".join(hourly)
         return params
 
+    def _hours(self, url: str, where: Location, params: dict[str, Any], fetch: Fetch) -> list[Hour]:
+        """Fetch and parse. With a second facing, one more request for the sunshine that way, and
+        each hour's tilted sunshine becomes the mean of the two: half the panels face each way."""
+        hours = hours_from(fetch(url, params))
+        if where.panel_tilt is None or where.panel_facing_2 is None:
+            return hours
+        other = {**params, "hourly": "global_tilted_irradiance", "azimuth": open_meteo_azimuth(where.panel_facing_2)}
+        second = {h.hour_start: h.gti_wm2 for h in hours_from(fetch(url, other))}
+        return [replace(h, gti_wm2=_mean(h.gti_wm2, second.get(h.hour_start))) for h in hours]
+
     def forecast(self, where: Location, fetch: Fetch) -> list[Hour]:
         params = self._params(where, past=False)
         params["forecast_days"] = self.forecast_days
-        return hours_from(fetch(self.forecast_url, params))
+        return self._hours(self.forecast_url, where, params, fetch)
 
     def past(self, where: Location, start: int, end: int, fetch: Fetch) -> list[Hour]:
         """The hours that start from `start` up to `end`, as its past forecasts saw them."""
         params = self._params(where, past=True)
         params["start_date"] = _day(start)
         params["end_date"] = _day(end + HOUR)  # The hour ending at `end` is labelled the hour after.
-        return [h for h in hours_from(fetch(self.past_url, params)) if start <= h.hour_start < end]
+        return [h for h in self._hours(self.past_url, where, params, fetch) if start <= h.hour_start < end]
+
+
+def _mean(a: float | None, b: float | None) -> float | None:
+    return None if a is None or b is None else (a + b) / 2
 
 
 def _day(ts: int) -> str:

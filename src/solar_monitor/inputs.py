@@ -41,6 +41,7 @@ class SettingsIn(BaseModel):
     pv_capacity_kwp: Annotated[float, Field(gt=0, le=10_000, allow_inf_nan=False)] | None = None
     panel_tilt_deg: Annotated[float, Field(ge=0, le=90, allow_inf_nan=False)] | None = None
     panel_azimuth_deg: Annotated[float, Field(ge=0, lt=360, allow_inf_nan=False)] | None = None
+    panel_azimuth_2_deg: Annotated[float, Field(ge=0, lt=360, allow_inf_nan=False)] | None = None
     latitude: Annotated[float, Field(ge=-90, le=90, allow_inf_nan=False)] | None = None
     longitude: Annotated[float, Field(ge=-180, le=180, allow_inf_nan=False)] | None = None
 

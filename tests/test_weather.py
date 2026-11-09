@@ -113,6 +113,68 @@ def test_open_meteo_asks_for_the_panels_sunshine_only_with_a_tilt():
     assert flat["timezone"] == "GMT" and flat["timeformat"] == "unixtime" and flat["forecast_days"] == 7
 
 
+class TwoAnswers:
+    """The full answer first, then the same answer with the tilted sunshine doubled."""
+
+    def __init__(self, answer):
+        self.answer = answer
+        self.calls = []
+
+    def __call__(self, url, params):
+        self.calls.append((url, params))
+        if len(self.calls) == 1:
+            return self.answer
+        doubled = json.loads(json.dumps(self.answer))
+        gti = doubled["hourly"]["global_tilted_irradiance"]
+        doubled["hourly"]["global_tilted_irradiance"] = [None if v is None else v * 2 for v in gti]
+        return doubled
+
+
+TWO_FACINGS = Location(10.0, 20.0, panel_tilt=30, panel_facing=90, panel_facing_2=270)
+
+
+def test_open_meteo_asks_once_more_for_a_second_facing():
+    fetch = TwoAnswers(sample("open_meteo_forecast.json"))
+    open_meteo.OpenMeteo().forecast(TWO_FACINGS, fetch)
+    (url, first), (second_url, second) = fetch.calls
+    assert second_url == url == open_meteo.FORECAST_URL
+    assert (first["azimuth"], second["azimuth"]) == (-90, 90)
+    assert second["hourly"] == "global_tilted_irradiance" and second["tilt"] == 30
+    assert second["forecast_days"] == first["forecast_days"]
+
+
+def test_open_meteo_takes_the_mean_of_the_two_facings():
+    answer = sample("open_meteo_forecast.json")
+    one = open_meteo.OpenMeteo().forecast(Location(10.0, 20.0, panel_tilt=30, panel_facing=90), Saved(answer))
+    two = open_meteo.OpenMeteo().forecast(TWO_FACINGS, TwoAnswers(answer))
+    assert [h.hour_start for h in two] == [h.hour_start for h in one]
+    sunny = [(a.gti_wm2, b.gti_wm2) for a, b in zip(one, two, strict=True) if a.gti_wm2]
+    assert sunny and all(b == pytest.approx(a * 1.5) for a, b in sunny)
+    assert [h.ghi_wm2 for h in two] == [h.ghi_wm2 for h in one]
+
+
+@pytest.mark.parametrize(
+    "where",
+    [Location(10.0, 20.0, panel_facing=90, panel_facing_2=270), Location(10.0, 20.0, panel_tilt=30, panel_facing=90)],
+    ids=["no-tilt", "one-facing"],
+)
+def test_open_meteo_asks_once_without_a_tilt_and_second_facing(where):
+    fetch = Saved(sample("open_meteo_forecast.json"))
+    open_meteo.OpenMeteo().forecast(where, fetch)
+    assert len(fetch.calls) == 1
+
+
+def test_open_meteo_past_asks_for_the_second_facing_over_the_same_days():
+    answer = sample("open_meteo_forecast.json")
+    times = answer["hourly"]["time"]
+    fetch = TwoAnswers(answer)
+    hours = open_meteo.OpenMeteo().past(TWO_FACINGS, times[1], times[3], fetch)
+    assert [h.hour_start for h in hours] == times[1:3]
+    (url, first), (_, second) = fetch.calls
+    assert url == open_meteo.PAST_URL
+    assert (second["start_date"], second["end_date"]) == (first["start_date"], first["end_date"])
+
+
 def test_open_meteo_past_keeps_only_the_hours_asked_for():
     answer = sample("open_meteo_forecast.json")
     times = answer["hourly"]["time"]

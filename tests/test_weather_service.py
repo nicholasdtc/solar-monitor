@@ -94,10 +94,10 @@ def test_nothing_is_fetched_without_a_location(conn, stub):
 
 
 def test_a_forecast_is_fetched_then_not_again_until_its_slot(conn, stub):
-    placed(conn, panel_tilt_deg=30.0, panel_azimuth_deg=200.0)
+    placed(conn, panel_tilt_deg=30.0, panel_azimuth_deg=200.0, panel_azimuth_2_deg=20.0)
     state = service.State(minute=17)
     assert run(conn, START + 5 * 60, state) == START + 5 * 60 + service.CHECK_SECONDS
-    assert stub.calls == [Location(10.0, 20.0, panel_tilt=30.0, panel_facing=200.0)]
+    assert stub.calls == [Location(10.0, 20.0, panel_tilt=30.0, panel_facing=200.0, panel_facing_2=20.0)]
     assert outcomes(conn) == [("forecast", "ok", 3, None)]
     assert db.latest_forecast(conn, START)["provider"] == "stub"
     # Next at 17 past, an hour or more on: from 05 past, that's 17 past the next hour.

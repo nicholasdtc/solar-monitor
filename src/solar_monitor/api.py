@@ -210,6 +210,7 @@ SETTING_LABELS = {
     "pv_capacity_kwp": "Panels' total rating (kWp)",
     "panel_tilt_deg": "Panel tilt (°)",
     "panel_azimuth_deg": "Panels face (°)",
+    "panel_azimuth_2_deg": "Second facing (°)",
     "latitude": "Latitude",
     "longitude": "Longitude",
     "forecast_provider": "Forecast from",

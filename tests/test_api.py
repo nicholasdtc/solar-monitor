@@ -250,6 +250,7 @@ def test_invalid_appliances_are_refused(call, body):
     {"pv_capacity_kwp": 0},
     {"panel_tilt_deg": 91},
     {"panel_azimuth_deg": 360},
+    {"panel_azimuth_2_deg": -1},
     {"latitude": 90.5},
     {"longitude": -181},
 ])
