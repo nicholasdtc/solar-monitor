@@ -1381,7 +1381,7 @@
 
   <section class="view page" id="view-setup-activity" data-tab="setup" data-sub="activity" data-label="Activity" data-perm="history" aria-label="Setup: Activity" hidden>
     <div class="pane">
-      <h2>Action history <button type="button" class="help" aria-label="About this list" data-tip="Who changed what, latest first&#10;Display choices not listed">?</button></h2>
+      <h2>Activity <button type="button" class="help" aria-label="About this list" data-tip="Who changed what, latest first&#10;Display choices not listed">?</button></h2>
       <div class="range">
         <label>Who
           <select id="actions-user"><option value="">Everyone</option></select>
@@ -1397,7 +1397,7 @@
         </label>
       </div>
       <p class="alert" id="actions-error" role="alert"></p>
-      <div class="scroll" tabindex="0" role="region" aria-label="Action history table">
+      <div class="scroll" tabindex="0" role="region" aria-label="Activity table">
         <table>
           <thead><tr><th>When</th><th>Who</th><th>What</th><th>Change</th><th>Result</th></tr></thead>
           <tbody id="actions-rows"></tbody>
@@ -6858,7 +6858,7 @@
           button("Password…", "password", () => openUserPassword(user)),
           logOut,
           button("Remove", "remove", () => {
-            if (confirm(`Remove ${user.username}? What they did stays in the Action history.`)) {
+            if (confirm(`Remove ${user.username}? What they did stays in Activity.`)) {
               changeUsers("DELETE", `/api/users/${user.id}`, undefined, `Removed ${user.username}.`);
             }
           }),
@@ -6955,7 +6955,7 @@
   });
 
   /*
-    Action history: who changed what, latest first, a page at a time. An older page is asked for with `before`,
+    Activity: who changed what, latest first, a page at a time. An older page is asked for with `before`,
     which includes that second, so the rows already shown are dropped by source and id. A page that adds
     nothing, from a second with more rows than a page, is asked for again from the second before.
   */

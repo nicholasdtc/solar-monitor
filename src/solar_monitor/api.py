@@ -781,7 +781,7 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
         kind: Literal["inverter", "data", "users", "login"] | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict[str, object]:
-        """The Action history tab: what each person did, latest first. `before` includes that second, so
+        """The Activity page: what each person did, latest first. `before` includes that second, so
         the page drops the rows it already has, by source and id."""
         rows = db.list_history(collector.conn, before=before, limit=limit, username=user, kind=kind)
         return {

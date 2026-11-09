@@ -1,4 +1,4 @@
-"""The Users screen, changing your own password, the Action history tab, and making and resetting
+"""The Users screen, changing your own password, the Activity page, and making and resetting
 accounts from the command line."""
 
 import json
@@ -316,7 +316,7 @@ def test_guessing_the_current_password_has_to_wait(app):
     Browser(app).log_in("bob")
 
 
-# The Action history tab
+# The Activity page
 
 
 @pytest.fixture

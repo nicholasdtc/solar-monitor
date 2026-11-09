@@ -70,7 +70,7 @@ meter_readings.csv  The electricity meter's half-hours, as imported from ESB Net
                     it's the day before's last. occurrence is 1 for the earlier of two
                     half-hours with the same label when the clocks go back. kw is the average
                     drawn from the grid over the half-hour, so its kWh is half of it.
-actions.csv         The Action history tab: what people did here other than change the
+actions.csv         The Activity page: what people did here other than change the
                     inverter. kind is data, users or login. An empty username is a log-in
                     with an unknown name.
 weather_warnings.csv Weather warnings as issued. onset, expiry, first_seen and last_seen are
