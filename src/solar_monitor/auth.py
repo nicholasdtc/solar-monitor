@@ -183,6 +183,7 @@ ROUTES = (
     _route("GET", r"/api/daily"),
     _route("GET", r"/api/weather"),
     _route("GET", r"/api/weather/providers"),
+    _route("GET", r"/api/weather/history"),
     _route("GET", r"/api/meter", "grid-meter"),
     _route("GET", r"/api/appliances", "appliances"),
     _route("POST", r"/api/appliances", "appliances", "edit"),

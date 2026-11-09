@@ -80,7 +80,7 @@ def test_csv_zip_holds_each_table(filled, temp_folder):
         assert sorted(archive.namelist()) == [
             "README.txt", "actions.csv", "appliances.csv", "daily_counters.csv", "inverter_writes.csv",
             "meter_readings.csv", "samples.csv", "setting_writes.csv", "settings.csv", "text_settings.csv",
-            "weather_warnings.csv",
+            "weather_hours.csv", "weather_warnings.csv",
         ]
         samples = read_csv(archive, "samples.csv")
         counters = read_csv(archive, "daily_counters.csv")

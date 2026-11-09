@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS weather_fetches (
     id         INTEGER PRIMARY KEY,
     fetched_at INTEGER NOT NULL,        -- Unix seconds
     provider   TEXT NOT NULL,
-    kind       TEXT NOT NULL,           -- forecast or warnings
+    kind       TEXT NOT NULL,           -- forecast, warnings or past
     outcome    TEXT NOT NULL,           -- ok, not modified, rate limited or error
     items      INTEGER NOT NULL DEFAULT 0,
     error      TEXT
@@ -155,6 +155,17 @@ CREATE TABLE IF NOT EXISTS forecast_hours (
     hour_start INTEGER NOT NULL,
     {hour_columns},
     PRIMARY KEY (fetch_id, hour_start)
+) WITHOUT ROWID;
+
+-- The weather for each hour the app has a log for, to set beside it. Labelled by when the hour
+-- starts, in Unix seconds. From the provider's record of past weather where it has one, which
+-- nothing else replaces; otherwise the latest forecast for the hour, until such a record comes.
+CREATE TABLE IF NOT EXISTS weather_hours (
+    hour_start INTEGER PRIMARY KEY,
+    source     TEXT NOT NULL,           -- past:<provider> or forecast:<provider>
+    fetched_at INTEGER NOT NULL,
+    panels     TEXT,                    -- the tilt/facing[/facing] gti_wm2 is for, NULL without a tilt
+    {hour_columns}
 ) WITHOUT ROWID;
 
 -- Weather warnings as issued, kept after they end.
@@ -247,6 +258,7 @@ TEXT_SETTINGS = (
 
 # How long an older forecast keeps its hours, from when it was fetched. The newest keeps them all.
 FORECAST_KEEP_SECONDS = 48 * HOUR
+DAY = 24 * HOUR
 
 # Settings older versions kept. They're removed on start, and skipped quietly in an import.
 RETIRED_SETTINGS = (
@@ -640,8 +652,25 @@ def add_weather_fetch(
         _add_weather_fetch(conn, fetched_at, provider, kind, outcome, 0, error)
 
 
-def save_forecast(conn: sqlite3.Connection, fetched_at: int, provider: str, hours: Iterable[Hour]) -> int:
-    """Keep a forecast's hours, and trim the older forecasts to the hours just after they were fetched."""
+def _save_weather_hours(
+    conn: sqlite3.Connection, source: str, fetched_at: int, panels: str | None, hours: Iterable[Hour]
+) -> None:
+    """Keep each hour unless a record of past weather already has it: that only gives way to another."""
+    columns = ("hour_start", "source", "fetched_at", "panels", *HOUR_FIELDS)
+    conn.executemany(
+        f"INSERT INTO weather_hours ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))}) "
+        f"ON CONFLICT (hour_start) DO UPDATE SET {', '.join(f'{c} = excluded.{c}' for c in columns[1:])} "
+        "WHERE weather_hours.source NOT LIKE 'past:%' OR excluded.source LIKE 'past:%'",
+        [(h.hour_start, source, fetched_at, panels, *(getattr(h, name) for name in HOUR_FIELDS)) for h in hours],
+    )
+
+
+def save_forecast(
+    conn: sqlite3.Connection, fetched_at: int, provider: str, hours: Iterable[Hour], panels: str | None = None
+) -> int:
+    """Keep a forecast's hours, and trim the older forecasts to the hours just after they were fetched.
+    The hours that have begun also go into weather_hours, so a provider with no record of past
+    weather still leaves one: its latest forecast for each hour. panels is what gti_wm2 is for."""
     hours = list(hours)
     columns = ("fetch_id", "hour_start", *HOUR_FIELDS)
     with conn:
@@ -656,7 +685,71 @@ def save_forecast(conn: sqlite3.Connection, fetched_at: int, provider: str, hour
             "(SELECT fetched_at FROM weather_fetches WHERE id = fetch_id) + ?",
             (fetch_id, FORECAST_KEEP_SECONDS),
         )
+        _save_weather_hours(conn, f"forecast:{provider}", fetched_at, panels, [h for h in hours if h.hour_start <= fetched_at])
     return fetch_id
+
+
+def save_past(conn: sqlite3.Connection, fetched_at: int, provider: str, hours: Iterable[Hour], panels: str | None) -> None:
+    """Keep hours from the provider's record of past weather. Hours with nothing in them, as a record
+    not yet complete may send, are left out so that they're asked for again."""
+    hours = [h for h in hours if any(getattr(h, name) is not None for name in HOUR_FIELDS)]
+    with conn:
+        _add_weather_fetch(conn, fetched_at, provider, "past", "ok", len(hours), None)
+        _save_weather_hours(conn, f"past:{provider}", fetched_at, panels, hours)
+
+
+def _day_start(day: str) -> int:
+    """UTC midnight at the start of a YYYY-MM-DD."""
+    return (date.fromisoformat(day) - date(1970, 1, 1)).days * DAY
+
+
+def log_start(conn: sqlite3.Connection) -> int | None:
+    """The UTC midnight on or before the earliest thing logged: a reading, a day's counters or a
+    meter half-hour, or None with nothing logged. Days are on a local clock, so a day earlier."""
+    starts = []
+    first = conn.execute("SELECT MIN(ts) FROM samples").fetchone()[0]
+    if first is not None:
+        starts.append(int(first))
+    for table in ("daily_counters", "meter_readings"):
+        day = conn.execute(f"SELECT MIN(day) FROM {table}").fetchone()[0]
+        if day is not None:
+            starts.append(_day_start(day) - DAY)
+    return min(starts) // DAY * DAY if starts else None
+
+
+def weather_hours_missing(conn: sqlite3.Connection, start: int, end: int, panels: str | None) -> list[int]:
+    """The hours from `start` up to `end` with no record of past weather for these panels, oldest first."""
+    have = {
+        row[0]
+        for row in conn.execute(
+            "SELECT hour_start FROM weather_hours WHERE hour_start >= ? AND hour_start < ? "
+            "AND source LIKE 'past:%' AND panels IS ?",
+            (start, end, panels),
+        )
+    }
+    return [hour for hour in range(start, end, HOUR) if hour not in have]
+
+
+def weather_hours_count(conn: sqlite3.Connection, start: int, end: int) -> int:
+    return int(
+        conn.execute("SELECT COUNT(*) FROM weather_hours WHERE hour_start >= ? AND hour_start < ?", (start, end)).fetchone()[0]
+    )
+
+
+def weather_history(conn: sqlite3.Connection, start: int, end: int) -> list[dict[str, object]]:
+    """The weather_hours from `start` up to `end`, oldest first."""
+    columns = ("hour_start", "source", *HOUR_FIELDS)
+    hours = [
+        dict(zip(columns, values, strict=True))
+        for values in conn.execute(
+            f"SELECT {', '.join(columns)} FROM weather_hours WHERE hour_start >= ? AND hour_start < ? ORDER BY hour_start",
+            (start, end),
+        )
+    ]
+    for hour in hours:
+        if hour["is_day"] is not None:
+            hour["is_day"] = bool(hour["is_day"])
+    return hours
 
 
 def latest_forecast(conn: sqlite3.Connection, since: int) -> dict[str, object] | None:

@@ -349,7 +349,7 @@ def test_a_tab_needs_its_permission(conn, owner, method, path, permission):
 
 
 
-@pytest.mark.parametrize("path", ["/api/weather", "/api/weather/providers"])
+@pytest.mark.parametrize("path", ["/api/weather", "/api/weather/providers", "/api/weather/history?start=0&end=3600"])
 def test_the_weather_needs_no_permission(conn, owner, path):
     add_account(conn, "nobody")
     assert Browser(real_app(conn)).log_in("nobody").get(path).status_code == 200

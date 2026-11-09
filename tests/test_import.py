@@ -57,6 +57,8 @@ def source(tmp_path):
     db.save_settings(connection, {"tariff_day": 0.25, "outage_hours": 4, "forecast_provider": "met-norway"})
     db.save_settings(connection, {"warnings_provider": "met-eireann", "warnings_region": "EI07"})
     db.save_warnings(connection, TS, "met-eireann", [warning("1", TS, TS + DAY), warning("2", None, None)])
+    db.save_past(connection, TS + DAY, "open-meteo", [Hour(TS, "clear", 5.5, is_day=True, gti_wm2=210.0)], "30/180")
+    db.save_forecast(connection, TS + HOUR, "met-norway", [Hour(TS + HOUR, "rain", 6.0, is_day=False)], "30/90/270")
     write = db.add_inverter_write(connection, 2, "aa" * 12, "bb" * 12, 50, 60)
     db.finish_inverter_write(connection, write, "confirmed", None)
     write = db.add_setting_write(connection, "min_soc", 20, 5)
@@ -98,6 +100,7 @@ def contents(conn):
         "meter_readings",
         "text_settings",
         "weather_warnings",
+        "weather_hours",
         "weather_fetches",
         "forecast_hours",
     )
@@ -176,7 +179,7 @@ def test_full_database_brings_back_everything_but_the_inverter_log(tmp_path, con
     assert report["changes"] is True
     expected = contents(source)
     actual = contents(conn)
-    for name in ("samples", "daily_counters", "settings", "text_settings", "weather_warnings"):
+    for name in ("samples", "daily_counters", "settings", "text_settings", "weather_warnings", "weather_hours"):
         assert actual[name] == expected[name], name
     assert appliances(conn) == appliances(source)
     assert db.daily_totals(conn) == db.daily_totals(source)
@@ -189,7 +192,7 @@ def test_csv_brings_back_the_main_readings_and_what_can_be_rebuilt_from_them(tmp
     columns = "ts, pv_w, load_w, battery_w, battery_soc, grid_w"
     assert conn.execute(f"SELECT {columns} FROM samples").fetchall() == source.execute(f"SELECT {columns} FROM samples").fetchall()
     assert contents(conn)["daily_counters"] == contents(source)["daily_counters"]
-    for name in ("settings", "text_settings", "weather_warnings"):  # Warnings with no start or end too.
+    for name in ("settings", "text_settings", "weather_warnings", "weather_hours"):  # Warnings with no start or end too.
         assert contents(conn)[name] == contents(source)[name], name
     assert appliances(conn) == appliances(source)  # Accents, quotes and the tick all survive.
     assert db.daily_totals(conn) == db.daily_totals(source)
@@ -422,6 +425,18 @@ def test_a_warning_already_here_stays_as_it_is(tmp_path, conn, source):
     assert conn.execute("SELECT expiry, first_seen FROM weather_warnings WHERE id = '1'").fetchone() == (TS + 2 * DAY, TS + HOUR)
 
 
+def test_a_record_of_past_weather_replaces_a_forecast_here_but_not_the_other_way(tmp_path, conn, source):
+    db.save_forecast(conn, TS + HOUR, "other", [Hour(TS, "cloudy", 1.0), Hour(TS + HOUR, "cloudy", 1.0)])
+    db.save_past(conn, TS + DAY, "other", [Hour(TS + 2 * HOUR, "cloudy", 1.0)], None)
+    report = run(tmp_path, conn, exported(source, "csv"))
+    assert (table(report, "weather_hours")["in_file"], table(report, "weather_hours")["new"]) == (2, 1)
+    assert dict(conn.execute("SELECT hour_start, source FROM weather_hours")) == {
+        TS: "past:open-meteo",
+        TS + HOUR: "forecast:other",
+        TS + 2 * HOUR: "past:other",
+    }
+
+
 def test_forecasts_and_the_fetch_log_are_left_out(tmp_path, conn, source):
     db.save_forecast(source, TS, "open-meteo", [Hour(hour_start=TS + HOUR, temperature_c=5.0)])
     run(tmp_path, conn, exported(source, "sqlite"))
@@ -429,14 +444,20 @@ def test_forecasts_and_the_fetch_log_are_left_out(tmp_path, conn, source):
 
 
 def test_exports_from_before_the_weather_still_work(tmp_path, conn, source):
-    older_zip = rezip(exported(source, "csv"), {"text_settings.csv": None, "weather_warnings.csv": None})
+    older_zip = rezip(
+        exported(source, "csv"), {"text_settings.csv": None, "weather_warnings.csv": None, "weather_hours.csv": None}
+    )
     older_database = with_sql(
-        tmp_path, exported(source, "sqlite"), "DROP TABLE text_settings", "DROP TABLE weather_warnings"
+        tmp_path,
+        exported(source, "sqlite"),
+        "DROP TABLE text_settings",
+        "DROP TABLE weather_warnings",
+        "DROP TABLE weather_hours",
     )
     for content in (older_zip, older_database):
         report = run(tmp_path, conn, content, apply=False)
         assert table(report, "samples")["new"] == 2
-        assert {entry["id"] for entry in report["tables"]}.isdisjoint({"text_settings", "weather_warnings"})
+        assert {entry["id"] for entry in report["tables"]}.isdisjoint({"text_settings", "weather_warnings", "weather_hours"})
 
 
 def test_a_retired_setting_from_an_older_copy_is_skipped_without_a_note(tmp_path, conn, source):
@@ -532,6 +553,14 @@ def test_a_zip_missing_a_column_is_refused(tmp_path, conn, source):
         ("weather_warnings", "regions", "[7]"),
         ("weather_warnings", "onset", "1.5"),
         ("weather_warnings", "first_seen", ""),
+        ("weather_hours", "hour_start", str(TS + 60)),
+        ("weather_hours", "source", "guess:me"),
+        ("weather_hours", "source", "forecast:"),
+        ("weather_hours", "panels", "south"),
+        ("weather_hours", "condition", "sharknado"),
+        ("weather_hours", "is_day", "2"),
+        ("weather_hours", "temperature_c", "warm"),
+        ("weather_hours", "fetched_at", "1.5"),
     ],
 )
 def test_a_bad_cell_on_the_last_row_refuses_the_whole_file(tmp_path, conn, source, name, column, value):
@@ -548,6 +577,7 @@ def test_a_bad_cell_on_the_last_row_refuses_the_whole_file(tmp_path, conn, sourc
         pytest.param("UPDATE appliances SET typical_w = -1 WHERE name = 'Kettle'", id="negative-watts"),
         pytest.param("UPDATE settings SET value = 200000 WHERE key = 'tariff_day'", id="bad-setting"),
         pytest.param("UPDATE weather_warnings SET link = 'data:text/html,x' WHERE id = '2'", id="bad-warning-link"),
+        pytest.param(f"UPDATE weather_hours SET gti_wm2 = 'lots' WHERE hour_start = {TS + HOUR}", id="bad-weather-hour"),
     ],
 )
 def test_a_bad_value_in_a_database_refuses_the_whole_file(tmp_path, conn, source, statement):

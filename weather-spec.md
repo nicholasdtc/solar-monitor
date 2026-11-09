@@ -152,6 +152,8 @@ CREATE TABLE forecast_hours (
 CREATE TABLE weather_hours (
     hour_start   INTEGER PRIMARY KEY,
     source       TEXT NOT NULL,        -- 'past:open-meteo', or 'forecast:met-norway' when only a forecast was available
+    fetched_at   INTEGER NOT NULL,
+    panels       TEXT,                 -- the tilt and facings gti_wm2 is for, such as '30/180' or '30/90/270'
     ...the Hour fields...
 ) WITHOUT ROWID;
 ```
@@ -164,7 +166,7 @@ CREATE TABLE weather_hours (
 
 That's about 1,200 rows a day for the last fortnight, then 48 a day, so a few MB a year.
 
-The warnings and the text settings go into the CSV export and the importer like the other tables, and the location goes with the other settings. The forecast runs and the fetch log are only in the full database export, and the importer leaves them out: an old forecast is no use on another copy. `weather_hours` (W2) will go in both, as it's the weather as it happened.
+The warnings and the text settings go into the CSV export and the importer like the other tables, and the location goes with the other settings. The forecast runs and the fetch log are only in the full database export, and the importer leaves them out: an old forecast is no use on another copy. `weather_hours` (W2) goes in both, as it's the weather as it happened.
 
 ## W2: weather for every hour, for the statistics
 
@@ -173,6 +175,17 @@ The warnings and the text settings go into the CSV export and the importer like 
 - **With a provider that has past data** (Open-Meteo): once a night, fill yesterday from its past service. Where the log has hours that `weather_hours` doesn't, fill those too: that covers the first backfill back to the start of the log, and the Pi being offline.
 - **With a provider that hasn't**: when an hour has passed, keep the latest forecast for it, the one made closest to it, with its source marked as a forecast. Nothing is lost if the provider is changed later: the past service can overwrite these rows.
 - The backfill runs in small chunks (a month per request), well inside the provider's limits, and shows its progress on the Weather tab.
+
+**As built in W2:**
+
+- The fetch loop's past job finds the hours from the start of the log (the UTC midnight before the first reading, day's counters or meter half-hour) to the start of today with no past row for the current panels. It asks for up to 31 days at a time, newest first, ten seconds apart, then waits for 03:00 UTC plus the run's minute and asks for the day just over.
+- Precedence: a past row replaces a forecast row or an older past row; a forecast row replaces an older forecast row but never a past one. Each forecast fetch copies the hours that have begun.
+- Hours the provider sent nothing for, or only empty values, aren't asked for again until the night. A 4xx on older days stops those and all before them until the night, as they're most likely before the provider's records begin; on the newest days it stops only those. Other errors back off as the forecast does.
+- A change of panels counts the hours as missing, so they're fetched again for the new tilt and facings. A change of location isn't tracked: the rows keep the weather of the old place.
+- Cost on Open-Meteo: a 31-day chunk is about 4 calls by its weighting, plus a smaller one for a second facing, so two years of log is about 120 calls, once.
+- `GET /api/weather` has a `history` block: the log's start, the end, the hours and how many are filled. `GET /api/weather/history` serves up to 366 days at once.
+- The CSV and database exports carry the table, and the importer brings it back with the same precedence.
+- Not yet: the Statistics overlays below and the progress line on the Weather tab, with W3.
 
 **In Statistics:** the history charts can show weather beside the readings. That means an optional row for irradiance and cloud under the solar chart, temperature beside the load, and the condition icon per day on the daily view. Each is off by default and is a display preference.
 
@@ -288,7 +301,7 @@ Fixtures use made-up coordinates, never the house's.
 
 ## Open questions
 
-- Whether the Open-Meteo past-forecast service has the same free terms as the forecast. Its pages don't say; check before the backfill runs.
+- ~~Whether the Open-Meteo past-forecast service has the same free terms as the forecast.~~ Its docs offer the same free non-commercial use as the forecast, and the terms cover the API as a whole, so the credit already shown covers it.
 - Whether Met Éireann's warnings feed needs anything beyond the statements in its credit.
 - How long the forecast needs to run before V2's suggestions are trusted enough to offer the "Do it" button.
 

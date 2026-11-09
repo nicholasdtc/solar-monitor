@@ -38,7 +38,7 @@ from pydantic import ValidationError
 
 from solar_monitor import db, export, meter
 from solar_monitor.inputs import ApplianceIn, SettingsIn
-from solar_monitor.weather.base import LEVELS
+from solar_monitor.weather.base import CONDITIONS, HOUR, HOUR_FIELDS, LEVELS
 
 BATCH_ROWS = 1000
 BATCH_PAUSE_SECONDS = 0.02
@@ -52,6 +52,8 @@ SQLITE_HEADER = b"SQLite format 3\0"
 ZIP_HEADER = b"PK\x03\x04"
 BYTE_ORDER_MARK = b"\xef\xbb\xbf"
 DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+WEATHER_SOURCE = re.compile(r"(past|forecast):[\w.-]{1,40}")
+PANELS = re.compile(r"[\d.]{1,8}/([\d.]{1,8}|-)(/[\d.]{1,8})?")
 
 COLUMNS = {
     "samples": ("ts", *db.READINGS),
@@ -74,9 +76,10 @@ COLUMNS = {
         "first_seen",
         "last_seen",
     ),
+    "weather_hours": ("hour_start", "source", "fetched_at", "panels", *HOUR_FIELDS),
 }
 # Exports from before the app held them don't have them.
-OPTIONAL = {"meter_readings", "text_settings", "weather_warnings"}
+OPTIONAL = {"meter_readings", "text_settings", "weather_warnings", "weather_hours"}
 LABELS = {
     "samples": "Readings",
     "daily_counters": "Daily counters",
@@ -85,6 +88,7 @@ LABELS = {
     "meter_readings": "Meter half-hours",
     "text_settings": "Weather choices",
     "weather_warnings": "Weather warnings",
+    "weather_hours": "Weather by the hour",
 }
 WRITE_LOGS = ("inverter_writes", "setting_writes")  # Only true of the copy that sent them.
 
@@ -683,6 +687,62 @@ def _merge_text_settings(source: Source, target: sqlite3.Connection, write: bool
     return {"in_file": in_file, "new": new, "unknown": unknown}
 
 
+def _blank(value: object) -> bool:
+    return value is None or value == ""
+
+
+def _weather_hour(row: Row) -> tuple[object, ...]:
+    hour_start = _whole(row["hour_start"], "hour_start", LATEST_TS)
+    if hour_start % HOUR:
+        raise ValueError(f"hour_start isn't on the hour: {hour_start}")
+    source = row["source"]
+    if not isinstance(source, str) or not WEATHER_SOURCE.fullmatch(source):
+        raise ValueError(f"source isn't past: or forecast: and a provider: {str(source)[:40]}")
+    panels = None if _blank(row["panels"]) else row["panels"]
+    if panels is not None and not (isinstance(panels, str) and PANELS.fullmatch(panels)):
+        raise ValueError(f"panels isn't a tilt and facings: {str(panels)[:40]}")
+    values: list[object] = []
+    for name in HOUR_FIELDS:
+        value = row[name]
+        if _blank(value):
+            values.append(None)
+        elif name == "condition":
+            if value not in CONDITIONS:
+                raise ValueError(f"condition isn't one this app knows: {str(value)[:40]}")
+            values.append(value)
+        elif name == "is_day":
+            values.append(_whole(value, name, 1))
+        else:
+            values.append(_number(value, name))
+    return (hour_start, source, _whole(row["fetched_at"], "fetched_at", LATEST_TS), panels, *values)
+
+
+def _merge_weather_hours(source: Source, target: sqlite3.Connection, write: bool) -> dict[str, object]:
+    """Hours not here are added, and a record of past weather replaces a forecast here."""
+    here = {hour: bool(past) for hour, past in target.execute("SELECT hour_start, source LIKE 'past:%' FROM weather_hours")}
+    columns = COLUMNS["weather_hours"]
+    in_file = new = 0
+    with _checked(source, "weather_hours", _weather_hour) as rows:
+        for batch in _batches(rows):
+            in_file += len(batch)
+            fresh = []
+            for hour in batch:
+                past = str(hour[1]).startswith("past:")
+                if hour[0] not in here or (past and not here[hour[0]]):
+                    here[hour[0]] = past
+                    fresh.append(hour)
+            new += len(fresh)
+            if write and fresh:
+                with target:
+                    target.executemany(
+                        f"INSERT OR REPLACE INTO weather_hours ({', '.join(columns)}) "
+                        f"VALUES ({', '.join('?' * len(columns))})",
+                        fresh,
+                    )
+                time.sleep(BATCH_PAUSE_SECONDS)
+    return {"in_file": in_file, "new": new}
+
+
 def _merge_weather_warnings(source: Source, target: sqlite3.Connection, write: bool) -> dict[str, object]:
     here = set(target.execute("SELECT provider, id FROM weather_warnings"))
     columns = COLUMNS["weather_warnings"]
@@ -715,6 +775,7 @@ MERGES = {
     "meter_readings": _merge_meter_readings,
     "text_settings": _merge_text_settings,
     "weather_warnings": _merge_weather_warnings,
+    "weather_hours": _merge_weather_hours,
 }
 
 

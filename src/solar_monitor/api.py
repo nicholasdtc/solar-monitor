@@ -125,6 +125,7 @@ LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
 # Measuring reads every sample in the window, so it isn't repeated on every page refresh.
 MEASURE_SECONDS = 3600
 MEASURE_WINDOW_SECONDS = 30 * 86400
+WEATHER_HISTORY_MAX_DAYS = 366  # A year of hours is about 9,000 rows.
 
 
 Clock = Annotated[str, StringConstraints(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")]
@@ -579,7 +580,34 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
             "warnings": db.current_warnings(collector.conn, warner.name, now) if warner else [],
             "credits": [_credit(p) for p in (forecaster, warner) if p is not None],
             "fetches": db.last_weather_fetches(collector.conn),
+            "history": _weather_history_status(settings, forecaster, now),
         }
+
+    def _weather_history_status(settings: dict[str, object], forecaster: object, now: int) -> dict[str, object] | None:
+        """How much of the log has its weather: the hours from the log's start, and how many are filled.
+        With a record of past weather, up to the start of today and only from that record."""
+        where = weather_service.location(settings)
+        start = db.log_start(collector.conn)
+        if where is None or forecaster is None or start is None:
+            return None
+        has_past = bool(forecaster.has_past)  # type: ignore[attr-defined]
+        end = now // weather_service.DAY * weather_service.DAY if has_past else now - now % HOUR
+        end = max(end, start)
+        if has_past:
+            missing = db.weather_hours_missing(collector.conn, start, end, weather_service.panels_of(where))
+            filled = (end - start) // HOUR - len(missing)
+        else:
+            filled = db.weather_hours_count(collector.conn, start, end)
+        return {"start": start, "end": end, "hours": (end - start) // HOUR, "filled": filled, "from_past": has_past}
+
+    @app.get("/api/weather/history")
+    async def api_weather_history(start: int, end: int) -> dict[str, object]:
+        """The weather for each hour from `start` up to `end`, as far as it's kept."""
+        if end <= start:
+            raise HTTPException(status_code=400, detail="end must be after start")
+        if end - start > WEATHER_HISTORY_MAX_DAYS * weather_service.DAY:
+            raise HTTPException(status_code=400, detail=f"at most {WEATHER_HISTORY_MAX_DAYS} days at once")
+        return {"start": start, "end": end, "hours": db.weather_history(collector.conn, start, end)}
 
     @app.get("/api/weather/providers")
     async def api_weather_providers() -> dict[str, object]:

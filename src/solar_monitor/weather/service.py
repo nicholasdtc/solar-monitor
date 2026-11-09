@@ -8,6 +8,9 @@ Each kind is fetched as often as its provider allows, at most hourly for forecas
 picked at random once per run of the app so that copies of it don't all ask at once. A change of
 location, panels, provider or region fetches at once. Errors back off, doubling up to an hour, and
 HTTP 429 waits for the next hour.
+
+With a provider that has a record of past weather, weather_hours is filled from it for every hour
+the app has a log for: a month at a time, newest first, then once a night for the day before.
 """
 
 from __future__ import annotations
@@ -27,6 +30,10 @@ from solar_monitor.weather.base import HOUR, Fetch, FetchError, Location, NotMod
 CHECK_SECONDS = 60  # How soon a change of settings is noticed.
 FIRST_BACKOFF = 5 * 60
 MAX_BACKOFF = HOUR
+DAY = 24 * HOUR
+PAST_CHUNK_DAYS = 31  # Days of past weather asked for at once.
+PAST_PAUSE = 10  # Seconds between those asks.
+NIGHT_HOUR = 3  # UTC: the day before is filled in after this, plus this run's minute.
 
 
 @dataclass
@@ -43,6 +50,10 @@ class State:
     minute: int = field(default_factory=lambda: random.randrange(60))
     forecast: Job = field(default_factory=Job)
     warnings: Job = field(default_factory=Job)
+    past: Job = field(default_factory=Job)
+    # Hours of past weather already asked for since the last night, so ones the provider doesn't
+    # have aren't asked for again and again.
+    past_tried: set[int] = field(default_factory=set)
 
 
 def location(settings: dict[str, object]) -> Location | None:
@@ -58,6 +69,20 @@ def location(settings: dict[str, object]) -> Location | None:
         panel_facing=facing,  # type: ignore[arg-type]
         panel_facing_2=settings.get("panel_azimuth_2_deg"),  # type: ignore[arg-type]
     )
+
+
+def panels_of(where: Location) -> str | None:
+    """What the sunshine on the panels is for, such as "30/180" or "30/90/270", or None without a tilt."""
+    if where.panel_tilt is None:
+        return None
+    facings = [where.panel_facing] + ([] if where.panel_facing_2 is None else [where.panel_facing_2])
+    return "/".join([f"{float(where.panel_tilt):g}", *("-" if f is None else f"{float(f):g}" for f in facings)])
+
+
+def next_night(now: float, minute: int) -> float:
+    """The next NIGHT_HOUR UTC, at this run's minute."""
+    offset = NIGHT_HOUR * HOUR + minute * 60
+    return (math.floor((now - offset) / DAY) + 1) * DAY + offset
 
 
 def next_slot(now: float, interval: int, minute: int) -> float:
@@ -85,8 +110,9 @@ async def _attempt(
     minute: int,
     call: Callable[[], list[object]],
     save: Callable[[int, list[object]], None],
-) -> None:
-    """Run one fetch on a worker thread, note how it went, and set when it's next due."""
+) -> Exception | None:
+    """Run one fetch on a worker thread, note how it went, and set when it's next due. Returns the
+    error, if it failed."""
     at = int(now)
     try:
         found = await asyncio.to_thread(call)
@@ -98,7 +124,7 @@ async def _attempt(
             log(f"Weather {kind} from {provider_name} rate limited, waiting for the next hour")
         job.failures += 1
         job.due = next_hour(now)
-        return
+        return error
     except Exception as error:  # A provider's bug mustn't stop the loop, so it counts as an error too.
         message = str(error) if isinstance(error, FetchError) else f"{type(error).__name__}: {error}"
         db.add_weather_fetch(conn, at, provider_name, kind, "error", message)
@@ -106,13 +132,14 @@ async def _attempt(
             log(f"Weather {kind} from {provider_name} failing, will keep trying: {message}")
         job.failures += 1
         job.due = now + _backoff(job.failures)
-        return
+        return error
     else:
         save(at, found)
     if job.failures:
         log(f"Weather {kind} from {provider_name} recovered")
     job.failures = 0
     job.due = next_slot(now, interval, minute)
+    return None
 
 
 def _is_due(job: Job, key: tuple[object, ...], now: float) -> bool:
@@ -122,12 +149,64 @@ def _is_due(job: Job, key: tuple[object, ...], now: float) -> bool:
     return now >= job.due
 
 
+def _past_chunk(missing: list[int], tried: set[int], first: int, end: int) -> tuple[int, int] | None:
+    """The next days to ask for: up to a month ending with the newest day still missing an hour,
+    from the oldest day missing one within that month."""
+    untried = [hour for hour in missing if hour not in tried]
+    if not untried:
+        return None
+    chunk_end = min(untried[-1] // DAY * DAY + DAY, end)
+    earliest = max(chunk_end - PAST_CHUNK_DAYS * DAY, first)
+    return max(next(hour for hour in untried if hour >= earliest) // DAY * DAY, first), chunk_end
+
+
+async def _fill_past(conn: sqlite3.Connection, now: float, fetch: Fetch, state: State, where: Location, name: str) -> float:
+    """Ask for the next month of past weather that's missing, or wait for the night if none is."""
+    job, provider = state.past, weather.FORECASTS[name]
+    key = (where, name)
+    if key != job.key:
+        state.past_tried.clear()
+    if not _is_due(job, key, now):
+        return job.due
+    first, end = db.log_start(conn), int(now) // DAY * DAY  # Only whole days that are over.
+    panels = panels_of(where)
+    chunk = None
+    if first is not None and first < end:
+        chunk = _past_chunk(db.weather_hours_missing(conn, first, end, panels), state.past_tried, first, end)
+    if chunk is None:
+        state.past_tried.clear()  # So tonight's look tries any gaps again.
+        job.due = next_night(now, state.minute)
+        return job.due
+    start, stop = chunk
+    error = await _attempt(
+        conn,
+        now,
+        job,
+        "past",
+        name,
+        DAY,
+        state.minute,
+        lambda: provider.past(where, start, stop, fetch),
+        lambda at, hours: db.save_past(conn, at, name, hours, panels),
+    )
+    if error is None:
+        state.past_tried.update(range(start, stop, HOUR))
+        job.due = now + PAST_PAUSE
+    elif isinstance(error, FetchError) and not isinstance(error, RateLimited) and 400 <= (error.status or 0) < 500:
+        # It won't give these days. Older ones are most likely from before its records begin, so
+        # none earlier are asked for either; the newest are most likely too recent, so only those.
+        state.past_tried.update(range(start if stop == end else first, stop, HOUR))
+        job.failures = 0
+        job.due = now + PAST_PAUSE
+    return job.due
+
+
 async def run_once(conn: sqlite3.Connection, now: float, fetch: Fetch, state: State) -> float:
     """Fetch whatever is due, and return when to look again."""
     settings = db.get_settings(conn)
     where = location(settings)
     if where is None:  # Nothing is fetched until there's a location.
-        state.forecast.key = state.warnings.key = None
+        state.forecast.key = state.warnings.key = state.past.key = None
         return now + CHECK_SECONDS
     wakes = [now + CHECK_SECONDS]
 
@@ -144,9 +223,11 @@ async def run_once(conn: sqlite3.Connection, now: float, fetch: Fetch, state: St
                 forecaster.min_interval,
                 state.minute,
                 lambda: forecaster.forecast(where, fetch),
-                lambda at, hours: db.save_forecast(conn, at, name, hours),
+                lambda at, hours: db.save_forecast(conn, at, name, hours, panels_of(where)),
             )
         wakes.append(state.forecast.due)
+        if forecaster.has_past:
+            wakes.append(await _fill_past(conn, now, fetch, state, where, name))
 
     warner_name = settings.get("warnings_provider")
     warner = weather.WARNINGS.get(str(warner_name)) if warner_name else None

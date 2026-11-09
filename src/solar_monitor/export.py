@@ -21,6 +21,7 @@ from datetime import date
 from pathlib import Path
 
 from solar_monitor import db
+from solar_monitor.weather.base import HOUR_FIELDS
 
 # File name in the ZIP (without .csv) -> what goes in it.
 CSV_QUERIES = {
@@ -39,6 +40,8 @@ CSV_QUERIES = {
     "FROM actions ORDER BY id",
     "weather_warnings": "SELECT provider, id, level, kind, headline, description, onset, expiry, regions, link, "
     "first_seen, last_seen FROM weather_warnings ORDER BY first_seen, provider, id",
+    "weather_hours": f"SELECT hour_start, datetime(hour_start, 'unixepoch', 'localtime') AS local_time, source, "
+    f"fetched_at, panels, {', '.join(HOUR_FIELDS)} FROM weather_hours ORDER BY hour_start",
 }
 
 CSV_LAYOUT = "Solar monitor export, CSV layout 1"  # Importing reads this, so a change of layout needs a new number.
@@ -74,6 +77,12 @@ weather_warnings.csv Weather warnings as issued. onset, expiry, first_seen and l
                     Unix seconds: when it starts and ends, and the first and latest fetch that
                     had it. regions is a JSON list of the issuer's region codes. description
                     is as issued, which may be HTML.
+weather_hours.csv   The weather each hour, to set beside the readings. hour_start is Unix
+                    seconds when the hour starts, and local_time the same on this machine's
+                    clock. source is past: and the provider for its record of the weather
+                    then, or forecast: and the provider for its latest forecast of the hour.
+                    panels is the tilt/facing gti_wm2 is for. Units: °C, %, hPa, mm, m/s and
+                    W/m². wind_from_deg is where the wind comes from. is_day is 1 or 0.
 
 Accounts and their passwords aren't exported.
 The other readings from each poll are only in the full database export.
