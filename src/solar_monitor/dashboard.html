@@ -301,8 +301,9 @@
   /* The board */
   main { flex: 1; display: flex; flex-direction: column; position: relative; overflow-x: clip; }
   /*
-    A sideways swipe outside the charts and controls turns to the next or previous section, like a
-    carousel. Vertical scrolling and pinching stay the browser's, and a zoomed-in page pans as usual.
+    A sideways swipe outside the charts and controls, or on the dashboard's, turns to the next or
+    previous section, like a carousel. Vertical scrolling and pinching stay the browser's, and a
+    zoomed-in page pans as usual.
   */
   body:not(.zoomed) main { touch-action: pan-y pinch-zoom; }
   .swiping { user-select: none; -webkit-user-select: none; cursor: grabbing; }
@@ -877,7 +878,7 @@
         </div>
         <div id="flow-test-result" aria-live="polite"></div>
       </div>
-      <div class="stage" id="stage">
+      <div class="stage" id="stage" data-swipe>
         <svg id="flow-diagram" role="img" aria-label="Waiting for readings."></svg>
         <button type="button" class="flow-hit" id="battery-tip" data-tip="" aria-label="Battery" hidden></button>
       </div>
@@ -885,7 +886,7 @@
     </div>
     <div class="pane now-pane" id="now-pane">
       <div class="now-head"><h2>Last 24 hours</h2><a href="#statistics">Statistics →</a></div>
-      <div class="charts compact" id="now-charts"></div>
+      <div class="charts compact" id="now-charts" data-swipe></div>
       <p class="meta" id="now-note"></p>
     </div>
   </section>
@@ -3414,6 +3415,7 @@
       show(i, x, y);
     };
     const fromPointer = (event) => {
+      if (document.body.classList.contains("swiping")) return; // Turning the section, not reading the chart.
       index = pick(event.clientX - svg.getBoundingClientRect().left);
       if (index === null) hide();
       else showAt(index, event.clientX, event.clientY);
@@ -6989,6 +6991,8 @@
     carousel: the next one in the menu comes in from the right and the previous one from the left.
     Let go past a quarter of the way, or with a flick, and it turns; otherwise it slides back. The
     section coming in is lined up where it will sit once turned, just under the bar.
+    In a [data-swipe] area, such as the dashboard's diagram and charts, which have no dragging of
+    their own, a sideways drag turns the section even over a chart. A tap there still reads it.
   */
   {
     // Functions here are consts: a function declared in a block would replace the history chart's settle().
@@ -6997,6 +7001,8 @@
     const FLICK_PX_PER_MS = 0.4;
     const NOT_SWIPED =
       "svg, canvas, .stage, input, select, textarea, button, a, label, summary, [role=slider], [contenteditable], [tabindex], [data-tip], [data-no-swipe], dialog, .user-menu";
+    const NOT_SWIPED_IN_AREA = "input, select, textarea, [contenteditable], [data-no-swipe], dialog";
+    const notSwiped = (target) => Boolean(target.closest(target.closest("[data-swipe]") ? NOT_SWIPED_IN_AREA : NOT_SWIPED));
     const order = Object.keys(TABS);
     const main = document.querySelector("main");
     let swipe = null;
@@ -7087,7 +7093,7 @@
 
     main.addEventListener("pointerdown", (event) => {
       if (swipe || settling || FLOW_TEST || !event.isPrimary || event.button !== 0 || zoomed()) return;
-      if (menuOpen() || userOpen() || event.target.closest(NOT_SWIPED) || scrollsSideways(event.target)) return;
+      if (menuOpen() || userOpen() || notSwiped(event.target) || scrollsSideways(event.target)) return;
       const tab = Object.keys(TABS).find((hash) => !$(TABS[hash]).hidden);
       if (tab) swipe = { id: event.pointerId, x: event.clientX, y: event.clientY, tab, moving: false, dx: 0, samples: [] };
     });
