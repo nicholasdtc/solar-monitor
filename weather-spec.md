@@ -185,7 +185,7 @@ The warnings and the text settings go into the CSV export and the importer like 
 - Cost on Open-Meteo: a 31-day chunk is about 4 calls by its weighting, plus a smaller one for a second facing, so two years of log is about 120 calls, once.
 - `GET /api/weather` has a `history` block: the log's start, the end, the hours and how many are filled. `GET /api/weather/history` serves up to 366 days at once.
 - The CSV and database exports carry the table, and the importer brings it back with the same precedence.
-- Not yet: the Statistics overlays below, with W3. The progress line is on the Weather tab's footer.
+- The Statistics overlays below came in W3b. The progress line is on the Weather tab's footer.
 
 **In Statistics:** the history charts can show weather beside the readings. That means an optional row for irradiance and cloud under the solar chart, temperature beside the load, and the condition icon per day on the daily view. Each is off by default and is a display preference.
 
@@ -221,7 +221,15 @@ Fields the provider doesn't have are left out, not shown empty. With Yr, for exa
 - Footer: each source's credit and licence link, the last fetch of each kind with its outcome, and "Weather kept for X of the log's Y hours" while the log has any.
 - Days, times and the day headings follow the time zone chosen in Preferences, as the rest of the page does. Temperature, wind and rain follow the unit preferences.
 - The tab refreshes when opened and every 5 minutes while it's showing.
-- Not yet, in W3b: the Statistics overlays.
+
+**As built in W3b, the Statistics overlays:**
+
+- Three display preferences, all off at first, under Weather in Preferences: "Sun and cloud in Statistics", "Temperature in Statistics" and "Weather by day in Statistics".
+- Sun and cloud: a chart under Solar, of the sun on the panels (flat ground when there's no facing) in W/m², with the cloud in % as a strip beneath it.
+- Temperature: a chart under House, in the unit chosen in Preferences, its scale fitted to the values.
+- Each reading's weather is the mean of the hours its interval covers, so the 1-hour, 1-day and longer intervals all line up. The tooltip and the table carry the same values, and the table's columns show only while their chart does. A chart with no weather kept for its stretch says so.
+- Weather by day: a row of icons over the daily charts, each day's commonest daytime condition, the same measure as the Weather tab's next days. It's in the daily tooltip and table too. Days follow the monitor's own clock, as the daily totals do.
+- The page asks `GET /api/weather/history` for at most 366 days at a time, and doesn't ask again for a stretch it fetched in the last 15 minutes.
 
 ## W4: the Dashboard
 

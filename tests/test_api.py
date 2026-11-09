@@ -468,6 +468,8 @@ def test_display_prefs_start_empty_and_are_replaced_whole(call):
     assert call("GET", "/api/prefs").json() == {"prefs": {"section": "grid-meter", "week": "sun"}}
     units = {"temperature": "f", "wind": "kn", "rain": "in"}
     assert call("PUT", "/api/prefs", json=units).json() == {"prefs": units}
+    weather = {"stats_sun": "on", "stats_temp": "off", "stats_icons": "on"}
+    assert call("PUT", "/api/prefs", json=weather).json() == {"prefs": weather}
 
 
 def test_display_prefs_ignore_names_they_dont_know(call):
@@ -489,6 +491,9 @@ def test_display_prefs_ignore_names_they_dont_know(call):
     {"temperature": "k"},
     {"wind": "bft"},
     {"rain": "cm"},
+    {"stats_sun": "yes"},
+    {"stats_temp": True},
+    {"stats_icons": "hidden"},
 ])
 def test_invalid_display_prefs_are_refused(call, body):
     call("PUT", "/api/prefs", json={"theme": "dark"})

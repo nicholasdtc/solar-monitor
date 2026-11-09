@@ -98,3 +98,7 @@ class DisplayPrefsIn(BaseModel):
     temperature: Literal["c", "f"] | None = None
     wind: Literal["ms", "kmh", "mph", "kn"] | None = None
     rain: Literal["mm", "in"] | None = None
+    # Weather beside the Statistics charts.
+    stats_sun: Literal["off", "on"] | None = None
+    stats_temp: Literal["off", "on"] | None = None
+    stats_icons: Literal["off", "on"] | None = None

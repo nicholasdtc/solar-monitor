@@ -815,6 +815,24 @@
         <option value="in">Inches</option>
       </select>
     </label>
+    <label>Sun and cloud in Statistics
+      <select name="stats_sun">
+        <option value="off">Hidden</option>
+        <option value="on">Under Solar</option>
+      </select>
+    </label>
+    <label>Temperature in Statistics
+      <select name="stats_temp">
+        <option value="off">Hidden</option>
+        <option value="on">Under House</option>
+      </select>
+    </label>
+    <label>Weather by day in Statistics
+      <select name="stats_icons">
+        <option value="off">Hidden</option>
+        <option value="on">Over the daily charts</option>
+      </select>
+    </label>
     <p class="note" id="prefs-where">Kept on the monitor, so they follow you to every device. Appliance ratings stay in W.</p>
     <div class="actions">
       <button type="button" class="btn" id="prefs-reset">Reset</button>
@@ -1005,7 +1023,7 @@
         <summary>Show as a table</summary>
         <div class="scroll" tabindex="0" role="region" aria-label="History table">
           <table>
-            <thead><tr><th>Time</th><th class="num">Solar (W)</th><th class="num">House (W)</th><th class="num">Battery (W)</th><th class="num">Grid (W)</th><th class="num">Battery charge (%)</th></tr></thead>
+            <thead><tr><th>Time</th><th class="num">Solar (W)</th><th class="num">House (W)</th><th class="num">Battery (W)</th><th class="num">Grid (W)</th><th class="num">Battery charge (%)</th><th class="num" id="history-wx-sun" hidden>Sun (W/m²)</th><th class="num" id="history-wx-cloud" hidden>Cloud (%)</th><th class="num" id="history-wx-temp" hidden>Temperature</th></tr></thead>
             <tbody id="history-table"></tbody>
           </table>
         </div>
@@ -1016,6 +1034,7 @@
   <section class="view page" id="view-statistics-daily" data-tab="statistics" data-sub="daily" data-label="Daily" data-perm="statistics" aria-label="History: Daily" hidden>
     <div class="pane">
       <h2>Daily energy <button type="button" class="help" aria-label="About these totals" data-tip="From the inverter's lifetime counters. Today's can be up to 5 minutes behind.&#10;The first day counts from its first reading. Days the app wasn't running count toward the next day it ran.">?</button></h2>
+      <div class="charts" id="daily-weather" hidden></div>
       <div class="charts" id="daily-charts"></div>
       <p class="meta" id="daily-note"></p>
       <div class="flows" id="flow-section" hidden>
@@ -1028,7 +1047,7 @@
       <h3>Daily energy as a table</h3>
       <div class="scroll" tabindex="0" role="region" aria-label="Daily energy table">
         <table>
-          <thead><tr><th>Day</th><th class="num">Solar</th><th class="num">House</th><th class="num">Battery charged</th><th class="num">Battery discharged</th><th class="num">Grid import</th><th class="num">Grid export</th><th class="num">Solar to house</th><th class="num">Solar to battery</th><th class="num">Solar to grid</th><th class="num">House from battery</th><th class="num">House from grid</th><th class="num">Self-sufficiency</th></tr></thead>
+          <thead><tr><th>Day</th><th class="num">Solar</th><th class="num">House</th><th class="num">Battery charged</th><th class="num">Battery discharged</th><th class="num">Grid import</th><th class="num">Grid export</th><th class="num">Solar to house</th><th class="num">Solar to battery</th><th class="num">Solar to grid</th><th class="num">House from battery</th><th class="num">House from grid</th><th class="num">Self-sufficiency</th><th id="daily-wx-head" hidden>Weather</th></tr></thead>
           <tbody id="daily-table"></tbody>
         </table>
       </div>
@@ -1602,11 +1621,14 @@
     temperature: ["c", "f"],
     wind: ["ms", "kmh", "mph", "kn"],
     rain: ["mm", "in"],
+    stats_sun: ["off", "on"],
+    stats_temp: ["off", "on"],
+    stats_icons: ["off", "on"],
   };
   const PREF_DEFAULTS = {
     theme: "system", date: "auto", time: "auto", zone: "server",
     currency: "none", week: "mon", power: "auto", section: "dashboard", motion: "system",
-    temperature: "c", wind: "kmh", rain: "mm",
+    temperature: "c", wind: "kmh", rain: "mm", stats_sun: "off", stats_temp: "off", stats_icons: "off",
   };
   function validZone(zone) {
     if (!zone) return null;
@@ -3227,6 +3249,7 @@
   let firstReading = null;
   let historyFrame = null;
   let daily = null;
+  let dailyWx = new Map(); // Each day's weather, while Preferences shows it.
   let historyRequest = 0;
   let pendingLoad = null;
   let pan = null; // A drag along the charts while the pointer is down.
@@ -3736,7 +3759,97 @@
   function visiblePoints() {
     if (!loaded) return [];
     const half = loaded.bucket / 2;
-    return loaded.points.filter((point) => point.ts + half >= view.start && point.ts + half <= view.end);
+    return historyPoints().filter((point) => point.ts + half >= view.start && point.ts + half <= view.end);
+  }
+
+  /*
+    The weather beside the Statistics charts, each part a display pref and off until picked: sun and cloud under
+    Solar, the temperature under House, and the weather of each day over the daily charts. The recorded hours come
+    from /api/weather/history, after the readings, so the charts never wait for them, and are kept by hour_start.
+  */
+  const WX_HOUR = 3600;
+  const WX_MAX_SPAN = 366 * 86400; // The most /api/weather/history sends at once.
+  const WX_FRESH_SECONDS = 900; // How long a stretch reaching up to now is taken as current.
+  const statsWx = { hours: new Map(), spans: [], pending: {}, version: 0 };
+  const wxOverlays = () => prefs.stats_sun === "on" || prefs.stats_temp === "on";
+  /* Loads the weather from `start` to `end` unless it's loaded already, then calls `then`. `kind` keeps the
+     history's and the daily view's requests apart, so a newer one of each wins. */
+  async function loadStatsWeather(kind, start, end, then) {
+    const now = Math.floor(Date.now() / 1000);
+    end = Math.min(Math.ceil(end), now);
+    start = Math.floor(Math.max(start, end - WX_MAX_SPAN));
+    if (end <= start) return;
+    const covered = statsWx.spans.some((span) => span.start <= start && span.end >= end
+      && (now - span.at < WX_FRESH_SECONDS || span.end < span.at - 2 * WX_HOUR));
+    const key = `${start}-${end}`;
+    if (covered || statsWx.pending[kind] === key) return;
+    statsWx.pending[kind] = key;
+    try {
+      const answer = await getJson(`/api/weather/history?start=${start}&end=${end}`);
+      for (const hour of answer.hours ?? []) statsWx.hours.set(hour.hour_start, hour);
+      statsWx.spans = [...statsWx.spans.slice(-19), { start, end, at: now }];
+      statsWx.version += 1;
+      if (statsWx.pending[kind] === key) then();
+    } catch {} // The charts just go without.
+    if (statsWx.pending[kind] === key) delete statsWx.pending[kind];
+  }
+  const wxMean = (list, pick) => {
+    const known = list.map(pick).filter(isNum);
+    return known.length ? known.reduce((sum, x) => sum + x, 0) / known.length : null;
+  };
+  /* The loaded readings, each with the weather of the hours its period covers, while an overlay is shown. */
+  let mergedPoints = null; // { from, version, temperature, points }
+  function historyPoints() {
+    if (!loaded) return [];
+    if (!wxOverlays() || !statsWx.hours.size) return loaded.points;
+    const fresh = mergedPoints && mergedPoints.from === loaded && mergedPoints.version === statsWx.version
+      && mergedPoints.temperature === prefs.temperature;
+    if (fresh) return mergedPoints.points;
+    const { bucket } = loaded;
+    const points = loaded.points.map((point) => {
+      const list = [];
+      for (let t = point.ts - (point.ts % WX_HOUR); t < point.ts + bucket; t += WX_HOUR) {
+        const hour = statsWx.hours.get(t);
+        if (hour) list.push(hour);
+      }
+      if (!list.length) return point;
+      return {
+        ...point,
+        wx_sun: wxMean(list, (h) => h.gti_wm2 ?? h.ghi_wm2),
+        wx_cloud: wxMean(list, (h) => h.cloud_pct),
+        wx_temp: weatherTab.tempIn(wxMean(list, (h) => h.temperature_c)),
+      };
+    });
+    mergedPoints = { from: loaded, version: statsWx.version, temperature: prefs.temperature, points };
+    return points;
+  }
+  /* The Statistics charts, with the weather rows picked in Preferences. The dashboard keeps HISTORY_CHARTS. */
+  function statsCharts(visible) {
+    const charts = [...HISTORY_CHARTS];
+    const none = (key) => !visible.some((point) => isNum(point[key]));
+    const nothing = "No weather recorded for this stretch.";
+    if (prefs.stats_sun === "on") {
+      charts.splice(charts.findIndex((chart) => chart.series[0].key === "pv_w") + 1, 0, {
+        title: "Sun and cloud", unit: "W/m²", height: 164, floor: 0,
+        series: [{ key: "wx_sun", label: "Sun", unit: "W/m²", color: "--flow-solar" }],
+        strip: { key: "wx_cloud", label: "Cloud", unit: "%", color: "--muted", domain: [0, 100] },
+        aria: "Sun (W/m²) and cloud (%)",
+        note: none("wx_sun") && none("wx_cloud") ? nothing : "",
+      });
+    }
+    if (prefs.stats_temp === "on") {
+      // Not from zero, as the readings are: a few degrees apart should still show.
+      const unit = prefs.temperature === "f" ? "°F" : "°C";
+      const temps = visible.map((point) => point.wx_temp).filter(isNum);
+      let [low, high] = temps.length ? [Math.floor(Math.min(...temps)), Math.ceil(Math.max(...temps))] : [0, 20];
+      if (high - low < 5) [low, high] = [Math.floor((low + high) / 2 - 2.5), Math.ceil((low + high) / 2 + 2.5)];
+      charts.splice(charts.findIndex((chart) => chart.series[0].key === "load_w") + 1, 0, {
+        title: "Temperature", unit, height: 140, domain: [low - 1, high + 1],
+        series: [{ key: "wx_temp", label: "Outside", unit, color: "--wx-temp", format: (v) => `${number(Math.round(v), 0)}${unit}` }],
+        note: temps.length ? "" : nothing,
+      });
+    }
+    return charts;
   }
 
   /* A strip under a chart, sharing its time axis, takes this share of the plot's height. */
@@ -3936,10 +4049,12 @@
     showHistoryControls(view);
     if (!loaded || $("view-statistics-charts").hidden) return; // Charts need a width, and a hidden box has none.
     // Until a new interval loads, the old one's points stay up, dimmed, in the new view.
-    const { bucket, points } = loaded;
+    const { bucket } = loaded;
+    const points = historyPoints();
     const { start, end } = view;
     const span = end - start;
     const visible = visiblePoints();
+    if (wxOverlays()) loadStatsWeather("history", loaded.start, loaded.end, renderHistory);
     const hasSpread = points.some((point) => point.pv_w_min !== undefined);
     // Everything is drawn a view's width either side as well, so it's there to slide in when dragged.
     const tou = span <= TOU_SHADE_MAX_SECONDS ? touIntervals(start - span, end + span) : [];
@@ -3962,7 +4077,7 @@
     renderHistoryTable();
 
     historyFrame = drawTimeCharts(box, {
-      charts: HISTORY_CHARTS, points, visible, bucket, start, end, tou,
+      charts: statsCharts(visible), points, visible, bucket, start, end, tou,
       full: fullChart?.box === box.id ? fullChart.index : null, prefix: "history",
     });
   }
@@ -3971,6 +4086,10 @@
     const open = $("history-details").open;
     if (!open || !loaded) return $("history-table").replaceChildren();
     const visible = visiblePoints();
+    const [sun, temp] = [prefs.stats_sun === "on", prefs.stats_temp === "on"];
+    $("history-wx-sun").hidden = $("history-wx-cloud").hidden = !sun;
+    $("history-wx-temp").hidden = !temp;
+    $("history-wx-temp").textContent = `Temperature (${prefs.temperature === "f" ? "°F" : "°C"})`;
     const cell = (point, key) => {
       const node = el("td", "num", isNum(point[key]) ? number(point[key], 0) : "—");
       const [low, high] = [point[`${key}_min`], point[`${key}_max`]];
@@ -3983,6 +4102,8 @@
       row.append(
         el("td", "", `${shortDate(when)}, ${clockTime(when)}`),
         cell(point, "pv_w"), cell(point, "load_w"), cell(point, "battery_w"), cell(point, "grid_w"), cell(point, "battery_soc"),
+        ...(sun ? [cell(point, "wx_sun"), cell(point, "wx_cloud")] : []),
+        ...(temp ? [cell(point, "wx_temp")] : []),
       );
       return row;
     }));
@@ -4063,12 +4184,14 @@
     renderMoney(); // On its own page, from the same totals.
     if ($("view-statistics-daily").hidden) return; // Charts need a width, and a hidden box has none.
     const days = daily.days;
+    dailyWx = dailyConditions(days);
     const anyData = days.some((day) => Object.keys(day).length > 1);
     const hasFlows = days.some((day) => day.solar_home !== undefined);
     $("daily-note").textContent = "";
     renderDailyTable();
     $("flow-section").hidden = !anyData || !hasFlows;
     if (!anyData) {
+      $("daily-weather").hidden = true;
       box.replaceChildren(el("p", "no-value", "No daily totals yet. The first come within 5 minutes of the app starting."));
       return;
     }
@@ -4097,6 +4220,7 @@
     const band = (width - frame.left - frame.right) / days.length;
     const labelEvery = Math.ceil(MIN_TICK_SPACING_PX * 0.7 / band);
     const center = (i) => frame.left + band * (i + 0.5);
+    if (!fullSet) drawDailyWeather(days, frame, band, center);
 
     const drawn = planned.map(({ set, chart, node, height, bottom, scale }) => {
       const svg = svgEl("svg", { width, height });
@@ -4151,6 +4275,8 @@
         under.replaceChildren(svgEl("rect", { x: center(index) - band / 2, width: band, y: CHART_TOP, height: bottom - CHART_TOP, class: "chart-band" }));
       }
       const rows = dailyRows(day, charts);
+      const weather = dailyWx.get(day.day);
+      if (weather) rows.unshift({ value: weatherTab.cap(weather), label: "Weather" });
       showTip(clientX, clientY, rows.length ? dayText(day.day) : `${dayText(day.day)}: no readings`, rows);
     };
     for (const { set, chart, svg } of drawn) {
@@ -4162,15 +4288,65 @@
     }
   }
 
+  /*
+    Each day's weather, by its date on the monitor's clock as the totals are, while Preferences shows it. Empty
+    until the weather is loaded, which this asks for.
+  */
+  function dailyConditions(days) {
+    const conditions = new Map();
+    if (prefs.stats_icons !== "on" || !days.length) return conditions;
+    const [year, month, date] = days[0].day.split("-").map(Number);
+    loadStatsWeather("daily", zonedMs(HOME_ZONE, year, month, date) / 1000, Date.now() / 1000, renderDaily);
+    if (!statsWx.hours.size) return conditions;
+    const wanted = new Set(days.map((day) => day.day));
+    const byDay = new Map();
+    for (const hour of statsWx.hours.values()) {
+      const day = isoDay(hour.hour_start * 1000, HOME_ZONE);
+      if (!wanted.has(day)) continue;
+      if (!byDay.has(day)) byDay.set(day, []);
+      byDay.get(day).push(hour);
+    }
+    for (const [day, list] of byDay) {
+      const condition = weatherTab.usual(list);
+      if (condition) conditions.set(day, condition);
+    }
+    return conditions;
+  }
+
+  /* The weather of each day as an icon over its column, lined up with the daily charts under it. */
+  function drawDailyWeather(days, frame, band, center) {
+    const row = $("daily-weather");
+    row.hidden = !dailyWx.size;
+    if (row.hidden) return row.replaceChildren();
+    const size = Math.round(clamp(band - 6, 12, 28));
+    const svg = svgEl("svg", { width: frame.width, height: size + 4, role: "group", "aria-label": "Weather each day" });
+    days.forEach((day, i) => {
+      const weather = dailyWx.get(day.day);
+      if (!weather) return;
+      const picture = weatherTab.icon(weather, true, size);
+      picture.setAttribute("x", (center(i) - size / 2).toFixed(1));
+      picture.setAttribute("y", 2);
+      picture.setAttribute("aria-label", `${dayText(day.day)}: ${weatherTab.cap(weather)}`);
+      svg.append(picture);
+    });
+    const node = el("div", "chart");
+    const head = el("div", "chart-head");
+    head.append(el("h3", "", "Weather"));
+    node.append(head, svg);
+    row.replaceChildren(node);
+  }
+
   function renderDailyTable() {
     const keys = ["pv", "load", "battery_charge", "battery_discharge", "grid_import", "grid_export", "solar_home", "solar_battery", "solar_export", "battery_home", "grid_home"];
     const recorded = daily.days.filter((day) => Object.keys(day).length > 1).toReversed();
+    $("daily-wx-head").hidden = !dailyWx.size;
     $("daily-table").replaceChildren(...recorded.map((day) => {
       const row = el("tr");
       row.append(el("td", "", dayText(day.day, { weekday: true })));
       for (const key of keys) row.append(el("td", "num", kwh(day[key])));
       const share = selfSufficiency([day]);
       row.append(el("td", "num", share === null ? "—" : percent(share)));
+      if (dailyWx.size) row.append(el("td", "", dailyWx.has(day.day) ? weatherTab.cap(dailyWx.get(day.day)) : "—"));
       return row;
     }));
   }
@@ -5319,6 +5495,14 @@
       return svg;
     }
 
+    /* A day's weather: the commonest condition in its daylight hours, or in all of them if none are light. */
+    function usual(list) {
+      const daytime = list.filter((h) => h.is_day !== false && h.condition);
+      const counts = new Map();
+      for (const h of daytime.length ? daytime : list.filter((h) => h.condition)) counts.set(h.condition, (counts.get(h.condition) ?? 0) + 1);
+      return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    }
+
     /* The icon and the words, side by side, in a table cell or a tile. */
     function condition(h, size = 24) {
       const span = el("span", "wx-cond");
@@ -5651,12 +5835,6 @@
         const known = list.map((h) => h[key]).filter(isNum);
         return known.length ? pick(...known) : null;
       };
-      const usual = (list) => {
-        const daytime = list.filter((h) => h.is_day !== false && h.condition);
-        const counts = new Map();
-        for (const h of daytime.length ? daytime : list.filter((h) => h.condition)) counts.set(h.condition, (counts.get(h.condition) ?? 0) + 1);
-        return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-      };
       const sunOn = (times, day) => (times ?? []).find((t) => isoDay(ms(t)) === day);
       const rows = shown.map(([day, list]) => ({
         day, list,
@@ -5735,7 +5913,7 @@
       if (!$("view-weather").hidden && !document.hidden) refresh();
     }, 5 * 60 * 1000);
 
-    return { refresh, redraw };
+    return { refresh, redraw, tempIn, icon, usual, cap };
   })();
 
   /*
@@ -7213,7 +7391,7 @@
     A change is saved and shown at once.
   */
   const prefsForm = $("prefs-form");
-  const PREF_FIELDS = ["date", "time", "zone", "week", "currency", "power", "section", "motion", "temperature", "wind", "rain"]; // The theme is the user menu's.
+  const PREF_FIELDS = ["date", "time", "zone", "week", "currency", "power", "section", "motion", "temperature", "wind", "rain", "stats_sun", "stats_temp", "stats_icons"]; // The theme is the user menu's.
   let zonesListed = false;
   function listZones() {
     const select = prefsForm.elements.zone;
@@ -7294,6 +7472,13 @@
     else {
       showPrefs();
       if (changed("temperature", "wind", "rain")) weatherTab.redraw();
+      const statsWeather = changed("stats_sun", "stats_temp", "stats_icons");
+      if (statsWeather || (prefs.stats_temp === "on" && changed("temperature"))) {
+        // Adding or dropping a chart moves the others, so a full chart goes back to the page.
+        if (changed("stats_sun", "stats_temp") && fullChart?.box === "history-charts") setFullChart(null);
+        renderHistory();
+        renderDaily();
+      }
     }
   }
   prefsForm.addEventListener("change", () => {
