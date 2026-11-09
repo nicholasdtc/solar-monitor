@@ -493,8 +493,8 @@ def finish_inverter_write(conn: sqlite3.Connection, write_id: int, outcome: str,
 
 def list_inverter_writes(conn: sqlite3.Connection, limit: int = 20) -> list[dict[str, object]]:
     """The latest first."""
+    columns = ("id", "ts", "slot", "old_percent", "new_percent", "old_bytes", "new_bytes", "outcome")
     rows = conn.execute(
-        "SELECT id, ts, slot, old_percent, new_percent, outcome FROM inverter_writes ORDER BY id DESC LIMIT ?",
-        (limit,),
+        f"SELECT {', '.join(columns)} FROM inverter_writes ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
-    return [dict(zip(("id", "ts", "slot", "old_percent", "new_percent", "outcome"), row)) for row in rows]
+    return [dict(zip(columns, row)) for row in rows]

@@ -495,10 +495,33 @@
   .export button:disabled, .import button:disabled { color: var(--muted); cursor: default; background: var(--surface); }
 
   /* TOU */
-  .tou-change { display: grid; gap: 12px; justify-items: start; padding: 12px; border: 1px solid var(--rule-strong); }
+  /* On a phone the log's change text keeps room to read, and its box scrolls sideways for the rest. */
+  #tou-writes td:first-child { white-space: nowrap; }
+  #tou-writes td:nth-child(3) { min-width: 14em; }
+  .tou-change { display: grid; gap: 14px; justify-items: start; padding: 12px; border: 1px solid var(--rule-strong); }
   .tou-change label { display: flex; flex-direction: column; gap: 4px; color: var(--ink-2); }
+  .tou-change .fields { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; }
+  .tou-change fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+  .tou-change legend { padding: 0; margin-bottom: 6px; color: var(--ink-2); }
+  .tou-change .ticks { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+  .tou-change .ticks label, .tou-change label.tick { flex-direction: row; align-items: center; gap: 6px; color: var(--ink); cursor: pointer; }
+  .tou-change .ticks input, .tou-change label.tick input { margin: 0; }
   .tou-change .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .tou-change button:disabled { color: var(--muted); cursor: default; background: var(--surface); }
+  .tou-on { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; white-space: nowrap; }
+  .edit input[type="checkbox"].switch {
+    appearance: none; -webkit-appearance: none; position: relative; flex: none; width: 38px; height: 22px; margin: 0;
+    border-radius: 11px; background: var(--rule-strong); cursor: pointer; transition: background-color .15s;
+  }
+  .edit input[type="checkbox"].switch::before {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--surface); transition: transform .15s;
+  }
+  .edit input[type="checkbox"].switch:checked { background: var(--good); }
+  .edit input[type="checkbox"].switch:checked::before { transform: translateX(16px); }
+  .edit input[type="checkbox"].switch:disabled { opacity: .5; cursor: default; }
+  .edit input[type="checkbox"].switch:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { .edit input[type="checkbox"].switch, .edit input[type="checkbox"].switch::before { transition: none; } }
   #tou-result:empty { display: none; }
 
   /* Grid meter */
@@ -943,10 +966,10 @@
 
   <section class="view schedule" id="view-schedule" aria-label="Battery schedule" hidden>
     <div class="pane">
-      <h2>TOU programmes <button type="button" class="help" aria-label="About the programmes" data-tip="What's stored on the inverter now, in SEMS+ order. Only a programme's power can be changed here: the rest is for SEMS+.&#10;SEMS+ can take a while to show a change made here. Saving that programme there before it does may send its old power back.&#10;SEMS+ AI Mode isn't listed: no setting for it has been found on the inverter.&#10;Read again every 5 minutes and after a change.">?</button></h2>
+      <h2>TOU programmes <button type="button" class="help" aria-label="About the programmes" data-tip="On the inverter now, SEMS+ order&#10;Read every 5 min and after a change&#10;SEMS+ AI Mode: not found, not listed">?</button></h2>
       <div class="scroll edit" tabindex="0" role="region" aria-label="TOU programmes table">
         <table>
-          <thead><tr><th>#</th><th>Time</th><th>Action</th><th class="num">Cut-off SOC</th><th>Power</th><th>Repeats</th><th>State</th><th></th></tr></thead>
+          <thead><tr><th>#</th><th>On</th><th>Time</th><th>Action</th><th class="num">Cut-off SOC</th><th>Power</th><th>Repeats</th><th></th></tr></thead>
           <tbody id="tou-periods"></tbody>
         </table>
       </div>
@@ -954,9 +977,26 @@
       <p class="note" id="tou-restart" hidden>Restart the dashboard to change programmes from here.</p>
       <form class="edit tou-change" id="tou-change" hidden>
         <h3 id="tou-change-title"></h3>
-        <p class="note" id="tou-change-now"></p>
-        <label><span id="tou-percent-label"></span><input id="tou-percent" type="number" min="1" max="100" step="1" required></label>
-        <p class="note">Goes to the inverter at once: read again first, power only, then read back to confirm. SEMS+ may show the old power for a while: saving the programme there then would put it back.</p>
+        <label class="tick"><input id="tou-on" type="checkbox"> On</label>
+        <div class="fields">
+          <label>Start <input id="tou-start" type="time" step="60" required></label>
+          <label>End <input id="tou-end" type="time" step="60" required></label>
+        </div>
+        <p class="note" id="tou-next-day"></p>
+        <fieldset>
+          <legend>Days</legend>
+          <div class="ticks" id="tou-days"></div>
+        </fieldset>
+        <fieldset>
+          <legend>Months</legend>
+          <div class="ticks" id="tou-months"></div>
+        </fieldset>
+        <div class="fields">
+          <label>Cut-off SOC, % <input id="tou-cutoff" type="number" min="10" max="100" step="1" required></label>
+          <label><span id="tou-percent-label"></span><input id="tou-percent" type="number" min="1" max="100" step="1" required></label>
+        </div>
+        <p class="note" id="tou-change-summary"></p>
+        <p class="note">Goes to the inverter at once: read again first, checked, then read back to confirm. Whether it charges or discharges stays as it is. A change that would overlap another programme that's on is refused. SEMS+ may show the old programme for a while: saving it there then would put the old one back.</p>
         <div class="actions">
           <button id="tou-send" disabled>Send to inverter</button>
           <button id="tou-cancel" type="button">Cancel</button>
@@ -968,7 +1008,7 @@
       <h2>Changes made from this app <button type="button" class="help" aria-label="About this list" data-tip="Every change sent to the inverter, latest first. Changes made in SEMS+ aren't listed.">?</button></h2>
       <div class="scroll edit" tabindex="0" role="region" aria-label="Changes made from this app">
         <table>
-          <thead><tr><th>When</th><th class="num">#</th><th>Power</th><th>Result</th><th></th></tr></thead>
+          <thead><tr><th>When</th><th class="num">#</th><th>Change</th><th>Result</th><th></th></tr></thead>
           <tbody id="tou-writes"></tbody>
         </table>
       </div>
@@ -1855,12 +1895,14 @@
       row.append(cell);
       return row;
     }
+    row.append(touSwitch(period));
     add(touTime(period));
     add({ charge: "Charge", discharge: "Discharge", hold: "Hold" }[period.action]);
     add(period.cutoff_soc === null ? "–" : `${period.cutoff_soc}%`, "num");
     add(`${{ charge: "Grid import", discharge: "Battery discharge", hold: "Power" }[period.action]} ${period.power_pct}%`);
-    add(`${period.days}, ${period.months.toLowerCase()}`);
-    add(period.state === "on" ? "On" : "Off", period.state === "on" ? "" : "no-value");
+    add(Number.isInteger(period.day_bits)
+      ? `${namedBits(daysMeant(period.day_bits), DAY_BITS, EVERY_DAY, "Every day")}, ${namedBits(monthsMeant(period.month_bits), MONTH_BITS, ALL_MONTHS, "all year")}`
+      : `${period.days}, ${period.months === "All year" ? "all year" : period.months.replaceAll(",", ", ")}`);
     return row;
   }
 
@@ -1898,13 +1940,73 @@
     mismatch: ["critical", "Holds something else: check SEMS+"],
     unknown: ["warning", "Couldn't read it back: check SEMS+"],
   };
+  // Each by its bit, the week from Monday. Bit 0 is Sunday, and bit 0 of the months is January.
+  const DAY_BITS = [["Mon", 1], ["Tue", 2], ["Wed", 3], ["Thu", 4], ["Fri", 5], ["Sat", 6], ["Sun", 0]];
+  const MONTH_BITS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((name, bit) => [name, bit]);
+  const EVERY_DAY = 0x7f;
+  const ALL_MONTHS = 0x0fff;
+  const CHANGE_NAMES = { start: "Start", end: "End", days: "Days", months: "Months", cutoff_soc: "Cut-off", power: "Power" };
   let touChange = null;
   let touSending = false;
+  let touSendingOn = null; // While a programme is being sent: its slot, and whether it'll be on.
   let touWrites = [];
   let touShown = null;
 
   const touPeriod = (slot) => latest?.schedule?.periods.find((period) => period.slot === slot);
   const touTime = (period) => `${wallTime(period.start)} to ${wallTime(period.end)}${period.next_day ? " (next day)" : ""}`;
+  // Every day can be held as 127 or -1, and all year as 0x0fff or 0 and below. These give one value for each.
+  const daysMeant = (bits) => bits & EVERY_DAY;
+  const monthsMeant = (bits) => bits <= 0 ? ALL_MONTHS : bits & ALL_MONTHS;
+  // Three or more in a row as a range, as the server names them: "Mon–Fri", "Jan–May, Sep–Dec".
+  const namedBits = (bits, names, every, allText) => {
+    if (bits === every) return allText;
+    const runs = [];
+    names.forEach(([name, bit], index) => {
+      if (!(bits & (1 << bit))) return;
+      const run = runs.at(-1);
+      if (run && run.last === index - 1) {
+        run.names.push(name);
+        run.last = index;
+      } else {
+        runs.push({ names: [name], last: index });
+      }
+    });
+    return runs.map(({ names: run }) => run.length > 2 ? `${run[0]}–${run.at(-1)}` : run.join(", ")).join(", ");
+  };
+  // Only a programme the page can describe in full can be changed: one with a direction, from a dashboard new enough.
+  const touChangeable = (period) =>
+    Boolean(period.raw) && period.power_pct > 0 && Number.isInteger(period.day_bits) && Number.isInteger(period.cutoff_soc);
+  // The server gives times as 24-hour, and the page shows them in the chosen format.
+  const changeValue = (field, value) => field === "start" || field === "end" ? wallTime(value) : value;
+  const changeText = (change) => change.field === "state"
+    ? (change.new === "on" ? "Switched on" : "Switched off")
+    : `${CHANGE_NAMES[change.field] ?? change.field} ${changeValue(change.field, change.old)} to ${changeValue(change.field, change.new)}`;
+
+  // A programme as the server takes it.
+  const touFields = (period) => ({
+    on: period.state === "on",
+    start: period.start,
+    end: period.end,
+    day_bits: daysMeant(period.day_bits),
+    month_bits: monthsMeant(period.month_bits),
+    cutoff_soc: period.cutoff_soc,
+    percent: period.power_pct,
+  });
+
+  // The same descriptions the server gives for a change, so the panel says what will be sent.
+  function touChanges(before, after) {
+    const describe = (fields) => ({
+      state: fields.on ? "on" : "off",
+      start: fields.start,
+      end: fields.end,
+      days: namedBits(fields.day_bits, DAY_BITS, EVERY_DAY, "every day"),
+      months: namedBits(fields.month_bits, MONTH_BITS, ALL_MONTHS, "all year"),
+      cutoff_soc: `${fields.cutoff_soc}%`,
+      power: `${fields.percent}%`,
+    });
+    const [old, now] = [describe(before), describe(after)];
+    return Object.keys(old).filter((field) => old[field] !== now[field]).map((field) => ({ field, old: old[field], new: now[field] }));
+  }
 
   function touButton(text, action) {
     const button = el("button", "", text);
@@ -1913,11 +2015,36 @@
     return button;
   }
 
+  function touSwitch(period) {
+    const cell = el("td");
+    if (!touChangeable(period)) {
+      cell.textContent = period.state === "on" ? "On" : "Off";
+      if (period.state !== "on") cell.className = "no-value";
+      return cell;
+    }
+    const label = el("label", "tou-on");
+    const input = el("input", "switch");
+    input.type = "checkbox";
+    input.setAttribute("role", "switch");
+    input.setAttribute("aria-label", `Programme ${period.slot}`);
+    const sending = touSending && touSendingOn?.slot === period.slot;
+    input.checked = sending ? touSendingOn.on : period.state === "on"; // Shows where it's going while it's sent.
+    input.disabled = touSending;
+    input.addEventListener("change", () => {
+      sendTou(period.slot, period.raw, { ...touFields(period), on: input.checked });
+    });
+    label.append(input, el("span", "", input.checked ? "On" : "Off"));
+    cell.append(label);
+    return cell;
+  }
+
   function touRow(period) {
     const row = periodRow(period);
     const cell = el("td");
-    if (period.raw && period.power_pct > 0) {
-      cell.append(touButton("Change power", () => openTouChange(period, period.power_pct)));
+    if (touChangeable(period)) {
+      const edit = touButton("Edit", () => openTouChange(period, period));
+      edit.disabled = touSending;
+      cell.append(edit);
     }
     row.append(cell);
     return row;
@@ -1956,13 +2083,17 @@
       const result = el("td");
       result.append(status(kind, label));
       const undo = el("td");
-      // Only the latest change to a programme can be put back, and only while it still holds that change.
+      // Only the latest change to a programme can be reverted, and only while it still holds that change.
       const period = touPeriod(write.slot);
-      if (!undone.has(write.slot) && write.outcome === "confirmed" && period?.raw && period.power_pct === write.new_percent) {
-        undo.append(touButton(`Put back to ${write.old_percent}%`, () => openTouChange(period, write.old_percent)));
+      if (!undone.has(write.slot) && write.outcome === "confirmed" && write.old && period && touChangeable(period)
+          && period.raw === write.new_bytes) {
+        const single = write.changes?.length === 1 ? write.changes[0] : null;
+        const label = single ? `Revert to ${changeValue(single.field, single.old)}` : "Revert";
+        undo.append(touButton(label, () => openTouChange(period, write.old)));
       }
       undone.add(write.slot);
-      row.append(el("td", "", when), el("td", "num", String(write.slot)), el("td", "", `${write.old_percent}% to ${write.new_percent}%`), result, undo);
+      const change = write.changes ? write.changes.map(changeText).join(", ") : `Power ${write.old_percent}% to ${write.new_percent}%`;
+      row.append(el("td", "", when), el("td", "num", String(write.slot)), el("td", "", change || "Nothing"), result, undo);
       return row;
     });
     if (!rows.length) {
@@ -1984,22 +2115,80 @@
     renderTouWrites();
   }
 
-  function updateTouSend() {
-    const input = $("tou-percent");
-    const value = Number(input.value);
-    $("tou-send").disabled = touSending || !touChange || !input.checkValidity() || value === touChange.current;
+  // Ticks for days and months, made once. Each holds its bit.
+  function makeTicks(container, names) {
+    container.replaceChildren(...names.map(([name, bit]) => {
+      const label = el("label");
+      const input = el("input");
+      input.type = "checkbox";
+      input.dataset.bit = String(bit);
+      input.addEventListener("change", updateTouSend);
+      label.append(input, ` ${name}`);
+      return label;
+    }));
+  }
+  makeTicks($("tou-days"), DAY_BITS);
+  makeTicks($("tou-months"), MONTH_BITS);
+
+  const tickedBits = (container) => [...container.querySelectorAll("input")]
+    .reduce((bits, input) => input.checked ? bits | (1 << Number(input.dataset.bit)) : bits, 0);
+  function setTicks(container, bits) {
+    for (const input of container.querySelectorAll("input")) input.checked = Boolean(bits & (1 << Number(input.dataset.bit)));
   }
 
-  function openTouChange(period, percent) {
-    touChange = { slot: period.slot, raw: period.raw, current: period.power_pct };
-    $("tou-change-title").textContent = `Programme ${period.slot}: ${touTime(period)}, ${period.action}`;
-    $("tou-change-now").textContent = `${POWER_NAMES[period.action]} is ${period.power_pct}% now.`;
-    $("tou-percent-label").textContent = `New ${POWER_NAMES[period.action].toLowerCase()}, %`;
-    $("tou-percent").value = percent;
+  function touWanted() {
+    return {
+      on: $("tou-on").checked,
+      start: $("tou-start").value,
+      end: $("tou-end").value,
+      day_bits: tickedBits($("tou-days")),
+      month_bits: tickedBits($("tou-months")),
+      cutoff_soc: Number($("tou-cutoff").value),
+      percent: Number($("tou-percent").value),
+    };
+  }
+
+  // What's wrong with the panel as it stands, if anything. The server checks all of this again.
+  function touProblem(wanted) {
+    const fine = (id) => $(id).value !== "" && $(id).checkValidity();
+    if (!fine("tou-start") || !fine("tou-end")) return "Fill in the start and end.";
+    if (!fine("tou-cutoff")) return `The cut-off has to be a whole number from ${$("tou-cutoff").min} to 100.`;
+    if (!fine("tou-percent")) return "The power has to be a whole number from 1 to 100.";
+    if (wanted.start === wanted.end) return "The start and end can't be the same.";
+    if (!wanted.day_bits) return "Tick at least one day.";
+    if (!wanted.month_bits) return "Tick at least one month.";
+    return null;
+  }
+
+  function updateTouSend() {
+    if (!touChange) return;
+    const wanted = touWanted();
+    const problem = touProblem(wanted);
+    const changes = problem ? [] : touChanges(touChange.now, wanted);
+    $("tou-next-day").textContent = !problem && wanted.end < wanted.start ? "Ends the next day." : "";
+    $("tou-change-summary").textContent = problem ?? (changes.length ? `To send: ${changes.map(changeText).join(", ")}.` : "No changes yet.");
+    $("tou-send").disabled = touSending || Boolean(problem) || !changes.length;
+  }
+
+  // Opens the panel on a programme, filled in with `values`: what it holds now, or what it held before a change.
+  function openTouChange(period, values) {
+    const fields = touFields(values);
+    touChange = { slot: period.slot, raw: period.raw, now: touFields(period) };
+    $("tou-change-title").textContent = `Programme ${period.slot}: ${period.action}`;
+    $("tou-percent-label").textContent = `${POWER_NAMES[period.action]}, %`;
+    $("tou-on").checked = fields.on;
+    $("tou-start").value = fields.start;
+    $("tou-end").value = fields.end;
+    setTicks($("tou-days"), fields.day_bits);
+    setTicks($("tou-months"), fields.month_bits);
+    // A cut-off below the usual lowest, set in SEMS+, may stay as it is.
+    $("tou-cutoff").min = String(Math.min(10, period.cutoff_soc));
+    $("tou-cutoff").value = fields.cutoff_soc;
+    $("tou-percent").value = fields.percent;
     $("tou-result").textContent = "";
     $("tou-change").hidden = false;
     updateTouSend();
-    $("tou-percent").focus();
+    $("tou-on").focus();
   }
 
   function closeTouChange() {
@@ -2017,29 +2206,32 @@
     }
   }
 
-  async function sendTouChange(event) {
-    event.preventDefault();
-    if (!touChange || touSending || $("tou-send").disabled) return;
-    const { slot, raw } = touChange;
-    const percent = Number($("tou-percent").value);
+  // Sends one programme as wanted, from the panel or a switch, and says how it went. Only one at a time.
+  async function sendTou(slot, raw, wanted) {
+    if (touSending) return;
     touSending = true;
+    touSendingOn = { slot, on: wanted.on };
+    touShown = null; // Redrawn so every switch and button waits for this one.
+    renderTou();
     updateTouSend();
     $("tou-cancel").disabled = true;
-    $("tou-result").textContent = "Sending it, then reading it back…";
+    $("tou-result").textContent = `Sending programme ${slot}, then reading it back…`;
     let message;
     try {
-      const response = await fetch(`/api/tou/${slot}/power`, {
+      const response = await fetch(`/api/tou/${slot}`, {
         method: "PUT",
         cache: "no-store",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ percent, expected: raw }),
+        body: JSON.stringify({ expected: raw, ...wanted }),
       });
       const answer = await response.json().catch(() => null);
       if (response.ok) {
         message = answer.outcome === "unchanged"
-          ? `Programme ${slot} already holds ${percent}%, so nothing was sent.`
-          : `Programme ${slot} changed from ${answer.old_percent}% to ${percent}%, confirmed by reading it back.`;
-        closeTouChange();
+          ? `Programme ${slot} already holds that, so nothing was sent.`
+          : `Programme ${slot}: ${answer.changes.map(changeText).join(", ")}. Confirmed by reading it back.`;
+        if (touChange?.slot === slot) closeTouChange();
+      } else if (response.status === 405 || (response.status === 404 && answer?.detail === "Not Found")) {
+        message = "Restart the dashboard to change programmes from here. Nothing was sent.";
       } else {
         message = typeof answer?.detail === "string" ? answer.detail : `Couldn't do that: the server answered ${response.status}.`;
       }
@@ -2050,11 +2242,19 @@
     $("tou-cancel").disabled = false;
     $("tou-result").textContent = message;
     await refresh();
+    touShown = null; // A switch that was refused goes back to what the inverter holds.
+    renderTou();
     await refreshTouWrites();
     updateTouSend();
   }
 
-  $("tou-percent").addEventListener("input", updateTouSend);
+  function sendTouChange(event) {
+    event.preventDefault();
+    if (!touChange || touSending || $("tou-send").disabled) return;
+    sendTou(touChange.slot, touChange.raw, touWanted());
+  }
+
+  for (const id of ["tou-on", "tou-start", "tou-end", "tou-cutoff", "tou-percent"]) $(id).addEventListener("input", updateTouSend);
   $("tou-change").addEventListener("submit", sendTouChange);
   $("tou-cancel").addEventListener("click", closeTouChange);
 

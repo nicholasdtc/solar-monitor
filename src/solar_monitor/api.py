@@ -1,7 +1,7 @@
 """The web app: serves the dashboard page, the latest readings, the logged history, appliances, exports and imports.
 
 The serial number is never sent to the page. The one route that changes the inverter is the TOU
-power one, which hands over to control.py. PUT, JSON bodies and the content type an import insists
+programme one, which hands over to control.py. PUT, JSON bodies and the content type an import insists
 on can't be sent cross-site without a preflight, which no other site passes, so a web page
 elsewhere can't change anything here.
 """
@@ -31,7 +31,15 @@ from starlette.background import BackgroundTask
 from solar_monitor import config, control, db, export, importer, meter, planning
 from solar_monitor.collector import Collector
 from solar_monitor.inputs import ApplianceIn, SettingsIn
-from solar_monitor.schedule import TIME_PERIODS, running_charge_period
+from solar_monitor.schedule import (
+    ALL_MONTHS,
+    EVERY_DAY,
+    TIME_PERIODS,
+    decode,
+    describe_changes,
+    describe_period,
+    running_charge_period,
+)
 
 PAGE = Path(__file__).with_name("dashboard.html")
 ZONE_NAME = re.compile(r"[A-Za-z0-9_+\-]+(?:/[A-Za-z0-9_+\-]+)*")
@@ -65,9 +73,45 @@ MEASURE_SECONDS = 3600
 MEASURE_WINDOW_SECONDS = 30 * 86400
 
 
-class PeriodPowerIn(BaseModel):
-    percent: Annotated[int, Field(strict=True, ge=control.LOWEST_PERCENT, le=control.HIGHEST_PERCENT)]
+Clock = Annotated[str, StringConstraints(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")]
+
+
+class PeriodIn(BaseModel):
+    """A TOU programme as the page wants it. Its type and whether it charges or discharges can't be sent."""
+
     expected: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{24}$")]  # The period's bytes, as the page saw them.
+    on: Annotated[bool, Field(strict=True)]
+    start: Clock
+    end: Clock
+    day_bits: Annotated[int, Field(strict=True, ge=1, le=EVERY_DAY)]  # Bit 0 is Sunday.
+    month_bits: Annotated[int, Field(strict=True, ge=1, le=ALL_MONTHS)]  # Bit 0 is January.
+    cutoff_soc: Annotated[int, Field(strict=True, ge=0, le=100)]
+    percent: Annotated[int, Field(strict=True, ge=control.LOWEST_PERCENT, le=control.HIGHEST_PERCENT)]
+
+    def wanted(self) -> control.Wanted:
+        def clock(text: str) -> tuple[int, int]:
+            hour, minute = text.split(":")
+            return int(hour), int(minute)
+
+        return control.Wanted(
+            on=self.on,
+            start=clock(self.start),
+            end=clock(self.end),
+            day_bits=self.day_bits,
+            month_bits=self.month_bits,
+            cutoff_soc=self.cutoff_soc,
+            percent=self.percent,
+        )
+
+
+def _write_details(write: dict[str, object]) -> dict[str, object]:
+    """What a write changed, and the programme as it was before, so the page can offer to put it back."""
+    old, new = bytes.fromhex(write["old_bytes"]), bytes.fromhex(write["new_bytes"])
+    try:
+        before = decode(old)
+    except ValueError:
+        return {**write, "changes": None, "old": None}
+    return {**write, "changes": describe_changes(old, new), "old": describe_period(write["slot"], before)}
 
 
 def _positive(*candidates: object) -> float | None:
@@ -324,16 +368,16 @@ def create_app(collector: Collector) -> FastAPI:
 
     @app.get("/api/tou/writes")
     async def api_tou_writes() -> dict[str, object]:
-        return {"writes": db.list_inverter_writes(collector.conn)}
+        return {"writes": [_write_details(write) for write in db.list_inverter_writes(collector.conn)]}
 
-    @app.put("/api/tou/{slot}/power")
-    async def api_set_period_power(slot: int, change: PeriodPowerIn, request: Request) -> dict[str, object]:
+    @app.put("/api/tou/{slot}")
+    async def api_set_period(slot: int, change: PeriodIn, request: Request) -> dict[str, object]:
         if not _may_change_inverter(request):
             raise HTTPException(status_code=403, detail="Changing the inverter needs the app's login, so nothing was sent.")
         if not 1 <= slot <= TIME_PERIODS:
             raise HTTPException(status_code=404, detail="no such programme")
         try:
-            result = await collector.set_period_power(slot, change.percent, change.expected)
+            result = await collector.set_period(slot, change.wanted(), change.expected)
         except control.Refused as refused:
             raise HTTPException(status_code=409, detail=str(refused)) from None
         except control.Unconfirmed as problem:

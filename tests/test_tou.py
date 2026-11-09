@@ -15,10 +15,27 @@ from solar_monitor.collector import Collector
 
 TOU_40 = "17010500f97ffe70005a0fff"
 TOU_30 = "17010500f97ffed4005a0fff"
+EMPTY = bytes(12)
+# Programme 1 as the page shows it, ready to send back with changes.
+SHOWN_40 = {
+    "expected": TOU_40,
+    "on": True,
+    "start": "23:01",
+    "end": "05:00",
+    "day_bits": 127,
+    "month_bits": 4095,
+    "cutoff_soc": 90,
+    "percent": 40,
+}
+
+
+def wanted_30(**changes):
+    return control.Wanted(**{"on": True, "start": (23, 1), "end": (5, 0), "day_bits": 127, "month_bits": 4095,
+                             "cutoff_soc": 90, "percent": 30, **changes})
 
 
 class TouInverter:
-    """Holds period 1's bytes. The rest of the schedule can't be read, which the page copes with."""
+    """Holds period 1's bytes, and the other periods are empty. The rest of the settings can't be read, which the page copes with."""
 
     def __init__(self, held=TOU_40):
         self.held = bytes.fromhex(held)
@@ -27,6 +44,8 @@ class TouInverter:
     async def read_setting(self, name):
         if name == "eco_mode_1":
             return EcoModeV2(name, 0, "test").read_value(ProtocolResponse(self.held, None))
+        if name.startswith("eco_mode_"):
+            return EcoModeV2(name, 0, "test").read_value(ProtocolResponse(EMPTY, None))
         raise ValueError(name)
 
     async def write_setting(self, name, value):
@@ -94,11 +113,14 @@ def tou(collector, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     app = create_app(collector)
 
-    def request(percent=30, expected=TOU_40, slot=1, base_url="http://127.0.0.1:8000"):
+    def request(slot=1, base_url="http://127.0.0.1:8000", **changes):
+        """Power 30% unless something else is asked for."""
+        body = {**SHOWN_40, **(changes or {"percent": 30})}
+
         async def send():
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url=base_url) as client:
-                return await client.put(f"/api/tou/{slot}/power", json={"percent": percent, "expected": expected})
+                return await client.put(f"/api/tou/{slot}", json=body)
         return asyncio.run(send())
 
     return request
@@ -115,16 +137,34 @@ def get(collector, path):
 def test_a_change_is_reported_logged_and_shown_straight_away(tou, collector):
     response = tou()
     assert response.status_code == 200
-    assert response.json() == {"outcome": "confirmed", "old_percent": 40, "new_percent": 30}
+    assert response.json() == {"outcome": "confirmed", "changes": [{"field": "power", "old": "40%", "new": "30%"}]}
     assert collector.inverter.writes == [("eco_mode_1", bytes.fromhex(TOU_30))]
     period = collector.latest["schedule"]["periods"][0]
     assert (period["raw"], period["power_pct"]) == (TOU_30, 30)
     write = get(collector, "/api/tou/writes").json()["writes"][0]
     assert (write["slot"], write["old_percent"], write["new_percent"], write["outcome"]) == (1, 40, 30, "confirmed")
+    assert write["changes"] == [{"field": "power", "old": "40%", "new": "30%"}]
+    assert (write["new_bytes"], write["old"]["raw"], write["old"]["power_pct"]) == (TOU_30, TOU_40, 40)
+
+
+def test_a_programme_can_be_switched_off_and_on_again(tou, collector):
+    assert tou(on=False).status_code == 200
+    assert collector.inverter.held == bytes.fromhex("17010500067ffe70005a0fff")
+    assert collector.latest["schedule"]["periods"][0]["state"] == "off"
+    response = tou(expected="17010500067ffe70005a0fff", on=True)
+    assert response.json()["changes"] == [{"field": "state", "old": "off", "new": "on"}]
+    assert collector.inverter.held == bytes.fromhex(TOU_40)
+
+
+def test_the_whole_schedule_of_a_programme_can_change(tou, collector):
+    response = tou(start="22:30", end="07:00", day_bits=0b1000001, month_bits=0b110000000011, cutoff_soc=80)
+    assert response.status_code == 200
+    assert collector.inverter.held == bytes.fromhex("161e0700f941fe7000500c03")
+    assert [change["field"] for change in response.json()["changes"]] == ["start", "end", "days", "months", "cutoff_soc"]
 
 
 def test_a_stale_page_is_refused_with_a_reason(tou, collector):
-    response = tou(expected=TOU_30)
+    response = tou(expected=TOU_30, percent=20)
     assert response.status_code == 409
     assert "changed on the inverter" in response.json()["detail"]
     assert collector.inverter.writes == []
@@ -155,11 +195,60 @@ def test_there_is_no_such_programme(tou, collector, slot):
 
 
 @pytest.mark.parametrize(
-    ("percent", "expected"),
-    [(0, TOU_40), (101, TOU_40), (30.5, TOU_40), ("30", TOU_40), (True, TOU_40), (30, "nope"), (30, TOU_40.upper()), (30, TOU_40 + "00")],
+    "changes",
+    [
+        {"percent": 0},
+        {"percent": 101},
+        {"percent": 30.5},
+        {"percent": "30"},
+        {"percent": True},
+        {"expected": "nope"},
+        {"expected": TOU_40.upper()},
+        {"expected": TOU_40 + "00"},
+        {"on": "true"},
+        {"on": 0},
+        {"start": "24:00"},
+        {"start": "7:00"},
+        {"end": "07:60"},
+        {"end": 700},
+        {"day_bits": 0},
+        {"day_bits": 128},
+        {"day_bits": -1},
+        {"month_bits": 0},
+        {"month_bits": 4096},
+        {"cutoff_soc": 101},
+        {"cutoff_soc": "80"},
+        {"on": None},
+    ],
 )
-def test_a_badly_formed_change_never_reaches_the_inverter(tou, collector, percent, expected):
-    assert tou(percent=percent, expected=expected).status_code == 422
+def test_a_badly_formed_change_never_reaches_the_inverter(tou, collector, changes):
+    assert tou(**changes).status_code == 422
+    assert collector.inverter.writes == []
+
+
+@pytest.mark.parametrize("missing", ["expected", "on", "start", "end", "day_bits", "month_bits", "cutoff_soc", "percent"])
+def test_a_change_must_say_everything(collector, monkeypatch, missing):
+    monkeypatch.setattr(config, "load_dotenv", lambda *_: None)
+    for name in ("BIND_HOST", "DASHBOARD_USER", "DASHBOARD_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+    body = {key: value for key, value in SHOWN_40.items() if key != missing}
+
+    async def send():
+        transport = httpx.ASGITransport(app=create_app(collector))
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as client:
+            return await client.put("/api/tou/1", json=body)
+
+    assert asyncio.run(send()).status_code == 422
+    assert collector.inverter.writes == []
+
+
+def test_the_old_power_only_route_is_gone(tou, collector):
+    async def send():
+        transport = httpx.ASGITransport(app=create_app(collector))
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as client:
+            return await client.put("/api/tou/1/power", json={"percent": 30, "expected": TOU_40})
+
+    assert asyncio.run(send()).status_code in (404, 405)
     assert collector.inverter.writes == []
 
 
@@ -196,16 +285,16 @@ def test_on_the_network_only_a_logged_in_request_reaches_the_inverter(collector,
     monkeypatch.setenv("DASHBOARD_PASSWORD", "password")
     app = create_app(collector)
     app.add_middleware(LoginRequired, username="user", password="password")
-    change = {"percent": 30, "expected": TOU_40}
+    change = {**SHOWN_40, "percent": 30}
 
     async def send():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://solar.lan:8000") as client:
-            no_session = await client.put("/api/tou/1/power", json=change)
-            made_up = await client.put("/api/tou/1/power", json=change, headers={"Cookie": f"{COOKIE}=made-up"})
+            no_session = await client.put("/api/tou/1", json=change)
+            made_up = await client.put("/api/tou/1", json=change, headers={"Cookie": f"{COOKIE}=made-up"})
             sent_before_login = list(collector.inverter.writes)
             logged_in = await client.post("/login", data={"username": "user", "password": "password"})
-            sent = await client.put("/api/tou/1/power", json=change)
+            sent = await client.put("/api/tou/1", json=change)
         return no_session, made_up, sent_before_login, logged_in, sent
 
     no_session, made_up, sent_before_login, logged_in, sent = asyncio.run(send())
@@ -246,7 +335,7 @@ def test_a_write_never_overlaps_polling_and_polling_carries_on(monkeypatch, coll
     async def scenario():
         async with create_app(collector).router.lifespan_context(None):
             await wait_for(lambda: inverter.reads >= 1)
-            result = await collector.set_period_power(1, 30, TOU_40)
+            result = await collector.set_period(1, wanted_30(), TOU_40)
             polled = inverter.reads
             await wait_for(lambda: inverter.reads > polled)
             return result
@@ -260,6 +349,6 @@ def test_a_write_never_overlaps_polling_and_polling_carries_on(monkeypatch, coll
 def test_a_refused_change_still_refreshes_what_the_page_shows(collector):
     collector.inverter = TouInverter(TOU_30)
     with pytest.raises(control.Refused):
-        asyncio.run(collector.set_period_power(1, 20, TOU_40))
+        asyncio.run(collector.set_period(1, wanted_30(percent=20), TOU_40))
     assert collector.inverter.writes == []
     assert collector.latest["schedule"]["periods"][0]["power_pct"] == 30

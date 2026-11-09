@@ -96,18 +96,19 @@ class Collector:
         self.storage["error"] = None
         self.buffer.clear()
 
-    async def set_period_power(self, slot: int, percent: int, expected: str) -> dict[str, object]:
-        """Change one TOU period's power, between polls. Whatever happens, `latest` then shows what it holds."""
+    async def set_period(self, slot: int, wanted: control.Wanted, expected: str) -> dict[str, object]:
+        """Change one TOU period, between polls. Whatever happens, `latest` then shows what it holds."""
         async with self.talking:
             if self.inverter is None:
                 raise control.Refused("The inverter isn't connected at the moment, so nothing was sent.")
             try:
-                result = await control.set_period_power(self.inverter, self.conn, slot, percent, expected)
+                result = await control.set_period(self.inverter, self.conn, slot, wanted, expected)
                 if result["outcome"] == "confirmed":
-                    log(f"TOU period {slot} power changed from {result['old_percent']}% to {percent}%")
+                    changes = "; ".join(f"{c['field']} {c['old']} to {c['new']}" for c in result["changes"] or [])
+                    log(f"TOU period {slot} changed: {changes}")
                 return result
             except control.Unconfirmed as problem:
-                log(f"TOU period {slot} change to {percent}% wasn't confirmed: {problem}")
+                log(f"TOU period {slot} change wasn't confirmed: {problem}")
                 raise
             finally:
                 self.latest["schedule"] = {**await read_schedule(self.inverter), "read_at": timestamp()}

@@ -10,7 +10,7 @@ from goodwe.protocol import ProtocolResponse
 from goodwe.sensor import EcoModeV1, EcoModeV2
 
 from solar_monitor import control, db
-from solar_monitor.schedule import period_bytes
+from solar_monitor.schedule import days_meant, describe_changes, months_meant, period_bytes
 
 CHARGE_40 = bytes.fromhex("17010500f97ffe70005a0fff")  # 23:01-05:00, on, every day, charge 40%, cut-off 90%, all year.
 CHARGE_30 = bytes.fromhex("17010500f97ffed4005a0fff")
@@ -19,6 +19,7 @@ WHOLE_PERCENT = bytes.fromhex("17010500ff7fffd8005a0fff")  # The older type: on 
 EMPTY = bytes(12)
 PEAK_SHAVING = bytes.fromhex("17010500037f00640032" + "0fff")
 NO_POWER = bytes.fromhex("17010500f97f0000005a0fff")
+CHARGE_40_OFF = bytes.fromhex("17010500067ffe70005a0fff")
 
 
 def decoded(data):
@@ -26,10 +27,12 @@ def decoded(data):
 
 
 class FakeInverter:
-    """Holds one period's bytes, and hands back a reused object as the library does."""
+    """Holds the period being changed, and the others: empty unless given. Hands back one reused object, as the library does."""
 
-    def __init__(self, held=CHARGE_40):
+    def __init__(self, held=CHARGE_40, slot=1, others=None):
         self.held = held
+        self.slot = slot
+        self.others = others or {}  # By slot: bytes, or an exception to raise.
         self.writes = []
         self.write_error = None
         self.applies = True
@@ -40,6 +43,11 @@ class FakeInverter:
         self.group = EcoModeV2("eco_mode_1", 0, "test")
 
     async def read_setting(self, name):
+        if name != f"eco_mode_{self.slot}":
+            other = self.others.get(int(name.removeprefix("eco_mode_")), EMPTY)
+            if isinstance(other, Exception):
+                raise other
+            return self.group.read_value(ProtocolResponse(other, None))
         if self.unreadable_after_write and self.writes:
             raise OSError("no reply")
         if self.pending is not None:
@@ -69,8 +77,25 @@ def no_waiting(monkeypatch):
     monkeypatch.setattr(control, "READ_BACK_WAIT_SECONDS", 0)
 
 
-def change(inverter, conn, percent=30, expected=CHARGE_40.hex(), slot=1):
-    return asyncio.run(control.set_period_power(inverter, conn, slot, percent, expected))
+def wanted(data, **changes):
+    """What a period holds, as the page would send it back, with `changes` made."""
+    group = decoded(data)
+    fields = {
+        "on": group.on_off < 0,
+        "start": (group.start_h, group.start_m),
+        "end": (group.end_h, group.end_m),
+        "day_bits": days_meant(group.day_bits),
+        "month_bits": months_meant(group.month_bits),
+        "cutoff_soc": group.soc,
+        "percent": abs(group.get_power()),
+    }
+    return control.Wanted(**{**fields, **changes})
+
+
+def change(inverter, conn, expected=CHARGE_40.hex(), slot=1, **changes):
+    """Power 30% unless something else is asked for."""
+    changes = changes or {"percent": 30}
+    return asyncio.run(control.set_period(inverter, conn, slot, wanted(bytes.fromhex(expected), **changes), expected))
 
 
 def logged(conn):
@@ -84,19 +109,19 @@ def test_a_period_rebuilds_to_the_same_bytes(data):
 
 def test_only_the_power_bytes_change_on_a_real_period(conn):
     inverter = FakeInverter()
-    assert change(inverter, conn) == {"outcome": "confirmed", "old_percent": 40, "new_percent": 30}
+    assert change(inverter, conn) == {"outcome": "confirmed", "changes": [{"field": "power", "old": "40%", "new": "30%"}]}
     assert inverter.writes == [("eco_mode_1", CHARGE_30)]
     assert inverter.held == CHARGE_30
 
 
 def test_the_setting_written_is_the_slot_asked_for(conn):
-    inverter = FakeInverter()
+    inverter = FakeInverter(slot=3)
     change(inverter, conn, slot=3)
     assert inverter.writes[0][0] == "eco_mode_3"
 
 
 def test_a_discharge_stays_a_discharge(conn):
-    inverter = FakeInverter(DISCHARGE_100)
+    inverter = FakeInverter(DISCHARGE_100, slot=2)
     change(inverter, conn, percent=50, expected=DISCHARGE_100.hex(), slot=2)
     assert inverter.writes[0][1] == bytes.fromhex("103b1301067f01f4000f0fff")
 
@@ -165,13 +190,13 @@ def test_an_unreadable_period_is_refused(conn):
 
 def test_asking_for_what_it_already_holds_sends_nothing(conn):
     inverter = FakeInverter()
-    assert change(inverter, conn, percent=40)["outcome"] == "unchanged"
+    assert change(inverter, conn, percent=40) == {"outcome": "unchanged", "changes": []}
     assert inverter.writes == []
     assert logged(conn) == []
 
 
 def test_new_bytes_that_fail_the_double_check_are_not_sent(conn, monkeypatch):
-    monkeypatch.setattr(control, "_with_power", lambda group, percent: bytes.fromhex("18010500f97ffed4005a0fff"))
+    monkeypatch.setattr(control, "_build", lambda group, wanted: bytes.fromhex("18010500f97ffed4005a0fff"))
     inverter = FakeInverter()
     with pytest.raises(control.Refused, match="didn't check out"):
         change(inverter, conn)
@@ -179,7 +204,15 @@ def test_new_bytes_that_fail_the_double_check_are_not_sent(conn, monkeypatch):
 
 
 def test_the_double_check_refuses_a_flipped_direction(conn, monkeypatch):
-    monkeypatch.setattr(control, "_with_power", lambda group, percent: bytes.fromhex("17010500f97f012c005a0fff"))
+    monkeypatch.setattr(control, "_build", lambda group, wanted: bytes.fromhex("17010500f97f012c005a0fff"))
+    inverter = FakeInverter()
+    with pytest.raises(control.Refused, match="didn't check out"):
+        change(inverter, conn)
+    assert inverter.writes == []
+
+
+def test_the_double_check_refuses_a_changed_type(conn, monkeypatch):
+    monkeypatch.setattr(control, "_build", lambda group, wanted: bytes.fromhex("17010500ff7ffed4005a0fff"))
     inverter = FakeInverter()
     with pytest.raises(control.Refused, match="didn't check out"):
         change(inverter, conn)
@@ -266,3 +299,156 @@ def test_the_log_lists_the_latest_first(conn):
     db.add_inverter_write(conn, 2, "cc", "dd", 50, 60)
     assert [write["slot"] for write in db.list_inverter_writes(conn)] == [2, 1]
     assert db.list_inverter_writes(conn)[0]["outcome"] == "sent"
+
+
+@pytest.mark.parametrize(
+    ("held", "on", "sent"),
+    [
+        (CHARGE_40, False, CHARGE_40_OFF),  # The type is in the same byte, and stays.
+        (DISCHARGE_100, True, bytes.fromhex("103b1301f97f03e8000f0fff")),
+        (WHOLE_PERCENT, False, bytes.fromhex("17010500007fffd8005a0fff")),  # The older type: on is 0xff, off is 0.
+        (bytes.fromhex("17010500007fffd8005a0fff"), True, WHOLE_PERCENT),
+    ],
+)
+def test_switching_a_period_on_or_off_changes_only_that(conn, held, on, sent):
+    inverter = FakeInverter(held)
+    result = change(inverter, conn, expected=held.hex(), on=on)
+    assert inverter.writes == [("eco_mode_1", sent)]
+    assert result["changes"] == [{"field": "state", "old": "off" if on else "on", "new": "on" if on else "off"}]
+
+
+@pytest.mark.parametrize(
+    ("changes", "sent", "described"),
+    [
+        ({"end": (7, 0)}, "17010700f97ffe70005a0fff", ("end", "05:00", "07:00")),
+        ({"start": (22, 30)}, "161e0500f97ffe70005a0fff", ("start", "23:01", "22:30")),
+        ({"day_bits": 0b0111110}, "17010500f93efe70005a0fff", ("days", "every day", "Mon–Fri")),
+        ({"month_bits": 0b110000000011}, "17010500f97ffe70005a0c03", ("months", "all year", "Jan, Feb, Nov, Dec")),
+        ({"cutoff_soc": 80}, "17010500f97ffe7000500fff", ("cutoff_soc", "90%", "80%")),
+    ],
+)
+def test_each_part_of_the_schedule_can_change(conn, changes, sent, described):
+    inverter = FakeInverter()
+    result = change(inverter, conn, **changes)
+    assert inverter.writes == [("eco_mode_1", bytes.fromhex(sent))]
+    assert result["changes"] == [dict(zip(("field", "old", "new"), described))]
+
+
+def test_every_day_and_all_year_keep_the_bytes_they_were_held_as(conn):
+    held = bytes.fromhex("17010500f9fffe70005a0000")  # Every day as -1, all year as 0.
+    inverter = FakeInverter(held)
+    change(inverter, conn, expected=held.hex(), percent=30)
+    assert inverter.writes == [("eco_mode_1", bytes.fromhex("17010500f9fffed4005a0000"))]
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"day_bits": 0}, "at least one day"),
+        ({"day_bits": 128}, "at least one day"),
+        ({"month_bits": 0}, "at least one month"),
+        ({"month_bits": 0x1000}, "at least one month"),
+        ({"start": (5, 0)}, "can't be the same"),
+        ({"end": (24, 0)}, "00:00 to 23:59"),
+        ({"start": (23, 60)}, "00:00 to 23:59"),
+        ({"cutoff_soc": 5}, "cut-off has to be"),
+        ({"cutoff_soc": 101}, "cut-off has to be"),
+        ({"percent": 0}, "power has to be"),
+    ],
+)
+def test_a_schedule_that_makes_no_sense_is_refused(conn, changes, reason):
+    inverter = FakeInverter()
+    with pytest.raises(control.Refused, match=reason):
+        change(inverter, conn, **changes)
+    assert inverter.writes == []
+    assert logged(conn) == []
+
+
+def test_a_low_cut_off_already_held_may_stay(conn):
+    held = bytes.fromhex("103b1301067f03e800050fff")  # Discharging to 5%, set in SEMS+.
+    inverter = FakeInverter(held)
+    change(inverter, conn, expected=held.hex(), percent=50)
+    assert inverter.writes == [("eco_mode_1", bytes.fromhex("103b1301067f01f400050fff"))]
+
+
+ON_4_TO_6 = bytes.fromhex("04000600f97ffe70005a0fff")
+
+
+def test_switching_on_into_another_period_that_is_on_is_refused(conn):
+    inverter = FakeInverter(CHARGE_40_OFF, others={2: ON_4_TO_6})
+    with pytest.raises(control.Refused, match=r"overlap programme 2 \(04:00 to 06:00\)"):
+        change(inverter, conn, expected=CHARGE_40_OFF.hex(), on=True)
+    assert inverter.writes == []
+    assert logged(conn) == []
+
+
+def test_moving_into_another_period_that_is_on_is_refused(conn):
+    inverter = FakeInverter(others={3: bytes.fromhex("06000700f97ffe70005a0fff")})
+    with pytest.raises(control.Refused, match="overlap programme 3"):
+        change(inverter, conn, end=(6, 30))
+    assert inverter.writes == []
+
+
+@pytest.mark.parametrize(
+    ("other", "changes"),
+    [
+        (bytes.fromhex("04000600067ffe70005a0fff"), {"on": True}),  # The other one is off.
+        (bytes.fromhex("04000600f97ffe7000500020"), {"on": True, "month_bits": 1}),  # June, and this one January.
+        (bytes.fromhex("05000700f97ffe70005a0fff"), {"on": True}),  # Back to back.
+    ],
+)
+def test_a_period_that_does_not_clash_can_switch_on(conn, other, changes):
+    inverter = FakeInverter(CHARGE_40_OFF, others={2: other})
+    assert change(inverter, conn, expected=CHARGE_40_OFF.hex(), **changes)["outcome"] == "confirmed"
+
+
+def test_periods_that_already_overlapped_can_still_change(conn):
+    inverter = FakeInverter(others={2: ON_4_TO_6})
+    assert change(inverter, conn, percent=30)["outcome"] == "confirmed"
+    assert change(inverter, conn, expected=CHARGE_30.hex(), end=(5, 30))["outcome"] == "confirmed"
+
+
+def test_a_period_running_past_midnight_on_saturday_meets_sunday(conn):
+    held = bytes.fromhex("1701050006" + "40" + "fe70005a0fff")  # 23:01-05:00, Saturdays, off.
+    sunday = bytes.fromhex("01000200f901fe70005a0fff")
+    monday = bytes.fromhex("01000200f902fe70005a0fff")
+    with pytest.raises(control.Refused, match="overlap programme 4"):
+        change(FakeInverter(held, others={4: sunday}), conn, expected=held.hex(), on=True)
+    assert change(FakeInverter(held, others={4: monday}), conn, expected=held.hex(), on=True)["outcome"] == "confirmed"
+
+
+def test_switching_on_without_reading_the_others_is_refused(conn):
+    inverter = FakeInverter(CHARGE_40_OFF, others={2: OSError("no reply")})
+    with pytest.raises(control.Refused, match="Couldn't read programme 2"):
+        change(inverter, conn, expected=CHARGE_40_OFF.hex(), on=True)
+    assert inverter.writes == []
+
+
+def test_switching_off_or_changing_power_needs_no_look_at_the_others(conn):
+    inverter = FakeInverter(others={n: OSError("no reply") for n in (2, 3, 4)})
+    assert change(inverter, conn, percent=30)["outcome"] == "confirmed"
+    assert change(inverter, conn, expected=CHARGE_30.hex(), on=False)["outcome"] == "confirmed"
+
+
+def test_changes_are_described_field_by_field():
+    assert describe_changes(CHARGE_40, CHARGE_40) == []
+    assert describe_changes(CHARGE_40, bytes.fromhex("17010700067ffed4005a0fff")) == [
+        {"field": "state", "old": "on", "new": "off"},
+        {"field": "end", "old": "05:00", "new": "07:00"},
+        {"field": "power", "old": "40%", "new": "30%"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("days", "months", "described"),
+    [
+        ("0f", "0f1f", ("Mon–Wed, Sun", "Jan–May, Sep–Dec")),  # Sunday is bit 0, and listed last.
+        ("41", "0003", ("Sat, Sun", "Jan, Feb")),  # Two in a row stay as two.
+        ("2a", "0aaa", ("Mon, Wed, Fri", "Feb, Apr, Jun, Aug, Oct, Dec")),
+    ],
+)
+def test_runs_of_days_and_months_are_named_as_ranges(days, months, described):
+    changed = bytes.fromhex(f"17010500f9{days}fe70005a{months}")
+    assert [(change["field"], change["new"]) for change in describe_changes(CHARGE_40, changed)] == list(
+        zip(("days", "months"), described)
+    )
