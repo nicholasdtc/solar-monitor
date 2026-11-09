@@ -200,6 +200,18 @@ CREATE TABLE IF NOT EXISTS solar_expected (
     fetch_id   INTEGER NOT NULL,        -- the weather_fetches id of the forecast
     expected_w REAL NOT NULL            -- the hour's mean
 ) WITHOUT ROWID;
+
+-- What automation would have done: one decision per rule for each time its TOU period starts,
+-- with what it was made from. Suggestions only, until a rule is let act.
+CREATE TABLE IF NOT EXISTS automation_runs (
+    id             INTEGER PRIMARY KEY,
+    ts             INTEGER NOT NULL,    -- when it was decided, Unix seconds
+    rule           TEXT NOT NULL,       -- a name in automation.rules
+    for_ts         INTEGER NOT NULL,    -- when the period it concerns starts
+    inputs         TEXT NOT NULL,       -- JSON: what it read
+    recommendation TEXT NOT NULL,       -- JSON: what it would do, and why
+    UNIQUE (rule, for_ts)
+);
 """.replace("{hour_columns}", _HOUR_COLUMNS)
 
 # Our name -> the inverter's lifetime kWh reading. Lifetime rather than "today" readings,
@@ -263,6 +275,14 @@ SETTINGS = (
     # Where the house is, for the weather. Personal: rounded to 2 decimals and kept only here.
     "latitude",
     "longitude",
+    # Automation's sunny morning rule: which TOU period, its usual and sunny cut-offs (%), how much
+    # to take off the solar forecast (%) and how many minutes before the period to decide.
+    # Unset ones take a default from what the inverter and the forecast's record show.
+    "auto_sunny_slot",
+    "auto_sunny_usual_soc",
+    "auto_sunny_sunny_soc",
+    "auto_sunny_margin_pct",
+    "auto_sunny_lead_min",
 )
 
 # Settings that are words rather than numbers. An unset one reads as None, which means the default.
@@ -275,6 +295,9 @@ TEXT_SETTINGS = (
 # How long an older forecast keeps its hours, from when it was fetched. The newest keeps them all.
 FORECAST_KEEP_SECONDS = 48 * HOUR
 DAY = 24 * HOUR
+# After this long, one forecast a day keeps its hours, the last fetched that day, so that how far
+# ahead they were right can still be seen. The others' hours are deleted; their fetch is still noted.
+FORECAST_DAILY_AFTER_SECONDS = 14 * DAY
 
 # Settings older versions kept. They're removed on start, and skipped quietly in an import.
 RETIRED_SETTINGS = (
@@ -695,14 +718,31 @@ def save_forecast(
             f"INSERT OR REPLACE INTO forecast_hours ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
             [(fetch_id, h.hour_start, *(getattr(h, name) for name in HOUR_FIELDS)) for h in hours],
         )
-        # TODO(W6): keep one older forecast a day for 14 days, to see how far ahead they were right.
         conn.execute(
             "DELETE FROM forecast_hours WHERE fetch_id < ? AND hour_start >= "
             "(SELECT fetched_at FROM weather_fetches WHERE id = fetch_id) + ?",
             (fetch_id, FORECAST_KEEP_SECONDS),
         )
+        _keep_one_forecast_a_day(conn, fetched_at - FORECAST_DAILY_AFTER_SECONDS)
         _save_weather_hours(conn, f"forecast:{provider}", fetched_at, panels, [h for h in hours if h.hour_start <= fetched_at])
     return fetch_id
+
+
+def _keep_one_forecast_a_day(conn: sqlite3.Connection, before: int) -> None:
+    """Of the forecasts fetched before `before` that still have hours, keep the hours of only the
+    last fetched each local day."""
+    fetches = conn.execute(
+        "SELECT id, fetched_at FROM weather_fetches WHERE kind = 'forecast' AND outcome = 'ok' AND fetched_at < ? "
+        "AND id IN (SELECT DISTINCT fetch_id FROM forecast_hours) ORDER BY fetched_at, id",
+        (before,),
+    ).fetchall()
+    last_of_day: dict[date, int] = {}
+    for fetch_id, fetched_at in fetches:
+        last_of_day[datetime.fromtimestamp(fetched_at).date()] = fetch_id
+    keep = set(last_of_day.values())
+    conn.executemany(
+        "DELETE FROM forecast_hours WHERE fetch_id = ?", [(fetch_id,) for fetch_id, _ in fetches if fetch_id not in keep]
+    )
 
 
 def save_past(conn: sqlite3.Connection, fetched_at: int, provider: str, hours: Iterable[Hour], panels: str | None) -> None:
@@ -789,6 +829,63 @@ def latest_forecast(conn: sqlite3.Connection, since: int) -> dict[str, object] |
         if hour["is_day"] is not None:
             hour["is_day"] = bool(hour["is_day"])
     return {"fetched_at": row[1], "provider": row[2], "hours": hours}
+
+
+def typical_load_by_hour(conn: sqlite3.Connection, since: int) -> dict[int, float]:
+    """The house's mean load in W for each local hour of the day, from the readings since `since`."""
+    return {
+        int(hour): float(watts)
+        for hour, watts in conn.execute(
+            "SELECT CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER), AVG(load_w) FROM samples "
+            "WHERE ts >= ? AND load_w IS NOT NULL GROUP BY 1",
+            (since,),
+        )
+    }
+
+
+def window_made(conn: sqlite3.Connection, start: int, end: int) -> dict[str, float] | None:
+    """The solar made and the house used from `start` to `end`, in kWh, from the mean of the readings
+    in it. None if it hasn't ended or too few readings cover it to say."""
+    if end <= start:
+        return None
+    count, pv, load = conn.execute(
+        "SELECT COUNT(*), AVG(pv_w), AVG(load_w) FROM samples WHERE ts >= ? AND ts < ?", (start, end)
+    ).fetchone()
+    last = conn.execute("SELECT MAX(ts) FROM samples").fetchone()[0]
+    # A reading a minute at most, so at least half the minutes in the window, and a reading after it.
+    if pv is None or load is None or count < (end - start) / MAX_READING_SECONDS / 2 or last is None or last < end:
+        return None
+    hours = (end - start) / HOUR
+    return {"pv_kwh": round(pv * hours / 1000, 2), "load_kwh": round(load * hours / 1000, 2)}
+
+
+def add_automation_run(
+    conn: sqlite3.Connection, ts: int, rule: str, for_ts: int, inputs: dict[str, object], recommendation: dict[str, object]
+) -> bool:
+    """Log a rule's decision, unless it's made one for that period already. True if this one is new."""
+    with conn:
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO automation_runs (ts, rule, for_ts, inputs, recommendation) VALUES (?, ?, ?, ?, ?)",
+            (ts, rule, for_ts, json.dumps(inputs), json.dumps(recommendation)),
+        )
+    return cursor.rowcount == 1
+
+
+def automation_run_exists(conn: sqlite3.Connection, rule: str, for_ts: int) -> bool:
+    return conn.execute("SELECT 1 FROM automation_runs WHERE rule = ? AND for_ts = ?", (rule, for_ts)).fetchone() is not None
+
+
+def list_automation_runs(conn: sqlite3.Connection, rule: str | None = None, limit: int = 14) -> list[dict[str, object]]:
+    """The latest runs, newest first."""
+    rows = conn.execute(
+        "SELECT id, ts, rule, for_ts, inputs, recommendation FROM automation_runs WHERE ? IS NULL OR rule = ? "
+        "ORDER BY for_ts DESC, id DESC LIMIT ?",
+        (rule, rule, limit),
+    ).fetchall()
+    return [
+        {"id": i, "ts": ts, "rule": r, "for_ts": f, "inputs": json.loads(inputs), "recommendation": json.loads(rec)}
+        for i, ts, r, f, inputs, rec in rows
+    ]
 
 
 def save_warnings(conn: sqlite3.Connection, fetched_at: int, provider: str, warnings: Iterable[Warning]) -> None:

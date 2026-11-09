@@ -33,8 +33,21 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 from starlette.background import BackgroundTask
 
-from solar_monitor import accounts, auth, config, control, db, export, importer, meter, planning, solar_forecast, weather
-from solar_monitor.collector import Collector
+from solar_monitor import (
+    accounts,
+    auth,
+    automation,
+    config,
+    control,
+    db,
+    export,
+    importer,
+    meter,
+    planning,
+    solar_forecast,
+    weather,
+)
+from solar_monitor.collector import Collector, log
 from solar_monitor.inputs import ApplianceIn, DisplayPrefsIn, SettingsIn
 from solar_monitor.weather import service as weather_service
 from solar_monitor.weather import sun
@@ -218,6 +231,11 @@ SETTING_LABELS = {
     "forecast_provider": "Forecast from",
     "warnings_provider": "Warnings from",
     "warnings_region": "Warnings region",
+    "auto_sunny_slot": "Sunny morning: TOU period",
+    "auto_sunny_usual_soc": "Sunny morning: usual cut-off (%)",
+    "auto_sunny_sunny_soc": "Sunny morning: sunny cut-off (%)",
+    "auto_sunny_margin_pct": "Sunny morning: margin (%)",
+    "auto_sunny_lead_min": "Sunny morning: decide, minutes before",
 }
 # The location is personal, so the history says only that it changed.
 PRIVATE_SETTINGS = ("latitude", "longitude")
@@ -299,9 +317,11 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
     async def lifespan(_: FastAPI):
         task = asyncio.create_task(collector.run())
         weather_task = asyncio.create_task(weather_service.run(collector.conn, fetch or HttpFetch()))
+        automation_task = asyncio.create_task(run_automation())
         yield
-        weather_task.cancel()
-        await asyncio.wait([weather_task])
+        for side_task in (weather_task, automation_task):
+            side_task.cancel()
+        await asyncio.wait([weather_task, automation_task])
         # goodwe turns a cancel during a read into a failed read, which the collector
         # survives, so one cancel isn't always enough to end it.
         while not task.done():
@@ -345,6 +365,54 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
             return {"kwh": None, "source": None, "points": 0}
         health = _positive(readings().get("battery_soh")) or 100
         return {"kwh": entered * health / 100, "source": "entered", "points": 0}
+
+    load_by_hour: tuple[float, dict[int, float]] | None = None
+
+    def typical_load() -> dict[int, float]:
+        """The house's mean load for each hour of the day. Slow to work out on the Pi, so hourly."""
+        nonlocal load_by_hour
+        if load_by_hour is None or time.monotonic() - load_by_hour[0] >= MEASURE_SECONDS:
+            since = int(time.time()) - automation.LOAD_DAYS * weather_service.DAY
+            load_by_hour = (time.monotonic(), db.typical_load_by_hour(collector.conn, since))
+        return load_by_hour[1]
+
+    def automation_state(now: int, full: bool) -> tuple[list[dict[str, object]], automation.State]:
+        """What automation decides from. Without `full`, only what says when a decision is due."""
+        settings = db.get_settings(collector.conn)
+        state = automation.State(
+            now=now,
+            settings=settings,
+            schedule=collector.latest.get("schedule"),
+            soc=_positive(readings().get("battery_soc")),
+            limits=dict(collector.latest.get("battery_limits") or {}),
+        )
+        if not full:
+            return [], state
+        held = capacity()
+        state.capacity_kwh, state.capacity_source = held["kwh"], held["source"]  # type: ignore[assignment]
+        state.load_by_hour = typical_load()
+        fit = solar_forecast.load_fit(collector.conn)
+        state.fit_status = fit.status if fit else None
+        state.error_pct = solar_forecast.score(collector.conn, now)["day_error_pct"]  # type: ignore[assignment]
+        where = weather_service.location(settings)
+        if where:
+            state.sunrises = sun.times(where.latitude, where.longitude, now - weather_service.DAY, now + 3 * weather_service.DAY)["rises"]
+        forecast = db.latest_forecast(collector.conn, now - now % HOUR)
+        hours = forecast["hours"] if forecast else []
+        state.forecast_fetched_at = forecast["fetched_at"] if forecast else None  # type: ignore[assignment]
+        for hour in hours:  # type: ignore[union-attr]
+            hour["expected_w"] = fit.expected_w(int(hour["hour_start"]), fit.sun_of(hour)) if fit else None
+        return hours, state  # type: ignore[return-value]
+
+    async def run_automation() -> None:
+        """Log each rule's decision when it's due. Only logs: nothing here writes to the inverter."""
+        while True:
+            try:
+                now = int(time.time())
+                automation.tick(collector.conn, now, lambda full: automation_state(now, full))
+            except Exception as error:  # Such as the database being busy: try again next time.
+                log(f"Automation loop error: {type(error).__name__}: {error}")
+            await asyncio.sleep(automation.CHECK_SECONDS)
 
     def overhead() -> dict[str, object]:
         nonlocal measured_overhead, measured_overhead_at
@@ -606,6 +674,68 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
         else:
             filled = db.weather_hours_count(collector.conn, start, end)
         return {"start": start, "end": end, "hours": (end - start) // HOUR, "filled": filled, "from_past": has_past}
+
+    def automation_outcome(run: dict[str, object]) -> dict[str, object] | None:
+        """What the morning a run decided for brought, once it's over, and whether the run was right."""
+        recommendation = run["recommendation"]
+        figures = recommendation.get("figures", {})  # type: ignore[union-attr]
+        start, end, room = figures.get("morning_start"), figures.get("morning_end"), figures.get("room_kwh")
+        if recommendation.get("would") is None or start is None or end is None or room is None:  # type: ignore[union-attr]
+            return None
+        made = db.window_made(collector.conn, int(start), int(end))
+        if made is None:
+            return None
+        spare = round(made["pv_kwh"] - made["load_kwh"], 2)
+        sunny = spare >= room
+        return made | {"spare_kwh": spare, "sunny": sunny, "right": sunny == (recommendation["would"] == figures.get("sunny_soc"))}  # type: ignore[index]
+
+    @app.get("/api/automation")
+    async def api_automation() -> dict[str, object]:
+        """Each rule: its settings, what it would do now, when it next decides, and its latest
+        decisions beside what happened. Suggestions only."""
+        now = int(time.time())
+        forecast, state = automation_state(now, True)
+        rules = []
+        for rule in automation.rules.values():
+            chosen, unset = rule.resolve(state)
+            suggestion = automation.evaluate(rule, forecast, state)
+            decision = rule.decision(state)
+            runs = db.list_automation_runs(collector.conn, rule.name)
+            for run in runs:
+                run["outcome"] = automation_outcome(run)
+            rules.append({
+                "name": rule.name,
+                "title": rule.title,
+                "settings": [
+                    {"key": s.key, "label": s.label, "low": s.low, "high": s.high, "value": state.settings.get(s.key),
+                     "effective": chosen[s.key], "default": s.key in unset}
+                    for s in rule.settings
+                ],
+                "periods": [{k: p.get(k) for k in ("slot", "start", "end", "next_day", "cutoff_soc")} for p in rule.periods(state)],
+                "suggestion": suggestion.to_dict() if suggestion else None,
+                "decision": {"for_ts": decision[0], "decide_ts": decision[1]} if decision else None,
+                "runs": runs,
+            })
+        return {"rules": rules, "fit_status": state.fit_status}
+
+    @app.put("/api/automation/{name}")
+    async def api_automation_settings(name: str, values: dict[str, float | None], request: Request) -> dict[str, object]:
+        """Change a rule's settings. None makes one unset, so it takes its default."""
+        rule = automation.rules.get(name)
+        if rule is None:
+            raise HTTPException(status_code=404, detail="no such rule")
+        keys = {s.key for s in rule.settings}
+        for key, value in values.items():
+            problem = f"{key} isn't a setting of this rule" if key not in keys else automation.problem(key, value)
+            if problem:
+                raise HTTPException(status_code=400, detail=problem)
+        old = db.get_settings(collector.conn)
+        new = {key: None if value is None else float(value) for key, value in values.items()}
+        db.save_settings(collector.conn, new)  # type: ignore[arg-type]
+        changes = _settings_changes(old, new)  # type: ignore[arg-type]
+        if changes:
+            record(request, f"Changed {'; '.join(changes)}")
+        return await api_automation()
 
     @app.get("/api/weather/history")
     async def api_weather_history(start: int, end: int) -> dict[str, object]:

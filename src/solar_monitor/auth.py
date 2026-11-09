@@ -193,6 +193,9 @@ ROUTES = (
     _route("GET", r"/api/inverter-settings/writes", "schedule"),
     _route("PUT", r"/api/tou/[^/]+", "schedule", "inverter"),
     _route("PUT", r"/api/inverter-settings/[^/]+", "schedule", "inverter"),
+    # Suggestions only: changing a rule's settings writes nothing to the inverter.
+    _route("GET", r"/api/automation", "schedule"),
+    _route("PUT", r"/api/automation/[^/]+", "schedule", "edit"),
     _route("GET", r"/api/export", "app-data"),
     _route("GET", r"/api/export/download", "app-data"),
     _route("POST", r"/api/import", "app-data"),  # Applying one needs Edit data too, see needs().

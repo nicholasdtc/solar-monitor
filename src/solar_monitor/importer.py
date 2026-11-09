@@ -36,7 +36,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from solar_monitor import db, export, meter
+from solar_monitor import automation, db, export, meter
 from solar_monitor.inputs import ApplianceIn, SettingsIn
 from solar_monitor.weather.base import CONDITIONS, HOUR, HOUR_FIELDS, LEVELS
 
@@ -398,7 +398,11 @@ def _setting(row: Row) -> tuple[object, float | None]:
     if key not in db.SETTINGS:  # Perhaps from a newer version, which says nothing about whether the rest are good.
         return key, None
     value = _number(row["value"], str(key))
-    SettingsIn.model_validate({key: value})
+    if key in automation.SETTINGS:
+        if automation.problem(key, value):
+            raise ValueError(automation.problem(key, value))
+    else:
+        SettingsIn.model_validate({key: value})
     return key, value
 
 

@@ -331,6 +331,7 @@ TAB_ROUTES = [
     ("GET", "/api/appliances", "appliances"),
     ("GET", "/api/tou/writes", "schedule"),
     ("GET", "/api/inverter-settings/writes", "schedule"),
+    ("GET", "/api/automation", "schedule"),
     ("GET", "/api/export", "app-data"),
     ("GET", "/api/actions", "history"),
 ]

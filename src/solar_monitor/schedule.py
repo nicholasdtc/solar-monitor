@@ -14,6 +14,8 @@ ALL_DAYS = (127, -1)
 EVERY_DAY = 0x7F  # Bit 0 is Sunday.
 ALL_MONTHS = 0x0FFF  # Bit 0 is January.
 TOU_TYPES = (ScheduleType.ECO_MODE, ScheduleType.ECO_MODE_745)
+# A new cut-off, either way. The inverter's own on-grid limit still stops a discharge before this.
+LOWEST_CUTOFF, HIGHEST_CUTOFF = 10, 100
 # Each name by its bit, in the order a change lists them: the week from Monday.
 DAY_NAMES = {1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 0: "Sun"}
 MONTH_NAMES = dict(enumerate(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]))
@@ -140,6 +142,20 @@ def _is_running(period: dict[str, object], now: datetime) -> bool:
     if clock >= period["start"]:
         return _runs_on(period, now)
     return clock < period["end"] and _runs_on(period, now - timedelta(days=1))
+
+
+def next_start(period: dict[str, object], now: datetime) -> datetime | None:
+    """When the period next starts, at or after now, or None if it never runs or its start can't be read."""
+    try:
+        hours, minutes = (int(x) for x in str(period["start"]).split(":"))
+        first = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+    except (KeyError, ValueError):
+        return None
+    for days in range(0, 367):  # A period set for a single month may be most of a year away.
+        start = first + timedelta(days=days)
+        if start >= now and _runs_on(period, start):
+            return start
+    return None
 
 
 def running_charge_period(schedule: dict[str, object] | None, now: datetime) -> dict[str, object] | None:

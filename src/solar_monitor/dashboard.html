@@ -454,6 +454,14 @@
   .wx-foot { gap: 4px; }
   .wx-solar { display: grid; gap: 4px; }
   .wx-solar p { margin: 0; }
+  .wx-auto { display: grid; gap: 12px; }
+  .wx-auto p { margin: 0; }
+  .wx-auto-now { display: grid; gap: 4px; }
+  .wx-auto-form { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; }
+  .wx-auto-form label { display: flex; flex-direction: column; gap: 4px; color: var(--ink-2); }
+  .wx-auto-form select { min-height: 34px; max-width: 100%; padding: 4px 8px; background: var(--page); color: var(--ink); border: 1px solid var(--rule); }
+  .wx-auto-runs td, .wx-auto-runs th { white-space: nowrap; }
+  .wx-auto-runs td.why { white-space: normal; min-width: 180px; }
 
   /* A sub-tab's page: its panes one under another, the last taking up the rest of the screen. */
   .page { display: flex; flex-direction: column; }
@@ -1221,6 +1229,33 @@
     <div class="pane" id="wx-solar-pane" hidden>
       <h2>Solar forecast <button type="button" class="help" aria-label="About the solar forecast" data-tip="Learned from the log&#10;Error: share of made">?</button></h2>
       <div class="wx-solar" id="wx-solar"></div>
+    </div>
+    <div class="pane" id="wx-auto-pane" hidden>
+      <h2>Automation would… <button type="button" class="help" aria-label="About automation" data-tip="Suggestions only&#10;Nothing sent to the inverter">?</button></h2>
+      <div class="wx-auto">
+        <p class="note">Suggestions only: nothing here changes the inverter. Before a sunny morning, a lower cut-off for the night's charge leaves room in the battery for the sun.</p>
+        <div class="wx-auto-now" id="wx-auto-now" aria-live="polite"></div>
+        <form class="edit wx-auto-form" id="wx-auto-settings">
+          <label>TOU period <select name="auto_sunny_slot"></select></label>
+          <label for="auto-usual"><span>Usual cut-off (%) <button type="button" class="help" aria-label="About the usual cut-off" data-tip="Unset: the period's own">?</button></span><input id="auto-usual" name="auto_sunny_usual_soc" type="number" min="10" max="100" step="1"></label>
+          <label for="auto-sunny"><span>Sunny cut-off (%) <button type="button" class="help" aria-label="About the sunny cut-off" data-tip="Before a sunny morning">?</button></span><input id="auto-sunny" name="auto_sunny_sunny_soc" type="number" min="10" max="100" step="1"></label>
+          <label for="auto-margin"><span>Margin (%) <button type="button" class="help" aria-label="About the margin" data-tip="Off the solar forecast&#10;Unset: its day error">?</button></span><input id="auto-margin" name="auto_sunny_margin_pct" type="number" min="0" max="90" step="1"></label>
+          <label for="auto-lead"><span>Decide (min before) <button type="button" class="help" aria-label="About deciding" data-tip="Before the period starts">?</button></span><input id="auto-lead" name="auto_sunny_lead_min" type="number" min="0" max="720" step="1"></label>
+        </form>
+        <p class="alert" id="wx-auto-error" role="alert"></p>
+        <div class="scroll" tabindex="0" role="region" aria-label="Automation's decisions" id="wx-auto-runs-box" hidden>
+          <table class="wx-auto-runs">
+            <thead><tr>
+              <th>Period start</th>
+              <th>Would</th>
+              <th>Why</th>
+              <th>Morning <button type="button" class="help" aria-label="About the morning" data-tip="Solar − load, sunrise to noon">?</button></th>
+              <th>Right <button type="button" class="help" aria-label="About right" data-tip="Spare ≥ room: sunny">?</button></th>
+            </tr></thead>
+            <tbody id="wx-auto-runs"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
     <div class="pane wx-foot">
       <ul class="meta wx-credits" id="wx-credits"></ul>
@@ -5468,6 +5503,7 @@
     let hours = []; // Each hour from the start of today or 12 hours back, recorded then forecast, by hour_start.
     let solar = new Map(); // What the panels made, average W, by hour_start.
     let dayAhead = new Map(); // Expected solar as recorded the day before, W, by hour_start.
+    let automation = null; // /api/automation's answer, for those who may see the schedule.
     let request = 0;
     const openFolds = new Set(); // The first hour of each run of night hours opened.
 
@@ -5576,6 +5612,7 @@
       const now = Math.floor(Date.now() / 1000);
       const hourStart = now - (now % HOUR);
       try {
+        const rules = may("schedule") ? getJson("/api/automation").catch(() => null) : Promise.resolve(null);
         const next = await getJson("/api/weather");
         if (mine !== request) return;
         let recorded = [];
@@ -5597,6 +5634,8 @@
         hours = [...byHour.values()].sort((a, b) => a.hour_start - b.hour_start);
         solar = made;
         dayAhead = new Map((next.solar?.day_ahead ?? []).map((x) => [x.hour_start, x.expected_w]));
+        automation = (await rules) ?? (may("schedule") ? automation : null);
+        if (mine !== request) return;
         $("wx-now-note").textContent = "";
         redraw();
       } catch {
@@ -5613,11 +5652,13 @@
       $("wx-now-pane").hidden = !located;
       for (const id of ["wx-charts-pane", "wx-hours-pane", "wx-days-pane"]) $(id).hidden = !located || !forecast.length;
       $("wx-solar-pane").hidden = !located || !learned();
+      $("wx-auto-pane").hidden = !located || !automation?.rules?.length;
       drawWarnings();
       drawFoot();
       if (!located) return;
       drawNow(forecast);
       drawSolar();
+      drawAutomation();
       if (!forecast.length) return;
       drawCharts();
       drawHours(forecast);
@@ -5751,6 +5792,87 @@
         isNum(s.ceiling_w) ? `capped at ${number(s.ceiling_w / 1000, 1)} kW` : "",
       ].filter(Boolean).join(", ") + ".");
       box.replaceChildren(...lines.map((line) => el("p", "meta", line)));
+    }
+
+    /* What the sunny morning rule would do for the next charge, its settings, and how its decisions turned out. */
+    function drawAutomation() {
+      const rule = automation?.rules?.find((r) => r.name === "sunny_morning");
+      if (!rule) return;
+      const pct = (x) => (isNum(x) ? `${number(Math.round(x), 0)}%` : "—");
+      const kwhOf = (x) => `${number(x, 1)} kWh`;
+      const s = rule.suggestion;
+      const lines = [];
+      if (s && isNum(s.would)) {
+        lines.push(s.would === s.current ? `${s.setting}: keep ${pct(s.would)}.` : `${s.setting}: ${pct(s.would)}, not ${pct(s.current)}.`);
+      } else if (s) {
+        lines.push(`${s?.setting ? `${s.setting}: ` : ""}no suggestion.`);
+      }
+      if (s?.reason) lines.push(`${s.reason}.`);
+      if (automation.fit_status === "learning") lines.push("Forecast still learning, so expect rough figures.");
+      const d = rule.decision;
+      const now = Date.now() / 1000;
+      if (d) {
+        lines.push(d.decide_ts > now
+          ? `Decides ${dateTime(ms(d.decide_ts))}, for the start at ${clockTime(ms(d.for_ts))}.`
+          : `Decided for the start at ${dateTime(ms(d.for_ts))}.`);
+      }
+      $("wx-auto-now").replaceChildren(...lines.map((line, i) => el("p", i ? "meta" : "", line)));
+
+      // The settings: unset ones show the default they take.
+      const form = $("wx-auto-settings");
+      const editable = may("edit");
+      const bySetting = new Map(rule.settings.map((x) => [x.key, x]));
+      const slot = form.elements.auto_sunny_slot;
+      if (slot !== document.activeElement) {
+        const first = bySetting.get("auto_sunny_slot");
+        const periodText = (p) => `TOU ${p.slot}: ${wallTime(p.start)}–${wallTime(p.end)}, to ${pct(p.cutoff_soc)}`;
+        const options = [new Option(first?.default && isNum(first.effective) ? `First charge (TOU ${first.effective})` : "First charge period", "")];
+        for (const p of rule.periods) options.push(new Option(periodText(p), String(p.slot)));
+        // A period chosen that's no longer a charge period stays chosen, so it's plain why there's no suggestion.
+        if (isNum(first?.value) && !rule.periods.some((p) => p.slot === first.value)) options.push(new Option(`TOU ${first.value}`, String(first.value)));
+        slot.replaceChildren(...options);
+        slot.value = isNum(first?.value) ? String(first.value) : "";
+      }
+      for (const input of form.querySelectorAll("input")) {
+        const setting = bySetting.get(input.name);
+        if (!setting) continue;
+        setValue(input, setting.value);
+        input.placeholder = setting.default && isNum(setting.effective) ? number(Math.round(setting.effective), 0) : "";
+      }
+      for (const field of form.elements) field.disabled = !editable;
+
+      // The latest decisions, beside what the morning brought.
+      const runs = rule.runs ?? [];
+      $("wx-auto-runs-box").hidden = !runs.length;
+      $("wx-auto-runs").replaceChildren(...runs.map((run) => {
+        const r = run.recommendation;
+        const o = run.outcome;
+        const row = el("tr");
+        row.append(
+          el("td", "", dateTime(ms(run.for_ts))),
+          el("td", "", isNum(r.would) ? pct(r.would) : "—"),
+          el("td", "why", r.reason ?? ""),
+          el("td", "", o ? `${kwhOf(o.spare_kwh)} spare` : "—"),
+          el("td", "", o ? (o.right ? "Yes" : "No") : "—"),
+        );
+        return row;
+      }));
+    }
+
+    {
+      const form = $("wx-auto-settings");
+      form.addEventListener("submit", (event) => event.preventDefault());
+      form.addEventListener("change", async ({ target }) => {
+        const value = target.tagName === "SELECT" ? (target.value === "" ? null : Number(target.value)) : optionalNumber(target);
+        const error = $("wx-auto-error");
+        try {
+          automation = await sendJson("PUT", "/api/automation/sunny_morning", { [target.name]: value });
+          error.textContent = "";
+          redraw();
+        } catch (e) {
+          error.textContent = e.message;
+        }
+      });
     }
 
     function drawWarnings() {

@@ -302,6 +302,19 @@ The shape of the automation, so the data, the screens and the log are ready befo
 - There is no on switch in this phase, and no path from `automation.py` to `control.py`. A test proves it.
 - The first rule is the V2 one below, so its suggestions can be checked against what actually happened before it's ever allowed to act.
 
+**As built in W6:**
+
+- The one rule, `sunny_morning`, has five settings: the TOU period, the usual and sunny cut-offs (10 to 100%, the range `control.py` enforces), the margin (0 to 90%) and how many minutes before the period to decide (0 to 720). They're ordinary settings, checked against the rule's bounds by the API and the import.
+- Unset settings take a default from what's live: the first charge period that's on, that period's own cut-off as the usual one, the forecast's 30-day day error as the margin, and an hour's lead. The sunny cut-off has no default, so the rule says nothing useful until it's chosen.
+- The morning is sunrise to midday (local) on the day the period ends, with part hours counted by their share. Without a sunrise it starts at the first forecast hour with sun. The load is the mean for each local hour over the last 28 days of the log.
+- It decides in this order, and says why when it can't: the period is a charge period that's on, TOU is on, the period runs some day, the sunny cut-off is set and below the usual one, the period holds one of the two (otherwise "Changed by hand"), the capacity, the forecast and its error are known, and the forecast reaches the morning. A forecast still learning still decides, and the page says the figures are rough.
+- A loop in the app checks each minute and logs one decision per rule for each start of its period, at its decision time, in `automation_runs`. The inputs are logged with it, without the periods' raw bytes.
+- `/api/automation` gives each rule's settings (set value, value in use, and whether it's a default), its charge periods, what it would do now, when it next decides, and the last 14 decisions. Each decision, once its morning is over and the log covers at least half of it, has what the morning made and whether the decision was right: sunny when solar less load came to the room or more. `PUT /api/automation/{name}` changes the settings and goes in the Action history. Seeing it needs the schedule permission; changing it needs edit as well.
+- Weather tab: an "Automation would…" pane after the solar forecast, shown when a location is set and the user may see the schedule. It has the suggestion and why, when it next decides, the settings (unset ones show their default greyed), and the decisions with how each morning turned out.
+- `automation_runs` isn't in the CSV export; the SQLite copy has it.
+- A test walks everything `automation.py` imports, however far down, and checks none of it is `control.py` or the collector.
+- Older forecasts: after 14 days, only the last forecast fetched each day keeps its hours, so how far ahead the forecasts were right can still be looked at.
+
 ## V2: lower a TOU charge cut-off before a sunny morning
 
 Once the weather has run for a while and the forecast's error is known. Example: TOU charges from the grid overnight to 90%. If tomorrow morning will be sunny, charging only to 60% leaves room for free solar instead of bought grid power.

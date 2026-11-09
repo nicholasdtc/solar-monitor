@@ -32,6 +32,8 @@ from solar_monitor import db
 from solar_monitor.schedule import (
     ALL_MONTHS,
     EVERY_DAY,
+    HIGHEST_CUTOFF,
+    LOWEST_CUTOFF,
     PERIOD_LAYOUT,
     TIME_PERIODS,
     days_meant,
@@ -47,8 +49,6 @@ from solar_monitor.schedule import (
 READ_BACK_TRIES = 4
 READ_BACK_WAIT_SECONDS = 1  # The inverter may take a moment to show a change.
 LOWEST_PERCENT, HIGHEST_PERCENT = 1, 100
-# A new cut-off, either way. The inverter's own on-grid limit still stops a discharge before this.
-LOWEST_CUTOFF, HIGHEST_CUTOFF = 10, 100
 MINUTES_A_DAY = 24 * 60
 MINUTES_A_WEEK = 7 * MINUTES_A_DAY
 
