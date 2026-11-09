@@ -6,6 +6,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
+from solar_monitor import weather
+
 Watts = Annotated[float, Field(ge=0, le=1_000_000, allow_inf_nan=False)]
 Positive = Annotated[float, Field(gt=0, le=1_000_000, allow_inf_nan=False)]
 Rate = Annotated[float, Field(ge=0, le=100_000, allow_inf_nan=False)]
@@ -47,6 +49,33 @@ class SettingsIn(BaseModel):
     @classmethod
     def _round_location(cls, value: float | None) -> float | None:
         return None if value is None else round(value, 2)
+
+    # Names from the weather registry, so a new provider needs nothing here.
+    forecast_provider: str | None = None
+    warnings_provider: str | None = None
+    warnings_region: str | None = None
+
+    @field_validator("forecast_provider")
+    @classmethod
+    def _known_forecast(cls, value: str | None) -> str | None:
+        if value is not None and value not in weather.FORECASTS:
+            raise ValueError("no such forecast provider")
+        return value
+
+    @field_validator("warnings_provider")
+    @classmethod
+    def _known_warnings(cls, value: str | None) -> str | None:
+        if value is not None and value not in weather.WARNINGS:
+            raise ValueError("no such warnings provider")
+        return value
+
+    @field_validator("warnings_region")
+    @classmethod
+    def _known_region(cls, value: str | None) -> str | None:
+        codes = {region.code for provider in weather.WARNINGS.values() for region in provider.regions}
+        if value is not None and value not in codes:
+            raise ValueError("no such region")
+        return value
 
 
 class DisplayPrefsIn(BaseModel):

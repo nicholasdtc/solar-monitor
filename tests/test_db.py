@@ -3,6 +3,7 @@ from datetime import date, datetime
 import pytest
 
 from solar_monitor import db
+from solar_monitor.weather.base import HOUR, Hour, Warning
 
 
 @pytest.fixture
@@ -340,13 +341,13 @@ def test_battery_samples_join_saved_and_unsaved_readings_in_order(conn):
 
 
 def test_settings_start_unset(conn):
-    assert db.get_settings(conn) == dict.fromkeys(db.SETTINGS)
+    assert db.get_settings(conn) == dict.fromkeys((*db.SETTINGS, *db.TEXT_SETTINGS))
 
 
 def test_saving_settings_changes_those_given_and_none_clears_one(conn):
     db.save_settings(conn, {"limit_amps": 16, "outage_hours": 4, "tariff_day": 5})
     db.save_settings(conn, {"limit_amps": None, "outage_hours": 6})
-    assert db.get_settings(conn) == {**dict.fromkeys(db.SETTINGS), "outage_hours": 6, "tariff_day": 5}
+    assert db.get_settings(conn) == {**dict.fromkeys((*db.SETTINGS, *db.TEXT_SETTINGS)), "outage_hours": 6, "tariff_day": 5}
 
 
 def test_a_retired_setting_is_removed_when_the_app_starts(tmp_path):
@@ -399,7 +400,7 @@ def test_new_tables_are_added_to_an_existing_database(tmp_path):
     old.close()
     reopened = db.connect(path)
     assert db.list_appliances(reopened) == []
-    assert db.get_settings(reopened) == dict.fromkeys(db.SETTINGS)
+    assert db.get_settings(reopened) == dict.fromkeys((*db.SETTINGS, *db.TEXT_SETTINGS))
     reopened.close()
 
 
@@ -407,3 +408,66 @@ def test_overhead_samples_are_the_four_powers_from_the_start_on(conn):
     values = {"ppv": 1, "load_ptotal": 2, "pbattery1": 3, "active_power_total": 4}
     db.save_samples(conn, [db.Sample(1000, values), db.Sample(2000, {**values, "ppv": 5})])
     assert db.overhead_samples(conn, 1500) == [(5, 2, 3, 4)]
+
+
+# Weather
+
+
+def test_text_settings_are_kept_apart_from_the_numbers(conn):
+    db.save_settings(conn, {"forecast_provider": "met-norway", "warnings_region": "EI07", "latitude": 10.0})
+    db.save_settings(conn, {"warnings_region": None})
+    settings = db.get_settings(conn)
+    assert settings["forecast_provider"] == "met-norway"
+    assert settings["warnings_region"] is None and settings["latitude"] == 10.0
+    assert dict(conn.execute("SELECT key, value FROM text_settings")) == {"forecast_provider": "met-norway"}
+    assert dict(conn.execute("SELECT key, value FROM settings")) == {"latitude": 10.0}
+
+
+def _hours(start, count, **values):
+    return [Hour(hour_start=start + i * HOUR, **values) for i in range(count)]
+
+
+def test_a_forecast_is_kept_and_read_back_from_a_time_on(conn):
+    db.save_forecast(conn, 1000, "open-meteo", _hours(0, 3, temperature_c=5.0, is_day=True, condition="clear"))
+    latest = db.latest_forecast(conn, since=HOUR)
+    assert latest["fetched_at"] == 1000 and latest["provider"] == "open-meteo"
+    assert [h["hour_start"] for h in latest["hours"]] == [HOUR, 2 * HOUR]
+    assert latest["hours"][0]["is_day"] is True and latest["hours"][0]["temperature_c"] == 5.0
+    assert latest["hours"][0]["ghi_wm2"] is None
+
+
+def test_no_forecast_reads_as_none(conn):
+    db.add_weather_fetch(conn, 1000, "open-meteo", "forecast", "error", "HTTP 503")
+    assert db.latest_forecast(conn, 0) is None
+    assert db.last_weather_fetches(conn)["forecast"]["error"] == "HTTP 503"
+
+
+def test_older_forecasts_keep_only_the_two_days_after_they_were_fetched(conn):
+    first = db.save_forecast(conn, 0, "open-meteo", _hours(0, 72))
+    db.save_forecast(conn, 10 * HOUR, "open-meteo", _hours(10 * HOUR, 72))
+    kept = [t for (t,) in conn.execute("SELECT hour_start FROM forecast_hours WHERE fetch_id = ?", (first,))]
+    assert kept == [i * HOUR for i in range(48)]
+    assert len(db.latest_forecast(conn, 0)["hours"]) == 72
+
+
+def _warning(id, expiry=None, level="moderate"):
+    return Warning("met-eireann", id, level, "Rain", f"Warning {id}", "<p>Rain</p>", 100, expiry, ("EI07",), "https://x")
+
+
+def test_current_warnings_are_those_the_latest_fetch_had_that_havent_ended(conn):
+    db.save_warnings(conn, 1000, "met-eireann", [_warning("1"), _warning("2", expiry=1500)])
+    db.save_warnings(conn, 2000, "met-eireann", [_warning("2", expiry=1500, level="severe"), _warning("3", 5000)])
+    assert [w["id"] for w in db.current_warnings(conn, "met-eireann", 1600)] == ["3"]
+    found = db.current_warnings(conn, "met-eireann", 1000)
+    assert [(w["id"], w["level"]) for w in found] == [("2", "severe"), ("3", "moderate")]
+    assert found[0]["regions"] == ["EI07"] and found[0]["description"] == "<p>Rain</p>"
+    first_seen = conn.execute("SELECT first_seen, last_seen FROM weather_warnings WHERE id = '2'").fetchone()
+    assert first_seen == (1000, 2000)
+    assert db.current_warnings(conn, "other", 0) == []
+
+
+def test_a_fetch_with_no_warnings_ends_the_current_ones(conn):
+    db.save_warnings(conn, 1000, "met-eireann", [_warning("1")])
+    db.save_warnings(conn, 2000, "met-eireann", [])
+    assert db.current_warnings(conn, "met-eireann", 2000) == []
+    assert db.last_weather_fetches(conn)["warnings"]["items"] == 0

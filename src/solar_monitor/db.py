@@ -13,6 +13,13 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from solar_monitor.weather.base import HOUR, HOUR_FIELDS, Hour, Warning
+
+# Each Hour field's column: the condition is text, is_day 0 or 1, and the rest numbers.
+_HOUR_COLUMNS = ",\n    ".join(
+    f"{name} {'TEXT' if name == 'condition' else 'INTEGER' if name == 'is_day' else 'REAL'}" for name in HOUR_FIELDS
+)
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
     ts          INTEGER PRIMARY KEY,  -- Unix seconds from this machine's clock, not the inverter's
@@ -124,7 +131,49 @@ CREATE TABLE IF NOT EXISTS actions (
     kind     TEXT NOT NULL,             -- data, users or login
     summary  TEXT NOT NULL
 );
-"""
+
+CREATE TABLE IF NOT EXISTS text_settings (
+    key   TEXT PRIMARY KEY,             -- a key of TEXT_SETTINGS
+    value TEXT NOT NULL
+) WITHOUT ROWID;
+
+-- Every time the weather was asked for, and how it went.
+CREATE TABLE IF NOT EXISTS weather_fetches (
+    id         INTEGER PRIMARY KEY,
+    fetched_at INTEGER NOT NULL,        -- Unix seconds
+    provider   TEXT NOT NULL,
+    kind       TEXT NOT NULL,           -- forecast or warnings
+    outcome    TEXT NOT NULL,           -- ok, not modified, rate limited or error
+    items      INTEGER NOT NULL DEFAULT 0,
+    error      TEXT
+);
+CREATE INDEX IF NOT EXISTS weather_fetches_kind ON weather_fetches (kind, outcome, fetched_at);
+
+-- The hours of each forecast fetched, labelled by when each hour starts, in Unix seconds.
+CREATE TABLE IF NOT EXISTS forecast_hours (
+    fetch_id   INTEGER NOT NULL,        -- a weather_fetches id
+    hour_start INTEGER NOT NULL,
+    {hour_columns},
+    PRIMARY KEY (fetch_id, hour_start)
+) WITHOUT ROWID;
+
+-- Weather warnings as issued, kept after they end.
+CREATE TABLE IF NOT EXISTS weather_warnings (
+    provider    TEXT NOT NULL,
+    id          TEXT NOT NULL,          -- the issuer's own id
+    level       TEXT NOT NULL,          -- minor, moderate, severe or extreme
+    kind        TEXT NOT NULL,
+    headline    TEXT NOT NULL,
+    description TEXT NOT NULL,          -- as issued, which may be HTML
+    onset       INTEGER,                -- Unix seconds
+    expiry      INTEGER,
+    regions     TEXT NOT NULL,          -- the provider's region codes, as a JSON list
+    link        TEXT NOT NULL,
+    first_seen  INTEGER NOT NULL,       -- when a fetch first and last had it
+    last_seen   INTEGER NOT NULL,
+    PRIMARY KEY (provider, id)
+) WITHOUT ROWID;
+""".replace("{hour_columns}", _HOUR_COLUMNS)
 
 # Our name -> the inverter's lifetime kWh reading. Lifetime rather than "today" readings,
 # so that a gap in polling is caught up by the next reading instead of being lost.
@@ -187,6 +236,16 @@ SETTINGS = (
     "latitude",
     "longitude",
 )
+
+# Settings that are words rather than numbers. An unset one reads as None, which means the default.
+TEXT_SETTINGS = (
+    "forecast_provider",  # a name in weather.FORECASTS
+    "warnings_provider",  # a name in weather.WARNINGS, or unset for no warnings
+    "warnings_region",  # one of that provider's region codes, or unset for all of them
+)
+
+# How long an older forecast keeps its hours, from when it was fetched. The newest keeps them all.
+FORECAST_KEEP_SECONDS = 48 * HOUR
 
 # Settings older versions kept. They're removed on start, and skipped quietly in an import.
 RETIRED_SETTINGS = (
@@ -544,20 +603,144 @@ def overhead_samples(
     return conn.execute("SELECT pv_w, load_w, battery_w, grid_w FROM samples WHERE ts >= ?", (start,)).fetchall()
 
 
-def get_settings(conn: sqlite3.Connection) -> dict[str, float | None]:
+def get_settings(conn: sqlite3.Connection) -> dict[str, float | str | None]:
     stored = dict(conn.execute("SELECT key, value FROM settings"))
-    return {key: stored.get(key) for key in SETTINGS}
+    stored.update(conn.execute("SELECT key, value FROM text_settings"))
+    return {key: stored.get(key) for key in (*SETTINGS, *TEXT_SETTINGS)}
 
 
-def save_settings(conn: sqlite3.Connection, settings: dict[str, float | None]) -> None:
+def save_settings(conn: sqlite3.Connection, settings: dict[str, float | str | None]) -> None:
     """Change only the settings given, so each form sends just its own. None makes one unset."""
-    given = [key for key in SETTINGS if key in settings]
     with conn:
-        conn.executemany("DELETE FROM settings WHERE key = ?", [(key,) for key in given])
+        for table, keys in (("settings", SETTINGS), ("text_settings", TEXT_SETTINGS)):
+            given = [key for key in keys if key in settings]
+            conn.executemany(f"DELETE FROM {table} WHERE key = ?", [(key,) for key in given])
+            conn.executemany(
+                f"INSERT INTO {table} (key, value) VALUES (?, ?)",
+                [(key, settings[key]) for key in given if settings[key] is not None],
+            )
+
+
+def _add_weather_fetch(
+    conn: sqlite3.Connection, fetched_at: int, provider: str, kind: str, outcome: str, items: int, error: str | None
+) -> int:
+    cursor = conn.execute(
+        "INSERT INTO weather_fetches (fetched_at, provider, kind, outcome, items, error) VALUES (?, ?, ?, ?, ?, ?)",
+        (fetched_at, provider, kind, outcome, items, error),
+    )
+    return int(cursor.lastrowid)
+
+
+def add_weather_fetch(
+    conn: sqlite3.Connection, fetched_at: int, provider: str, kind: str, outcome: str, error: str | None = None
+) -> None:
+    """Note a fetch that brought nothing to keep: not modified, rate limited or an error."""
+    with conn:
+        _add_weather_fetch(conn, fetched_at, provider, kind, outcome, 0, error)
+
+
+def save_forecast(conn: sqlite3.Connection, fetched_at: int, provider: str, hours: Iterable[Hour]) -> int:
+    """Keep a forecast's hours, and trim the older forecasts to the hours just after they were fetched."""
+    hours = list(hours)
+    columns = ("fetch_id", "hour_start", *HOUR_FIELDS)
+    with conn:
+        fetch_id = _add_weather_fetch(conn, fetched_at, provider, "forecast", "ok", len(hours), None)
         conn.executemany(
-            "INSERT INTO settings (key, value) VALUES (?, ?)",
-            [(key, settings[key]) for key in given if settings[key] is not None],
+            f"INSERT OR REPLACE INTO forecast_hours ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
+            [(fetch_id, h.hour_start, *(getattr(h, name) for name in HOUR_FIELDS)) for h in hours],
         )
+        # TODO(W6): keep one older forecast a day for 14 days, to see how far ahead they were right.
+        conn.execute(
+            "DELETE FROM forecast_hours WHERE fetch_id < ? AND hour_start >= "
+            "(SELECT fetched_at FROM weather_fetches WHERE id = fetch_id) + ?",
+            (fetch_id, FORECAST_KEEP_SECONDS),
+        )
+    return fetch_id
+
+
+def latest_forecast(conn: sqlite3.Connection, since: int) -> dict[str, object] | None:
+    """The newest forecast fetched, with its hours from `since` on, or None before the first."""
+    row = conn.execute(
+        "SELECT id, fetched_at, provider FROM weather_fetches WHERE kind = 'forecast' AND outcome = 'ok' "
+        "ORDER BY fetched_at DESC, id DESC LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return None
+    columns = ("hour_start", *HOUR_FIELDS)
+    hours = [
+        dict(zip(columns, values, strict=True))
+        for values in conn.execute(
+            f"SELECT {', '.join(columns)} FROM forecast_hours WHERE fetch_id = ? AND hour_start >= ? "
+            "ORDER BY hour_start",
+            (row[0], since),
+        )
+    ]
+    for hour in hours:
+        if hour["is_day"] is not None:
+            hour["is_day"] = bool(hour["is_day"])
+    return {"fetched_at": row[1], "provider": row[2], "hours": hours}
+
+
+def save_warnings(conn: sqlite3.Connection, fetched_at: int, provider: str, warnings: Iterable[Warning]) -> None:
+    """Keep the warnings a fetch had. One seen before keeps its first_seen and takes any update."""
+    warnings = list(warnings)
+    with conn:
+        _add_weather_fetch(conn, fetched_at, provider, "warnings", "ok", len(warnings), None)
+        conn.executemany(
+            "INSERT INTO weather_warnings (provider, id, level, kind, headline, description, onset, expiry, regions, "
+            "link, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (provider, id) DO UPDATE SET level = excluded.level, kind = excluded.kind, "
+            "headline = excluded.headline, description = excluded.description, onset = excluded.onset, "
+            "expiry = excluded.expiry, regions = excluded.regions, link = excluded.link, "
+            "last_seen = excluded.last_seen",
+            [
+                (
+                    w.provider,
+                    w.id,
+                    w.level,
+                    w.kind,
+                    w.headline,
+                    w.description,
+                    w.onset,
+                    w.expiry,
+                    json.dumps(list(w.regions)),
+                    w.link,
+                    fetched_at,
+                    fetched_at,
+                )
+                for w in warnings
+            ],
+        )
+
+
+def current_warnings(conn: sqlite3.Connection, provider: str, now: int) -> list[dict[str, object]]:
+    """The warnings the provider's latest fetch had that haven't ended, soonest first."""
+    latest = conn.execute(
+        "SELECT MAX(fetched_at) FROM weather_fetches WHERE kind = 'warnings' AND outcome = 'ok' AND provider = ?",
+        (provider,),
+    ).fetchone()[0]
+    if latest is None:
+        return []
+    columns = ("provider", "id", "level", "kind", "headline", "description", "onset", "expiry", "regions", "link")
+    rows = conn.execute(
+        f"SELECT {', '.join(columns)} FROM weather_warnings WHERE provider = ? AND last_seen = ? "
+        "AND (expiry IS NULL OR expiry > ?) ORDER BY onset IS NULL, onset, id",
+        (provider, latest, now),
+    )
+    found = [dict(zip(columns, row, strict=True)) for row in rows]
+    for warning in found:
+        warning["regions"] = json.loads(warning["regions"])
+    return found
+
+
+def last_weather_fetches(conn: sqlite3.Connection) -> dict[str, dict[str, object]]:
+    """Each kind's latest fetch, whatever its outcome, by kind."""
+    columns = ("kind", "fetched_at", "provider", "outcome", "items", "error")
+    rows = conn.execute(
+        f"SELECT {', '.join(columns)} FROM weather_fetches "
+        "WHERE id IN (SELECT MAX(id) FROM weather_fetches GROUP BY kind)"
+    )
+    return {row[0]: dict(zip(columns, row, strict=True)) for row in rows}
 
 
 def get_display_prefs(conn: sqlite3.Connection, user_id: int) -> dict[str, str]:
