@@ -5785,7 +5785,7 @@
       } else {
         lines.push("Scoring starts once a whole day has been forecast the day before.");
       }
-      const basis = s.basis === "gti" ? "sun on the panels" : "sun on flat ground";
+      const basis = s.basis === "gti" ? "irradiance on the panels" : "irradiance on flat ground";
       lines.push([
         `From the ${basis}`,
         isNum(s.ratio) ? `performance ratio ${number(s.ratio, 2)}` : "",
@@ -5939,7 +5939,7 @@
       const sunTimes = [[rise, "Sunrise"], [set, "Sunset"]].filter(([t]) => isNum(t)).sort((a, b) => a[0] - b[0])
         .map(([t, name]) => `${name} ${clockTime(ms(t))}`).join(", ");
       if (isNum(sunWm2(h)) || sunTimes) {
-        tiles.push(tile(isNum(h.gti_wm2) ? "Sun on panels" : "Sun", el("span", "tile-value", isNum(sunWm2(h)) ? `${number(Math.round(sunWm2(h)), 0)} W/m²` : "—"), sunTimes));
+        tiles.push(tile(isNum(h.gti_wm2) ? "Irradiance on panels" : "Irradiance on flat ground", el("span", "tile-value", isNum(sunWm2(h)) ? `${number(Math.round(sunWm2(h)), 0)} W/m²` : "—"), sunTimes));
       }
       $("wx-now").replaceChildren(...tiles);
       const fetched = data.forecast?.fetched_at;
@@ -5972,8 +5972,8 @@
 
       /* Sun on the panels is what makes power; flat ground only stands in when a source lacks it. */
       const sun = keep([has("gti")
-        ? { key: "gti", label: "Sun on panels", unit: "W/m²", color: "--flow-solar" }
-        : { key: "ghi", label: "Sun", unit: "W/m²", color: "--flow-solar" }]);
+        ? { key: "gti", label: "Irradiance on panels", unit: "W/m²", color: "--flow-solar" }
+        : { key: "ghi", label: "Irradiance on flat ground", unit: "W/m²", color: "--flow-solar" }]);
       const solarChart = has("expected");
       if (solarChart) {
         charts.push({
@@ -5989,7 +5989,7 @@
         charts.push({
           title: sun[0].label, unit: "W/m²", height: 200, floor: 0, series: sun,
           strip: bars ? { key: "pv_w", label: "Solar made", unit: "W", color: "--flow-solar" } : undefined,
-          aria: "Sun (W/m²)" + (bars ? " and solar made (W)" : ""),
+          aria: `${sun[0].label} (W/m²)` + (bars ? " and solar made (W)" : ""),
         });
       }
       const cloud = keep([{ key: "cloud", label: "Cloud", unit: "%", color: "--ink-2" }]);
@@ -6053,7 +6053,7 @@
         { head: `Wind (${windUnit()})`, num: true, cell: (h) => windText(h.wind_ms), show: has((h) => h.wind_ms) },
         { head: "Gusts", num: true, cell: (h) => windText(h.gust_ms), show: has((h) => h.gust_ms) },
         { head: "From", cell: (h) => compass(h.wind_from_deg), show: has((h) => h.wind_from_deg) },
-        { head: has((h) => h.gti_wm2) ? "On panels (W/m²)" : "Sun (W/m²)", num: true, cell: (h) => (isNum(sunWm2(h)) ? number(Math.round(sunWm2(h)), 0) : "—"), show: has(sunWm2) },
+        { head: has((h) => h.gti_wm2) ? "Irradiance on panels (W/m²)" : "Irradiance on flat ground (W/m²)", num: true, cell: (h) => (isNum(sunWm2(h)) ? number(Math.round(sunWm2(h)), 0) : "—"), show: has(sunWm2) },
         { head: "Solar (kWh)", num: true, cell: (h) => (isNum(h.expected_w) ? number(h.expected_w / 1000, 1) : "—"), show: learned() && has((h) => h.expected_w) },
       ].filter((column) => column.show);
       const width = columns.length + 1;
