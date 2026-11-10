@@ -304,7 +304,7 @@ The shape of the automation, so the data, the screens and the log are ready befo
 
 **As built in W6:**
 
-- The one rule, `sunny_morning`, has five settings: the TOU period, the usual and sunny cut-offs (10 to 100%, the range `control.py` enforces), the margin (0 to 90%) and how many minutes before the period to decide (0 to 720). They're ordinary settings, checked against the rule's bounds by the API and the import.
+- The one rule, `sunny_morning`, has five settings: the TOU period, the usual and sunny cut-offs (10 to 100%, the range `control.py` enforces), the margin (0 to 90%) and how many minutes before the period to decide (5 to 720: deciding at the start itself would be too late). They're ordinary settings, checked against the rule's bounds by the API and the import.
 - Unset settings take a default from what's live: the first charge period that's on, that period's own cut-off as the usual one, the forecast's 30-day day error as the margin, and an hour's lead. The sunny cut-off has no default, so the rule says nothing useful until it's chosen.
 - The morning is sunrise to midday (local) on the day the period ends, with part hours counted by their share. Without a sunrise it starts at the first forecast hour with sun. The load is the mean for each local hour over the last 28 days of the log.
 - It decides in this order, and says why when it can't: the period is a charge period that's on, TOU is on, the period runs some day, the sunny cut-off is set and below the usual one, the period holds one of the two (otherwise "Changed by hand"), the capacity, the forecast and its error are known, and the forecast reaches the morning. A forecast still learning still decides, and the page says the figures are rough.
@@ -314,6 +314,15 @@ The shape of the automation, so the data, the screens and the log are ready befo
 - `automation_runs` isn't in the CSV export; the SQLite copy has it.
 - A test walks everything `automation.py` imports, however far down, and checks none of it is `control.py` or the collector.
 - Older forecasts: after 14 days, only the last forecast fetched each day keeps its hours, so how far ahead the forecasts were right can still be looked at.
+
+**As built, the dry runs** (collecting data through the winter, before V2 acts):
+
+- Every decision logged is a dry run: what V2 would have written, never sent. A night the rule can't decide on is still logged with the morning's figures (its start and end, the forecast solar and typical load), so the forecast can be checked against every morning, not only the decided ones.
+- A forecast that isn't in yet doesn't lose the night: without the morning's figures, the loop tries again each check until 3 minutes before the period starts, then logs why it couldn't decide.
+- Only what can't be rebuilt is stored: the decision-time figures. What each morning made and used, and the battery's highest charge in it, come from the log when the page asks, and are kept in memory once the morning's over.
+- Each morning is checked for the cut-off set and, as dry runs, for cut-offs 5, 10, 20 and 30 points below the usual one (5 is one a winter morning can fill). For each: did the forecast, less the margin, call it sunny; was it, from solar made less load; and so was the call right.
+- A battery that reached its ceiling (the run's max charge, or 100%) may have had solar held back, so a morning that fell short of the room then is "can't tell", not wrong.
+- `/api/automation` sums the dry runs over the last 400 decisions, more than a year, and shows the latest 14 in full. The page shows each decision as what V2 would write ("90% → 60%" or "Keep 90%"), the forecast and made solar, the spare, and whether it was right, with a Dry runs table beneath.
 
 ## V2: lower a TOU charge cut-off before a sunny morning
 
@@ -333,6 +342,7 @@ Once the weather has run for a while and the forecast's error is known. Example:
 - Every write goes through `control.py`'s existing path: re-read the period, refuse if it isn't exactly what's expected, log before sending, read back byte for byte, never retry by itself. Only the cut-off byte differs.
 - If the period has been changed by hand, so it holds neither of the rule's two values, the rule stops and says so, and doesn't overwrite.
 - It starts as a "Do it" button on the suggestion. Running it unattended is a second switch, off by default, with the user's approval for the first write, which is the smallest change (one night, one period).
+- That switch is its own setting, never one of the rule's settings: the dry runs are set up with those, so choosing a sunny cut-off and margin for them must never be enough to cause a write.
 - Every write is in the inverter write log and the Action history, with the forecast and figures that led to it.
 
 ## API
@@ -363,7 +373,7 @@ Fixtures use made-up coordinates, never the house's.
 
 - ~~Whether the Open-Meteo past-forecast service has the same free terms as the forecast.~~ Its docs offer the same free non-commercial use as the forecast, and the terms cover the API as a whole, so the credit already shown covers it.
 - Whether Met Éireann's warnings feed needs anything beyond the statements in its credit.
-- How long the forecast needs to run before V2's suggestions are trusted enough to offer the "Do it" button.
+- How long the forecast needs to run before V2's suggestions are trusted enough to offer the "Do it" button. The dry runs are there to answer it: once a few sunny mornings are in, their Right counts say how often the call would have been right.
 
 ## Sources
 

@@ -1240,20 +1240,38 @@
           <label for="auto-usual"><span>Usual cut-off (%) <button type="button" class="help" aria-label="About the usual cut-off" data-tip="Unset: the period's own">?</button></span><input id="auto-usual" name="auto_sunny_usual_soc" type="number" min="10" max="100" step="1"></label>
           <label for="auto-sunny"><span>Sunny cut-off (%) <button type="button" class="help" aria-label="About the sunny cut-off" data-tip="Before a sunny morning">?</button></span><input id="auto-sunny" name="auto_sunny_sunny_soc" type="number" min="10" max="100" step="1"></label>
           <label for="auto-margin"><span>Margin (%) <button type="button" class="help" aria-label="About the margin" data-tip="Off the solar forecast&#10;Unset: its day error">?</button></span><input id="auto-margin" name="auto_sunny_margin_pct" type="number" min="0" max="90" step="1"></label>
-          <label for="auto-lead"><span>Decide (min before) <button type="button" class="help" aria-label="About deciding" data-tip="Before the period starts">?</button></span><input id="auto-lead" name="auto_sunny_lead_min" type="number" min="0" max="720" step="1"></label>
+          <label for="auto-lead"><span>Decide (min before) <button type="button" class="help" aria-label="About deciding" data-tip="Before the period starts">?</button></span><input id="auto-lead" name="auto_sunny_lead_min" type="number" min="5" max="720" step="1"></label>
         </form>
         <p class="alert" id="wx-auto-error" role="alert"></p>
         <div class="scroll" tabindex="0" role="region" aria-label="Automation's decisions" id="wx-auto-runs-box" hidden>
           <table class="wx-auto-runs">
             <thead><tr>
               <th>Period start</th>
-              <th>Would</th>
+              <th>Would <button type="button" class="help" aria-label="About would" data-tip="What V2 would write">?</button></th>
               <th>Why</th>
-              <th>Morning <button type="button" class="help" aria-label="About the morning" data-tip="Solar − load, sunrise to noon">?</button></th>
+              <th>Forecast <button type="button" class="help" aria-label="About the forecast" data-tip="Solar, sunrise to noon">?</button></th>
+              <th>Made</th>
+              <th>Spare <button type="button" class="help" aria-label="About spare" data-tip="Made − load&#10;Full: at least">?</button></th>
               <th>Right <button type="button" class="help" aria-label="About right" data-tip="Spare ≥ room: sunny">?</button></th>
             </tr></thead>
             <tbody id="wx-auto-runs"></tbody>
           </table>
+        </div>
+        <div id="wx-auto-dry" hidden>
+          <h3>Dry runs</h3>
+          <p class="note" id="wx-auto-dry-note"></p>
+          <div class="scroll" tabindex="0" role="region" aria-label="Dry runs">
+            <table class="wx-auto-runs">
+              <thead><tr>
+                <th>Cut-off <button type="button" class="help" aria-label="About the trial cut-offs" data-tip="Below the usual one">?</button></th>
+                <th>Mornings</th>
+                <th>Called sunny</th>
+                <th>Was sunny</th>
+                <th>Right <button type="button" class="help" aria-label="About right in the dry runs" data-tip="Of mornings it could tell">?</button></th>
+              </tr></thead>
+              <tbody id="wx-auto-dry-rows"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -5854,19 +5872,43 @@
       }
       for (const field of form.elements) field.disabled = !editable;
 
-      // The latest decisions, beside what the morning brought.
+      // The latest decisions, what V2 would have written for each, beside what the morning brought.
       const runs = rule.runs ?? [];
+      const yesNo = (x) => (x === true ? "Yes" : x === false ? "No" : "—");
       $("wx-auto-runs-box").hidden = !runs.length;
       $("wx-auto-runs").replaceChildren(...runs.map((run) => {
         const r = run.recommendation;
+        const f = r.figures ?? {};
         const o = run.outcome;
+        const would = !isNum(r.would) ? "—" : r.would === r.current ? `Keep ${pct(r.would)}` : `${pct(r.current)} → ${pct(r.would)}`;
         const row = el("tr");
         row.append(
           el("td", "", dateTime(ms(run.for_ts))),
-          el("td", "", isNum(r.would) ? pct(r.would) : "—"),
+          el("td", "", would),
           el("td", "why", r.reason ?? ""),
-          el("td", "", o ? `${kwhOf(o.spare_kwh)} spare` : "—"),
-          el("td", "", o ? (o.right ? "Yes" : "No") : "—"),
+          el("td", "", isNum(f.pv_kwh) ? kwhOf(f.pv_kwh) : "—"),
+          el("td", "", o ? kwhOf(o.pv_kwh) : "—"),
+          el("td", "", o ? `${kwhOf(o.spare_kwh)}${o.full ? ", full" : ""}` : "—"),
+          el("td", "", o?.full && o.right === null && isNum(r.would) ? "?" : yesNo(o?.right)),
+        );
+        return row;
+      }));
+
+      // The dry runs: how the cut-off set, and a few lower ones, would have done over every morning logged.
+      const dry = rule.dry_runs ?? { mornings: 0, trials: [] };
+      $("wx-auto-dry").hidden = !dry.trials.length;
+      $("wx-auto-dry-note").textContent = `Each night logs what the forecast says about the morning, and once it's over, what it brought. `
+        + `A few lower cut-offs are checked beside the one set: called sunny when the forecast's spare, less the margin, would fill the room each leaves; `
+        + `was sunny when the morning's did. A full battery may have held solar back, so a short morning then can't be told. `
+        + `${number(dry.mornings, 0)} ${dry.mornings === 1 ? "morning" : "mornings"} so far. Nothing is sent to the inverter.`;
+      $("wx-auto-dry-rows").replaceChildren(...dry.trials.map((t) => {
+        const row = el("tr");
+        row.append(
+          el("td", "", `−${number(t.drop, 0)} pts${t.set ? " (set)" : ""}`),
+          el("td", "", number(t.mornings, 0)),
+          el("td", "", number(t.forecast_sunny, 0)),
+          el("td", "", number(t.sunny, 0)),
+          el("td", "", t.told ? `${number(t.right, 0)} of ${number(t.told, 0)}` : "—"),
         );
         return row;
       }));

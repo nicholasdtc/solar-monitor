@@ -123,6 +123,7 @@ def test_the_sunny_cut_off_counts_as_its_own():
         ({"settings": {"auto_sunny_sunny_soc": 60.0, "auto_sunny_slot": 2.0}}, "Not a charge period that's on"),
         ({"schedule": schedule(period(month_bits=0b10))}, "Changed by hand"),  # Not mid-June, but still a period.
         ({"capacity_kwh": None}, "Battery capacity unknown"),
+        ({"capacity_kwh": 0.0}, "Battery capacity unknown"),
         ({"fit_status": None}, "No solar forecast yet"),
         ({"load_by_hour": {}}, "Typical load not known"),
     ],
@@ -141,6 +142,15 @@ def test_no_charge_period_means_nothing_to_say():
     assert automation.evaluate(RULE, morning_forecast(2000), state(schedule=discharge)) is None
     assert RULE.decision(state(schedule=discharge)) is None
     assert automation.evaluate(RULE, morning_forecast(2000), state(schedule=None)) is None
+
+
+def test_a_night_that_cant_decide_still_keeps_the_mornings_figures():
+    rec = automation.evaluate(RULE, morning_forecast(2000), state(settings={}))
+    assert (rec.would, rec.reason) == (None, "Sunny cut-off not set")
+    figures = rec.figures
+    assert (figures["morning_start"], figures["morning_end"]) == (ts(SUNRISE), ts(MIDDAY))
+    assert (figures["pv_kwh"], figures["load_kwh"]) == (12.0, 1.8)
+    assert "spare_kwh" not in figures  # That takes the margin and the sunny cut-off.
 
 
 def test_a_forecast_that_stops_short_says_so():
@@ -190,6 +200,7 @@ def test_problem_checks_the_bounds():
     assert automation.problem("auto_sunny_sunny_soc", None) is None
     assert automation.problem("auto_sunny_sunny_soc", 5) == "Sunny cut-off (%): 10 to 100"
     assert automation.problem("auto_sunny_margin_pct", 91) == "Margin (%): 0 to 90"
+    assert automation.problem("auto_sunny_lead_min", 0) == "Decide, minutes before: 5 to 720"  # Too late at the start.
     assert automation.problem("auto_sunny_slot", 1.5) == "TOU period: a whole number"
     assert automation.problem("auto_sunny_slot", True) == "TOU period: a whole number"
     assert automation.problem("limit_amps", 20) == "limit_amps isn't an automation setting"
@@ -231,11 +242,30 @@ def test_tick_logs_one_decision_for_each_start(conn):
     assert run["inputs"]["load_by_hour"]["7"] == 300
 
 
-def test_tick_logs_why_it_couldnt_decide(conn):
-    automation.tick(conn, ts(CHARGE_STARTS) - HOUR, lambda full: ([], state()))
+def test_tick_waits_for_a_late_forecast(conn):
+    forecast = []
+    due = ts(CHARGE_STARTS) - HOUR
+    assert automation.tick(conn, due, lambda full: (forecast, state())) == 0  # Tried again next check.
+    forecast.extend(morning_forecast(2000))
+    assert automation.tick(conn, due + 600, lambda full: (forecast, state())) == 1
+    [run] = db.list_automation_runs(conn)
+    assert (run["ts"], run["recommendation"]["would"]) == (due + 600, 60)
+
+
+def test_tick_logs_why_it_couldnt_decide_at_the_last_chance(conn):
+    last_chance = ts(CHARGE_STARTS) - automation.LAST_CHANCE_SECONDS
+    assert automation.tick(conn, last_chance - 60, lambda full: ([], state())) == 0
+    assert automation.tick(conn, last_chance, lambda full: ([], state())) == 1
     [run] = db.list_automation_runs(conn)
     assert run["recommendation"]["would"] is None
     assert run["recommendation"]["reason"] == "Forecast doesn't reach the morning"
+
+
+def test_tick_logs_a_night_without_a_sunny_cut_off_straight_away(conn):
+    # Its figures are all there, so there's nothing to wait for.
+    assert automation.tick(conn, ts(CHARGE_STARTS) - HOUR, lambda full: (morning_forecast(2000), state(settings={}))) == 1
+    [run] = db.list_automation_runs(conn)
+    assert run["recommendation"]["figures"]["pv_kwh"] == 12.0
 
 
 def test_runs_list_newest_first(conn):
@@ -256,7 +286,9 @@ def minutes(conn, start, end, pv_w, load_w, step=60):
 def test_window_made_from_the_log(conn):
     start = ts(SUNRISE)
     minutes(conn, start - HOUR, start + 7 * HOUR, 1000, 250)
-    assert db.window_made(conn, start, start + 6 * HOUR) == {"pv_kwh": 6.0, "load_kwh": 1.5}
+    assert db.window_made(conn, start, start + 6 * HOUR) == {"pv_kwh": 6.0, "load_kwh": 1.5, "soc_max": None}
+    db.save_samples(conn, [db.Sample(start + 30 + k, {"ppv": 1000, "load_ptotal": 250, "battery_soc": 70 + k}) for k in range(3)])
+    assert db.window_made(conn, start, start + 6 * HOUR)["soc_max"] == 72
     assert db.window_made(conn, start, start + 8 * HOUR) is None  # Not over yet.
     assert db.window_made(conn, start, start) is None
 
@@ -266,6 +298,81 @@ def test_window_made_needs_enough_readings(conn):
     minutes(conn, start, start + 3 * HOUR, 1000, 250, step=300)
     minutes(conn, start + 3 * HOUR, start + 3 * HOUR + 60, 0, 0)
     assert db.window_made(conn, start, start + 2 * HOUR) is None
+
+
+# --- Dry runs: what the forecast said beside what the morning brought ------------------------------
+
+
+def logged(settings=None, would=None, max_soc=None):
+    """A run as tick logs it, for the made-up morning: 12 kWh of solar and 1.8 of load forecast,
+    a 10 kWh battery, a usual cut-off of 90%."""
+    rec = automation.evaluate(RULE, morning_forecast(2000), state(settings=settings if settings is not None else {"auto_sunny_sunny_soc": 60.0, "auto_sunny_margin_pct": 20.0}))
+    run = {"inputs": {"limits": {"max_soc": max_soc}}, "recommendation": rec.to_dict()}
+    if would is not None:
+        run["recommendation"]["would"] = would
+    return run
+
+
+def made(pv, load, soc_max=80.0):
+    return {"pv_kwh": pv, "load_kwh": load, "soc_max": soc_max}
+
+
+def test_a_sunny_morning_bears_the_forecast_out():
+    result = automation.outcome(logged(), made(6.0, 1.5))
+    assert (result["spare_kwh"], result["sunny"], result["right"], result["full"]) == (4.5, True, True, False)
+    # The one set, 30 points down, beside 5, 10 and 20; the forecast's 7.8 kWh spare called them all sunny.
+    assert [(t["drop"], t["cutoff"], t["room_kwh"], t["set"]) for t in result["trials"]] == [(5, 85, 0.5, False), (10, 80, 1.0, False), (20, 70, 2.0, False), (30, 60, 3.0, True)]
+    assert all(t["forecast_sunny"] and t["sunny"] and t["right"] for t in result["trials"])
+
+
+def test_a_dull_morning_after_a_sunny_forecast_is_wrong_for_the_bigger_drops():
+    result = automation.outcome(logged(), made(3.0, 1.5))  # 1.5 kWh spare.
+    assert (result["sunny"], result["right"]) == (False, False)
+    assert [(t["sunny"], t["right"]) for t in result["trials"]] == [(True, True), (True, True), (False, False), (False, False)]
+
+
+def test_keeping_the_usual_cut_off_on_a_dull_morning_was_right():
+    assert automation.outcome(logged(would=90), made(3.0, 1.5))["right"] is True
+
+
+def test_a_full_battery_cant_tell_a_morning_that_fell_short():
+    # Solar may have been held back once it was full, so 1.5 kWh spare is only the least it could have been.
+    result = automation.outcome(logged(), made(3.0, 1.5, soc_max=100.0))
+    assert (result["full"], result["sunny"], result["right"]) == (True, None, None)
+    assert [t["sunny"] for t in result["trials"]] == [True, True, None, None]
+    # Full is the battery's own ceiling where it has one.
+    assert automation.outcome(logged(max_soc=95), made(3.0, 1.5, soc_max=95.0))["full"] is True
+    assert automation.outcome(logged(), made(3.0, 1.5, soc_max=95.0))["full"] is False
+
+
+def test_a_night_that_couldnt_decide_still_runs_the_trials():
+    result = automation.outcome(logged(settings={"auto_sunny_margin_pct": 20.0}), made(3.0, 1.5))
+    assert (result["sunny"], result["right"]) == (None, None)
+    assert [(t["drop"], t["forecast_sunny"], t["sunny"]) for t in result["trials"]] == [(5, True, True), (10, True, True), (20, True, False), (30, True, False)]
+    # With no margin to go by, the forecast's call can't be made, but the morning's still told.
+    run = logged(settings={})
+    run["recommendation"]["figures"]["margin_pct"] = None  # As before the forecast's error is known.
+    result = automation.outcome(run, made(3.0, 1.5))
+    assert [(t["forecast_sunny"], t["sunny"], t["right"]) for t in result["trials"]][0] == (None, True, None)
+
+
+def test_no_outcome_before_the_morning_is_over_or_without_one():
+    assert automation.outcome(logged(), None) is None
+    assert automation.outcome({"inputs": {}, "recommendation": {"would": None, "figures": {}}}, made(3.0, 1.5)) is None
+    no_battery = logged()
+    no_battery["recommendation"]["figures"]["capacity_kwh"] = 0.0
+    assert automation.outcome(no_battery, made(3.0, 1.5))["trials"] == []
+
+
+def test_the_dry_runs_add_up():
+    results = [automation.outcome(logged(), made(6.0, 1.5)), automation.outcome(logged(), made(3.0, 1.5)), automation.outcome(logged(), made(3.0, 1.5, soc_max=100.0))]
+    totals = automation.sum_trials(results)
+    assert [(t["drop"], t["set"], t["mornings"], t["forecast_sunny"], t["sunny"], t["right"], t["told"]) for t in totals] == [
+        (5, False, 3, 3, 3, 3, 3),
+        (10, False, 3, 3, 3, 3, 3),
+        (20, False, 3, 3, 1, 1, 2),
+        (30, True, 3, 3, 1, 1, 2),
+    ]
 
 
 def test_typical_load_by_local_hour(conn):
@@ -326,6 +433,18 @@ def test_the_api_shows_the_rule(call, collector, conn):
     assert rule["suggestion"]["reason"] == "Sunny cut-off not set"
     assert rule["decision"]["for_ts"] > rule["decision"]["decide_ts"]
     assert [r["outcome"] for r in rule["runs"]] == [None]
+    assert rule["dry_runs"] == {"mornings": 0, "trials": []}
+
+
+def test_the_api_sets_each_run_beside_its_morning(call, collector, conn):
+    run = logged()
+    db.add_automation_run(conn, ts(EVENING), "sunny_morning", ts(CHARGE_STARTS), run["inputs"], run["recommendation"])
+    minutes(conn, ts(SUNRISE) - HOUR, ts(MIDDAY) + HOUR, 1000, 250)  # 6 kWh made, 1.5 used: 4.5 spare.
+    [rule] = call("GET", "/api/automation").json()["rules"]
+    [shown] = rule["runs"]
+    assert (shown["outcome"]["spare_kwh"], shown["outcome"]["right"]) == (4.5, True)
+    assert rule["dry_runs"]["mornings"] == 1
+    assert [t["right"] for t in rule["dry_runs"]["trials"]] == [1, 1, 1, 1]
 
 
 def test_the_api_changes_the_settings(call, conn):

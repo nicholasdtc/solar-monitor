@@ -140,6 +140,7 @@ LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
 MEASURE_SECONDS = 3600
 MEASURE_WINDOW_SECONDS = 30 * 86400
 WEATHER_HISTORY_MAX_DAYS = 366  # A year of hours is about 9,000 rows.
+RUNS_SHOWN = 14  # Automation's latest decisions shown in full; the dry runs sum more.
 
 
 Clock = Annotated[str, StringConstraints(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")]
@@ -675,19 +676,21 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
             filled = db.weather_hours_count(collector.conn, start, end)
         return {"start": start, "end": end, "hours": (end - start) // HOUR, "filled": filled, "from_past": has_past}
 
+    outcomes: dict[int, dict[str, object]] = {}  # By run: a morning that's over doesn't change.
+
     def automation_outcome(run: dict[str, object]) -> dict[str, object] | None:
-        """What the morning a run decided for brought, once it's over, and whether the run was right."""
-        recommendation = run["recommendation"]
-        figures = recommendation.get("figures", {})  # type: ignore[union-attr]
-        start, end, room = figures.get("morning_start"), figures.get("morning_end"), figures.get("room_kwh")
-        if recommendation.get("would") is None or start is None or end is None or room is None:  # type: ignore[union-attr]
+        """What the morning a run decided for brought, once it's over, beside what was forecast."""
+        run_id = int(run["id"])  # type: ignore[call-overload]
+        if run_id in outcomes:
+            return outcomes[run_id]
+        figures = run["recommendation"].get("figures") or {}  # type: ignore[union-attr]
+        start, end = figures.get("morning_start"), figures.get("morning_end")
+        if start is None or end is None:
             return None
-        made = db.window_made(collector.conn, int(start), int(end))
-        if made is None:
-            return None
-        spare = round(made["pv_kwh"] - made["load_kwh"], 2)
-        sunny = spare >= room
-        return made | {"spare_kwh": spare, "sunny": sunny, "right": sunny == (recommendation["would"] == figures.get("sunny_soc"))}  # type: ignore[index]
+        result = automation.outcome(run, db.window_made(collector.conn, int(start), int(end)))
+        if result is not None:
+            outcomes[run_id] = result
+        return result
 
     @app.get("/api/automation")
     async def api_automation() -> dict[str, object]:
@@ -700,9 +703,10 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
             chosen, unset = rule.resolve(state)
             suggestion = automation.evaluate(rule, forecast, state)
             decision = rule.decision(state)
-            runs = db.list_automation_runs(collector.conn, rule.name)
+            runs = db.list_automation_runs(collector.conn, rule.name, automation.RUNS_SUMMED)
             for run in runs:
                 run["outcome"] = automation_outcome(run)
+            told = [run["outcome"] for run in runs if run["outcome"]]
             rules.append({
                 "name": rule.name,
                 "title": rule.title,
@@ -714,7 +718,8 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
                 "periods": [{k: p.get(k) for k in ("slot", "start", "end", "next_day", "cutoff_soc")} for p in rule.periods(state)],
                 "suggestion": suggestion.to_dict() if suggestion else None,
                 "decision": {"for_ts": decision[0], "decide_ts": decision[1]} if decision else None,
-                "runs": runs,
+                "runs": runs[:RUNS_SHOWN],
+                "dry_runs": {"mornings": len(told), "trials": automation.sum_trials(told)},  # type: ignore[arg-type]
             })
         return {"rules": rules, "fit_status": state.fit_status}
 

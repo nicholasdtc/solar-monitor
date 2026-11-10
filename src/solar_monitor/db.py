@@ -843,20 +843,21 @@ def typical_load_by_hour(conn: sqlite3.Connection, since: int) -> dict[int, floa
     }
 
 
-def window_made(conn: sqlite3.Connection, start: int, end: int) -> dict[str, float] | None:
+def window_made(conn: sqlite3.Connection, start: int, end: int) -> dict[str, float | None] | None:
     """The solar made and the house used from `start` to `end`, in kWh, from the mean of the readings
-    in it. None if it hasn't ended or too few readings cover it to say."""
+    in it, and the battery's highest charge in it. None if it hasn't ended or too few readings cover
+    it to say."""
     if end <= start:
         return None
-    count, pv, load = conn.execute(
-        "SELECT COUNT(*), AVG(pv_w), AVG(load_w) FROM samples WHERE ts >= ? AND ts < ?", (start, end)
+    count, pv, load, soc_max = conn.execute(
+        "SELECT COUNT(*), AVG(pv_w), AVG(load_w), MAX(battery_soc) FROM samples WHERE ts >= ? AND ts < ?", (start, end)
     ).fetchone()
     last = conn.execute("SELECT MAX(ts) FROM samples").fetchone()[0]
     # A reading a minute at most, so at least half the minutes in the window, and a reading after it.
     if pv is None or load is None or count < (end - start) / MAX_READING_SECONDS / 2 or last is None or last < end:
         return None
     hours = (end - start) / HOUR
-    return {"pv_kwh": round(pv * hours / 1000, 2), "load_kwh": round(load * hours / 1000, 2)}
+    return {"pv_kwh": round(pv * hours / 1000, 2), "load_kwh": round(load * hours / 1000, 2), "soc_max": soc_max}
 
 
 def add_automation_run(

@@ -10,7 +10,9 @@ from a fixed figure, the decision time apart.
 
 Each rule makes one decision for each time its TOU period starts, at its decision time. That
 decision is logged in automation_runs with what it was made from, so it can be set beside what
-actually happened.
+actually happened. Those logged decisions are dry runs: what the rule would have done, kept even
+on a night it can't decide, so the forecast can be checked against the morning it was for. A few
+lower cut-offs than the one set are checked beside it, from the same figures.
 """
 
 from __future__ import annotations
@@ -28,6 +30,12 @@ CHECK_SECONDS = 60  # How often the runner looks for a decision that's due.
 LOAD_DAYS = 28  # The typical load per hour is from this many days of the log.
 DEFAULT_DECIDE_MINUTES = 60  # A decision is made this long before its period starts, unless set.
 MIDDAY_HOUR = 12  # The sunny morning rule counts the sun up to this local hour.
+MIN_LEAD_MINUTES = 5  # Deciding at the start itself would be too late: by then the runner has moved on to the next one.
+# A decision whose morning can't be worked out yet, such as with the forecast not in, is tried
+# again at each check until this long before its period starts, then logged as it stands.
+LAST_CHANCE_SECONDS = 3 * CHECK_SECONDS
+TRIAL_DROPS = (5, 10, 20, 30)  # Dry runs: cut-offs this many points below the usual one, checked beside the one set. 5 is one a winter morning can fill.
+RUNS_SUMMED = 400  # The dry runs are summed over this many of the latest decisions, over a year's worth.
 
 
 @dataclass(frozen=True)
@@ -108,7 +116,7 @@ class SunnyMorning:
         Setting("auto_sunny_usual_soc", "Usual cut-off (%)", LOWEST_CUTOFF, HIGHEST_CUTOFF),
         Setting("auto_sunny_sunny_soc", "Sunny cut-off (%)", LOWEST_CUTOFF, HIGHEST_CUTOFF),
         Setting("auto_sunny_margin_pct", "Margin (%)", 0, 90),
-        Setting("auto_sunny_lead_min", "Decide, minutes before", 0, 12 * 60),
+        Setting("auto_sunny_lead_min", "Decide, minutes before", MIN_LEAD_MINUTES, 12 * 60),
     )
 
     def periods(self, state: State) -> list[dict[str, object]]:
@@ -186,6 +194,18 @@ class SunnyMorning:
         if start is None:
             return cannot("Period never runs")
         figures["for_ts"] = int(start.timestamp())
+        # The morning's figures come before the checks, so a night that can't decide still logs
+        # what the forecast said, to set beside what the morning brought.
+        morning = self.morning(period, start, forecast, state)
+        if not isinstance(morning, str):
+            window_start, window_end, hours = morning
+            figures.update({
+                "morning_start": window_start,
+                "morning_end": window_end,
+                "hours": hours,
+                "pv_kwh": round(sum(h["expected_w"] * h["share"] for h in hours) / 1000, 2),  # type: ignore[operator]
+                "load_kwh": round(sum(h["load_w"] * h["share"] for h in hours) / 1000, 2),  # type: ignore[operator]
+            })
         if sunny is None:
             return cannot("Sunny cut-off not set")
         if usual is None or not (LOWEST_CUTOFF <= usual <= HIGHEST_CUTOFF and LOWEST_CUTOFF <= sunny <= HIGHEST_CUTOFF):  # type: ignore[operator]
@@ -194,31 +214,18 @@ class SunnyMorning:
             return cannot("Sunny cut-off not below usual")
         if current not in (usual, sunny):
             return cannot("Changed by hand")
-        if state.capacity_kwh is None:
+        if not state.capacity_kwh or state.capacity_kwh <= 0:
             return cannot("Battery capacity unknown")
         if state.fit_status is None:
             return cannot("No solar forecast yet")
         if margin is None:
             return cannot("Forecast error not known yet")
 
-        morning = self.morning(period, start, forecast, state)
         if isinstance(morning, str):
             return cannot(morning)
-        window_start, window_end, hours = morning
-        pv_kwh = sum(h["expected_w"] * h["share"] for h in hours) / 1000  # type: ignore[operator]
-        load_kwh = sum(h["load_w"] * h["share"] for h in hours) / 1000  # type: ignore[operator]
-        # The margin is a share of the forecast, so it comes off the solar, not the load.
-        spare_kwh = pv_kwh * (1 - margin / 100) - load_kwh  # type: ignore[operator]
+        spare_kwh = forecast_spare(figures["pv_kwh"], figures["load_kwh"], margin)  # type: ignore[arg-type]
         room_kwh = state.capacity_kwh * (usual - sunny) / 100  # type: ignore[operator]
-        figures.update({
-            "morning_start": window_start,
-            "morning_end": window_end,
-            "hours": hours,
-            "pv_kwh": round(pv_kwh, 2),
-            "load_kwh": round(load_kwh, 2),
-            "spare_kwh": round(spare_kwh, 2),
-            "room_kwh": round(room_kwh, 2),
-        })
+        figures.update({"spare_kwh": round(spare_kwh, 2), "room_kwh": round(room_kwh, 2)})
         if spare_kwh >= room_kwh:
             return Recommendation(f"TOU {slot} cut-off", current, sunny, f"Sunny morning: {spare_kwh:.1f} kWh spare, {room_kwh:.1f} room", figures)  # type: ignore[arg-type]
         return Recommendation(f"TOU {slot} cut-off", current, usual, f"Not sunny enough: {max(spare_kwh, 0):.1f} of {room_kwh:.1f} kWh", figures)  # type: ignore[arg-type]
@@ -256,6 +263,74 @@ class SunnyMorning:
         return rise, midday, hours
 
 
+def forecast_spare(pv_kwh: float, load_kwh: float, margin_pct: float) -> float:
+    """The solar the forecast leaves over the load. The margin is a share of the forecast, so it
+    comes off the solar, not the load."""
+    return pv_kwh * (1 - margin_pct / 100) - load_kwh
+
+
+def outcome(run: dict[str, object], made: dict[str, float | None] | None) -> dict[str, object] | None:
+    """What the morning a logged run was for brought, from `made` (db.window_made), beside what
+    the forecast said: for the cut-off the rule would set, and as dry runs for a few lower ones.
+    None until the morning's over and the log covers it, or for a run without a morning.
+
+    Sunny means the solar made over the load covered the room a lower cut-off leaves. If the battery
+    filled, solar may have been held back, so a morning that falls short then can't be told."""
+    figures: dict[str, object] = run["recommendation"].get("figures") or {}  # type: ignore[union-attr]
+    if made is None or figures.get("morning_start") is None:
+        return None
+    pv, load = made["pv_kwh"], made["load_kwh"]
+    spare = round(pv - load, 2)  # type: ignore[operator]
+    limits = (run.get("inputs") or {}).get("limits") or {}  # type: ignore[union-attr]
+    ceiling = _number(limits.get("max_soc")) or HIGHEST_CUTOFF  # type: ignore[union-attr]
+    full = made.get("soc_max") is not None and made["soc_max"] >= ceiling  # type: ignore[operator]
+    capacity, usual, sunny_soc = (_number(figures.get(k)) for k in ("capacity_kwh", "usual_soc", "sunny_soc"))
+    margin = _number(figures.get("margin_pct"))
+    expected_pv, expected_load = _number(figures.get("pv_kwh")), _number(figures.get("load_kwh"))
+
+    def check(drop: float) -> dict[str, object]:
+        room = capacity * drop / 100  # type: ignore[operator]
+        said = None
+        if expected_pv is not None and expected_load is not None and margin is not None:
+            said = forecast_spare(expected_pv, expected_load, margin) >= room
+        was = True if spare >= room else None if full else False
+        return {
+            "drop": drop, "cutoff": usual - drop, "room_kwh": round(room, 2), "set": drop == own_drop,  # type: ignore[operator]
+            "forecast_sunny": said, "sunny": was, "right": None if said is None or was is None else said == was,
+        }
+
+    trials: list[dict[str, object]] = []
+    own_drop = usual - sunny_soc if usual is not None and sunny_soc is not None and sunny_soc < usual else None
+    if capacity and capacity > 0 and usual is not None:
+        drops = {float(d) for d in TRIAL_DROPS if usual - d >= LOWEST_CUTOFF} | ({own_drop} if own_drop else set())
+        trials = [check(drop) for drop in sorted(drops)]
+    own = next((t for t in trials if t["set"]), None)
+    would = run["recommendation"].get("would")  # type: ignore[union-attr]
+    right = None
+    if would is not None and own is not None and own["sunny"] is not None:
+        right = own["sunny"] == (would == sunny_soc)
+    return {
+        "pv_kwh": pv, "load_kwh": load, "spare_kwh": spare, "soc_max": made.get("soc_max"), "full": full,
+        "sunny": own["sunny"] if own else None, "right": right, "trials": trials,
+    }
+
+
+def sum_trials(outcomes: list[dict[str, object]]) -> list[dict[str, object]]:
+    """The dry runs over many mornings, for each drop: how often the forecast called the morning
+    sunny, how often it was, and how often it was right, of those it could tell."""
+    by_drop: dict[float, dict[str, object]] = {}
+    for result in outcomes:
+        for trial in result.get("trials", []):  # type: ignore[union-attr]
+            total = by_drop.setdefault(trial["drop"], {"drop": trial["drop"], "set": False, "mornings": 0, "forecast_sunny": 0, "sunny": 0, "right": 0, "told": 0})
+            total["set"] = total["set"] or trial["set"]
+            total["mornings"] += 1  # type: ignore[operator]
+            total["forecast_sunny"] += trial["forecast_sunny"] is True  # type: ignore[operator]
+            total["sunny"] += trial["sunny"] is True  # type: ignore[operator]
+            total["right"] += trial["right"] is True  # type: ignore[operator]
+            total["told"] += trial["right"] is not None  # type: ignore[operator]
+    return [by_drop[drop] for drop in sorted(by_drop)]
+
+
 rules = {rule.name: rule for rule in (SunnyMorning(),)}
 SETTINGS = {setting.key: setting for rule in rules.values() for setting in rule.settings}
 
@@ -281,8 +356,9 @@ def evaluate(rule: SunnyMorning, forecast: list[dict[str, object]], state: State
 
 def tick(conn: sqlite3.Connection, now: int, state_of: Callable[[bool], tuple[list[dict[str, object]], State]]) -> int:
     """Make and log each decision that's due and not yet made. state_of(False) is enough to know
-    what's due; state_of(True) adds the parts that take a while, such as the typical load. Only logs.
-    Returns how many runs were logged."""
+    what's due; state_of(True) adds the parts that take a while, such as the typical load. One
+    whose morning can't be worked out yet waits for a later check, up to its last chance. Only
+    logs. Returns how many runs were logged."""
     logged = 0
     full: tuple[list[dict[str, object]], State] | None = None
     _, light = state_of(False)
@@ -298,6 +374,8 @@ def tick(conn: sqlite3.Connection, now: int, state_of: Callable[[bool], tuple[li
         recommendation = evaluate(rule, forecast, state)
         if recommendation is None:
             continue
+        if "morning_start" not in recommendation.figures and now < for_ts - LAST_CHANCE_SECONDS:
+            continue  # Such as the forecast not in yet: try again at the next check.
         db.add_automation_run(conn, now, rule.name, for_ts, state.summary(), recommendation.to_dict())
         logged += 1
     return logged
