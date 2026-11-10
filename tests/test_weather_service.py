@@ -313,7 +313,10 @@ def test_the_app_fetches_on_start_and_serves_the_weather(conn, monkeypatch):
     assert {p["name"] for p in providers["forecasts"]} == set(weather.FORECASTS)
     assert len(providers["warnings"][0]["regions"]) == 26
     rises, sets = found["sun"]["rises"], found["sun"]["sets"]
-    assert len(rises) == len(sets) == 11 and all(r < s < r + service.DAY for r, s in zip(rises, sets, strict=True))
+    # The window opens at any time of day, so it may start with a sunset: rises and sets alternate, under a day apart.
+    events = sorted([(t, "rise") for t in rises] + [(t, "set") for t in sets])
+    assert len(rises) == len(sets) == 11
+    assert all(a[1] != b[1] and b[0] - a[0] < service.DAY for a, b in zip(events, events[1:]))
 
 
 # The record of past weather, with a stub that has one
