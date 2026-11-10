@@ -2076,6 +2076,9 @@
     in order, which is how the inverter prioritises in its normal mode. Conversion losses and
     meter noise mean the two sides rarely add up to the same total, so the larger side is scaled
     down to match first. Otherwise the last destination could be left with no path.
+
+    Scaling can take a share under minW, so a box that says it's flowing would have no line:
+    51 W importing beside 102 W of losses came to 39 W. Each such box gets its largest share.
   */
   function flowPaths() {
     const side = (names, sign) => names
@@ -2090,13 +2093,23 @@
       for (const node of nodes) node.left *= scale;
     }
     const paths = {};
+    const shares = []; // [key, watts, source, destination], every split however small
     for (const source of sources) {
       for (const destination of destinations) {
         const amount = Math.min(source.left, destination.left);
         source.left -= amount;
         destination.left -= amount;
-        if (amount >= FLOWS[source.name].minW) paths[`${source.name}-${destination.name}`] = amount;
+        if (amount <= 0) continue;
+        const key = `${source.name}-${destination.name}`;
+        shares.push([key, amount, source, destination]);
+        if (amount >= FLOWS[source.name].minW) paths[key] = amount;
       }
+    }
+    for (const node of [...sources, ...destinations]) {
+      const mine = shares.filter((share) => share[2] === node || share[3] === node);
+      if (mine.some(([key]) => key in paths) || !mine.length) continue;
+      const [key, amount] = mine.reduce((a, b) => (b[1] > a[1] ? b : a));
+      paths[key] = amount;
     }
     return paths;
   }
