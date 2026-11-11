@@ -475,6 +475,11 @@
   #history-charts.loading > * { opacity: .5; }
   #history-charts.panning svg { cursor: grabbing; }
   #history-charts.panning .chart-end { display: none; }
+  /* The time axis under each history chart, dragged to zoom. */
+  .chart-scale { fill: currentColor; fill-opacity: 0; cursor: ew-resize; }
+  @media (hover: hover) { .chart-scale:hover { fill-opacity: .06; } }
+  #history-charts.scaling, #history-charts.scaling svg { cursor: ew-resize; }
+  #history-charts.scaling .chart-scale { fill-opacity: .06; }
   .chart { position: relative; }
   .chart-head { display: flex; flex-wrap: wrap; gap: 2px 16px; align-items: baseline; justify-content: space-between; padding-right: 36px; }
   /* The full-screen button, at a chart's top right. Its icon is drawn in CSS: an svg in it would count as the chart. */
@@ -3292,6 +3297,9 @@
   const MIN_BARS = 12;
   const MAX_BARS = 720;
   const PAN_START_PX = 6;
+  // Dragging the time axis zooms by how much nearer to or further from the right edge the pointer
+  // gets. Distances under this share of the plot count as this, so a press by the edge isn't jumpy.
+  const SCALE_EDGE_SHARE = 1 / 8;
   const LOAD_DELAY_MS = 150;
   const GRID_ABOVE_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "exporting" : "importing";
   const GRID_BELOW_ZERO = GRID_POSITIVE_MEANS_EXPORT ? "importing" : "exporting";
@@ -4005,9 +4013,10 @@
     drawn a view's width either side as well, so it's there to slide in when dragged. `full`: the
     index of the chart filling the screen. `compact`: the dashboard's, shorter, without the lowest
     to highest shading or a full-screen button. `zoomable`: has the full-screen button. `marks`: moments
-    to draw a dashed line at, such as now, each { ts, label }. Returns where the plots sit.
+    to draw a dashed line at, such as now, each { ts, label }. `scalable`: the time axis can be dragged
+    to zoom. Returns where the plots sit.
   */
-  function drawTimeCharts(box, { charts, points, visible, bucket, start, end, tou = [], full = null, compact = false, zoomable = !compact, marks = [], prefix }) {
+  function drawTimeCharts(box, { charts, points, visible, bucket, start, end, tou = [], full = null, compact = false, zoomable = !compact, scalable = false, marks = [], prefix }) {
     const span = end - start;
     const refocus = keepZoomFocus(box);
     const release = holdHeight(box);
@@ -4129,6 +4138,7 @@
       drawInsideLabels(svg, frame, scale, plotBottom, chart.inside);
       const overlay = svgEl("g", { class: "history-overlay" });
       svg.append(overlay);
+      if (scalable) svg.append(svgEl("rect", { x: bandLeft, y: bottom, width: bandRight - bandLeft, height: height - bottom, class: "chart-scale" }));
       node.append(svg);
       return { chart, svg, overlay, scale, strip, bottom, plotBottom };
     });
@@ -4204,11 +4214,12 @@
       "A break: the app wasn't running or the inverter didn't answer.",
       touShown ? "Grey columns: time-of-use periods as set on the inverter now." : "",
       matchMedia("(pointer: fine)").matches ? "Drag to move through time. Ctrl + scroll to zoom." : "Swipe sideways to move through time.",
+      "Drag the time axis to zoom.",
     ].filter(Boolean).join("\n");
     renderHistoryTable();
 
     historyFrame = drawTimeCharts(box, {
-      charts: statsCharts(visible), points, visible, bucket, start, end, tou,
+      charts: statsCharts(visible), points, visible, bucket, start, end, tou, scalable: true,
       full: fullChart?.box === box.id ? fullChart.index : null, prefix: "history",
     });
   }
@@ -4705,14 +4716,26 @@
     return { bucket, start: end - span, end, following: end >= latest, day: next.day ?? null };
   }
 
-  /* A view `span` long at `bucket`. It keeps to now when following, and otherwise keeps time `at`
-     where it is on screen, the middle unless said otherwise. */
-  function zoomView(bucket, span, at = (view.start + view.end) / 2) {
+  /* View `from`, the one on screen unless said otherwise, made `span` long at `bucket`. It keeps to
+     now when following, and otherwise keeps time `at` where it is on screen, the middle unless said otherwise. */
+  function zoomView(bucket, span, at = null, from = view) {
     const { least, most } = spanLimits(bucket);
     const next = clamp(span, least, most);
-    if (view.following) return settle({ bucket, start: view.end - next, end: view.end, following: true });
-    const share = (at - view.start) / (view.end - view.start);
+    if (from.following) return settle({ bucket, start: from.end - next, end: from.end, following: true });
+    at ??= (from.start + from.end) / 2;
+    const share = (at - from.start) / (from.end - from.start);
     return settle({ bucket, start: at - share * next, end: at + (1 - share) * next, following: false });
+  }
+
+  /* The interval for a view `span` long, from `bucket`: coarser while the span is more periods than
+     fit and there's history past them, finer while it's fewer periods than the least. */
+  function bucketFor(bucket, span) {
+    let i = HISTORY_BUCKETS.indexOf(bucket);
+    const most = (b) => MAX_BARS * b;
+    const history = (b) => limits(b).latest - limits(b).earliest;
+    while (i < HISTORY_BUCKETS.length - 1 && span > most(HISTORY_BUCKETS[i]) && most(HISTORY_BUCKETS[i]) < history(HISTORY_BUCKETS[i])) i++;
+    while (i > 0 && span < MIN_BARS * HISTORY_BUCKETS[i]) i--;
+    return HISTORY_BUCKETS[i];
   }
 
   /* The view moved along by `dt` seconds. */
@@ -4753,7 +4776,8 @@
       loaded = { bucket: next.bucket_seconds, start: next.start, end: next.end, points: next.points };
       firstReading = next.first_ts ?? null;
       view = settle(view);
-      if (!pan?.moving) renderHistory(); // A drag draws when it's let go.
+      // A drag along the charts draws when it's let go. One along the time axis draws as it goes.
+      if (!pan?.moving || pan.axis) renderHistory();
     } catch {
       if (request === historyRequest) $("history-note").textContent = "Couldn't load the history. Showing the last one loaded.";
     }
@@ -4865,12 +4889,38 @@
     Dragging a chart moves through time, like a trading chart. While the pointer is down the drawn
     layers only slide, and the charts are redrawn with their new axes once it's let go. A vertical
     swipe on a touch screen still scrolls the page.
+
+    Dragging the time axis under a chart zooms, also like a trading chart: the right edge stays put
+    and the time grabbed stays under the pointer, so dragging right shows more. Past the most periods
+    an interval shows, it moves to a coarser one, and back to a finer one under the fewest. Unlike a
+    drag along the charts, this redraws as it goes, as the axis and maybe the interval change.
   */
   {
     const box = $("history-charts");
+    let drawQueued = false;
+    const redrawSoon = () => {
+      if (!drawQueued) {
+        drawQueued = true;
+        requestAnimationFrame(() => { drawQueued = false; renderHistory(); });
+      }
+      clearTimeout(pendingLoad);
+      pendingLoad = setTimeout(() => loadAround(view), LOAD_DELAY_MS);
+    };
+    const scaleTo = (clientX) => {
+      const { from, x, right, least } = pan;
+      const span = (from.end - from.start) * Math.max(right - x, least) / Math.max(right - clientX, least);
+      pan.to = view = zoomView(bucketFor(from.bucket, span), span, from.end, from);
+      redrawSoon();
+    };
     box.addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || !event.target.closest("svg") || !historyFrame || !loaded) return;
-      pan = { id: event.pointerId, x: event.clientX, moving: false, from: view, to: view };
+      const { left, plotWidth } = historyFrame;
+      pan = {
+        id: event.pointerId, x: event.clientX, moving: false, from: view, to: view,
+        axis: event.target.classList.contains("chart-scale"),
+        right: event.target.closest("svg").getBoundingClientRect().left + left + plotWidth, // The plot's right edge.
+        least: plotWidth * SCALE_EDGE_SHARE,
+      };
     });
     box.addEventListener("pointermove", (event) => {
       if (!pan || event.pointerId !== pan.id) return;
@@ -4879,9 +4929,10 @@
         if (Math.abs(dx) < PAN_START_PX) return;
         pan.moving = true;
         box.setPointerCapture(event.pointerId);
-        box.classList.add("panning");
+        box.classList.add(pan.axis ? "scaling" : "panning");
         hideHistoryTip();
       }
+      if (pan.axis) return scaleTo(event.clientX);
       const span = pan.from.end - pan.from.start;
       pan.to = moveView(pan.from, clamp(-dx / historyFrame.plotWidth * span, -span, span));
       const shift = (pan.from.start - pan.to.start) / span * historyFrame.plotWidth;
@@ -4890,18 +4941,19 @@
     });
     const letGo = (event, keep) => {
       if (!pan || event.pointerId !== pan.id) return;
-      const { moving, to } = pan;
+      const { moving, from, to, axis } = pan;
       pan = null;
-      box.classList.remove("panning");
+      box.classList.remove("panning", "scaling");
       if (!moving) return;
+      if (axis) clearTimeout(pendingLoad); // Loaded now instead.
       if (keep) showView(to);
+      else if (axis) showView(settle(from)); // The view changed as it was dragged.
       else renderHistory();
     };
     box.addEventListener("pointerup", (event) => letGo(event, true));
     box.addEventListener("pointercancel", (event) => letGo(event, false));
 
     /* Ctrl and the scroll wheel, or a pinch, zoom. Scrolling sideways moves. Plain scrolling still scrolls the page. */
-    let drawQueued = false;
     box.addEventListener("wheel", (event) => {
       const svg = event.target.closest("svg");
       if (!svg || !historyFrame || !loaded || pan) return;
@@ -4919,12 +4971,7 @@
       }
       event.preventDefault();
       view = next;
-      if (!drawQueued) {
-        drawQueued = true;
-        requestAnimationFrame(() => { drawQueued = false; renderHistory(); });
-      }
-      clearTimeout(pendingLoad);
-      pendingLoad = setTimeout(() => loadAround(view), LOAD_DELAY_MS);
+      redrawSoon();
     }, { passive: false });
   }
   /* The two sets of charts sit side by side on a wide screen, so each has its own width. */
