@@ -97,6 +97,9 @@ ESB_COLUMNS = ("MPRN", "Meter Serial Number", "Read Value", "Read Type", "Read D
 ESB_IDENTIFIERS = ("MPRN", "Meter Serial Number")
 ESB_VALUE, ESB_TYPE, ESB_TIME = ESB_COLUMNS[2:]
 ESB_IMPORT = "Active Import Interval (kW)"
+# Since late 2026 the same file can hold what went out to the grid too, row by row with the import.
+# The app doesn't keep those yet, so they're checked and left out.
+ESB_EXPORT = "Active Export Interval (kW)"
 ESB_TIME_FORMAT = "%d-%m-%Y %H:%M"
 
 NOT_AN_EXPORT = "This isn't an export from this app, so nothing was imported."
@@ -305,7 +308,8 @@ class EsbCsv:
                 row["other_meter"] = row.get("MPRN") != first_meter  # Compared here, and dropped straight after.
                 for name in ESB_IDENTIFIERS:
                     row.pop(name, None)
-                key = _label_key(row.get(ESB_TIME))
+                # Import and export rows share their labels, so each type counts its own repeats.
+                key = (str(row.get(ESB_TYPE)).strip(), _label_key(row.get(ESB_TIME)))
                 row["occurrence"] = seen[key]
                 seen[key] += 1
                 yield row
@@ -491,8 +495,9 @@ def _meter_reading(row: Row) -> tuple[str, int, int, float]:
     return day, slot, occurrence, _kw(row["kw"], "kw")
 
 
-def _esb_reading(row: Row) -> tuple[str, int, int, float]:
-    """A row of the meter file: (day, slot, occurrence, kW). Its identifiers never reach here."""
+def _esb_reading(row: Row) -> tuple[str, int, int, float] | None:
+    """A row of the meter file: (day, slot, occurrence, kW), or None for an export row, which is
+    checked like the rest but not kept. Its identifiers never reach here."""
     if row["columns"] != len(ESB_COLUMNS):
         raise ValueError(f"it has {row['columns']} columns, not {len(ESB_COLUMNS)}")
     if row["other_meter"]:
@@ -505,12 +510,15 @@ def _esb_reading(row: Row) -> tuple[str, int, int, float]:
     if when.minute % 30:
         raise ValueError(f"{ESB_TIME} isn't on the hour or half past: {stamp}")
     read_type = str(row[ESB_TYPE]).strip()
-    if read_type != ESB_IMPORT:
-        raise ValueError(f"{ESB_TYPE} is {read_type[:40]!r}, and only {ESB_IMPORT!r} can be imported")
+    if read_type not in (ESB_IMPORT, ESB_EXPORT):
+        raise ValueError(f"{ESB_TYPE} is {read_type[:40]!r}, and only {ESB_IMPORT!r} and {ESB_EXPORT!r} can be read")
     slot = meter.slot_of(when)
     if row["occurrence"] and not _doubled(when.date(), slot, row["occurrence"]):
         raise ValueError(f"{stamp} is in the file more than once")
-    return when.date().isoformat(), slot, row["occurrence"], _kw(row[ESB_VALUE], ESB_VALUE)
+    kw = _kw(row[ESB_VALUE], ESB_VALUE)
+    if read_type == ESB_EXPORT:
+        return None
+    return when.date().isoformat(), slot, row["occurrence"], kw
 
 
 def _problem(error: ValueError) -> str:
@@ -610,10 +618,19 @@ def _merge_counters(source: Source, target: sqlite3.Connection, write: bool) -> 
 
 def _merge_meter_readings(source: Source, target: sqlite3.Connection, write: bool) -> dict[str, object]:
     check = _esb_reading if isinstance(source, EsbCsv) else _meter_reading
-    in_file = new = differ = 0
+    in_file = new = differ = export = 0
     first = last = None
+
+    def kept(rows: Iterator[object]) -> Iterator[object]:
+        nonlocal export
+        for reading in rows:
+            if reading is None:
+                export += 1
+            else:
+                yield reading
+
     with _checked(source, "meter_readings", check) as rows:
-        for batch in _batches(rows):
+        for batch in _batches(kept(rows)):
             days = {reading[0] for reading in batch}
             earliest, latest = min(days), max(days)
             in_file += len(batch)
@@ -637,7 +654,7 @@ def _merge_meter_readings(source: Source, target: sqlite3.Connection, write: boo
                 time.sleep(BATCH_PAUSE_SECONDS)
             else:
                 new += len({tuple(reading[:3]) for reading in batch} - set(here))
-    return {"in_file": in_file, "new": new, "differ": differ, "first": first, "last": last}
+    return {"in_file": in_file, "new": new, "differ": differ, "export": export, "first": first, "last": last}
 
 
 def _merge_appliances(source: Source, target: sqlite3.Connection, write: bool) -> dict[str, object]:
@@ -798,6 +815,9 @@ def _notes(source: Source, results: dict[str, dict[str, object]]) -> list[str]:
         notes.append(
             f"Meter half-hours that read differently in the file from the ones already here, which were kept: {differ}."
         )
+    export_rows = results.get("meter_readings", {}).get("export")
+    if export_rows:
+        notes.append(f"Export half-hours, not imported: {export_rows}. The app only keeps import for now.")
     if source.format == "esb":
         notes.append("The MPRN and the meter's serial number on each row aren't kept.")
     unknown = sum(results.get(table, {}).get("unknown", 0) for table in ("daily_counters", "settings", "text_settings"))

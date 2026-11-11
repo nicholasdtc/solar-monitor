@@ -25,6 +25,7 @@ MPRN = "10000000000"
 SERIAL = "TEST0001"
 HEADER = "MPRN,Meter Serial Number,Read Value,Read Type,Read Date and End Time"
 IMPORT = "Active Import Interval (kW)"
+EXPORT = "Active Export Interval (kW)"
 BINARY = {"Content-Type": "application/octet-stream"}
 WINTER = date(2026, 1, 14)
 SPRING = date(2026, 3, 29)  # The clocks go forward.
@@ -270,9 +271,13 @@ def oldest_row_is(file_lines, replacement):
         (f"{MPRN},{SERIAL},nan,{IMPORT},14-01-2026 00:00", "Read Value isn't a usable number"),
         (f"{MPRN},{SERIAL},-0.1,{IMPORT},14-01-2026 00:00", "Read Value is below zero: -0.1"),
         (
-            f"{MPRN},{SERIAL},0.5,Active Export Interval (kW),14-01-2026 00:00",
-            "Read Type is 'Active Export Interval (kW)', and only 'Active Import Interval (kW)' can be imported",
+            f"{MPRN},{SERIAL},0.5,Reactive Import Interval (kVAr),14-01-2026 00:00",
+            "Read Type is 'Reactive Import Interval (kVAr)', and only "
+            "'Active Import Interval (kW)' and 'Active Export Interval (kW)' can be read",
         ),
+        (f"{MPRN},{SERIAL},-0.1,{EXPORT},14-01-2026 00:00", "Read Value is below zero: -0.1"),
+        (f"{MPRN},{SERIAL},0.5,{EXPORT},14-01-2026 00:15", "Read Date and End Time isn't on the hour or half past"),
+        (f"10000000001,{SERIAL},0.5,{EXPORT},14-01-2026 00:00", "it's for a different meter from the rows above it"),
         (f"{MPRN},{SERIAL},0.5,{IMPORT},2026-01-14 00:00", "Read Date and End Time isn't a time like 31-12-2025 23:30"),
         (f"{MPRN},{SERIAL},0.5,{IMPORT},14/01/2026 00:00", "Read Date and End Time isn't a time like 31-12-2025 23:30"),
         (f"{MPRN},{SERIAL},0.5,{IMPORT},14-01-2026 00:15", "Read Date and End Time isn't on the hour or half past"),
@@ -300,6 +305,63 @@ def test_a_half_hour_three_times_is_refused_even_when_the_clocks_go_back(tmp_pat
     with pytest.raises(BadFile, match="25-10-2026 01:00 is in the file more than once"):
         run(tmp_path, conn, esb(readings))
     assert stored(conn) == []
+
+
+def with_export(readings, export_kw=0.25):
+    """The meter file's lines with an export row beside each import row, newest first. Within a
+    label the two come in either order, as they do in ESB Networks' files."""
+    file_lines = [HEADER]
+    for n, (label, kw) in enumerate(reversed(readings)):
+        pair = [f"{MPRN},{SERIAL},{kw},{IMPORT},{label}", f"{MPRN},{SERIAL},{export_kw},{EXPORT},{label}"]
+        file_lines += pair if n % 2 else pair[::-1]
+    return file_lines
+
+
+def test_export_rows_are_checked_and_left_out(tmp_path, conn, monkeypatch):
+    monkeypatch.setattr(importer, "BATCH_ROWS", 7)
+    content = joined(with_export(half_hours(WINTER, AUTUMN)))
+    preview = run(tmp_path, conn, content, apply=False)
+    report = run(tmp_path, conn, content)
+    assert counts(report) == (98, 98, 0, 0)
+    assert preview["tables"] == report["tables"]
+    note = "Export half-hours, not imported: 98. The app only keeps import for now."
+    assert note in preview["notes"]
+    assert note in report["notes"]
+    assert {kw for *_, kw in stored(conn)} == {0.5}
+    assert [row[:3] for row in stored(conn)] == [row[:3] for row in stored_from(tmp_path, esb(half_hours(WINTER, AUTUMN)))]
+
+
+def stored_from(tmp_path, content):
+    other = db.connect(tmp_path / "other.db")
+    try:
+        run(tmp_path, other, content)
+        return stored(other)
+    finally:
+        other.close()
+
+
+def test_a_file_of_only_export_rows_adds_nothing(tmp_path, conn):
+    file_lines = [line for line in with_export(half_hours(WINTER)) if EXPORT in line or line == HEADER]
+    report = run(tmp_path, conn, joined(file_lines))
+    assert report["changes"] is False
+    assert counts(report) == (0, 0, 0, 0)
+    assert "Export half-hours, not imported: 48. The app only keeps import for now." in report["notes"]
+    assert stored(conn) == []
+
+
+def test_an_import_half_hour_twice_is_refused_beside_export_rows(tmp_path, conn):
+    file_lines = with_export(half_hours(WINTER))
+    file_lines.append(f"{MPRN},{SERIAL},0.5,{IMPORT},14-01-2026 00:30")
+    with pytest.raises(BadFile, match=f"^Meter half-hours, row {len(file_lines)}: 14-01-2026 00:30 is in the file more than once"):
+        run(tmp_path, conn, joined(file_lines))
+    assert stored(conn) == []
+
+
+def test_a_bad_row_after_export_rows_names_its_own_row(tmp_path, conn):
+    file_lines = with_export(half_hours(WINTER))
+    file_lines[-3] = re.sub(r",[\d.]+,", ",abc,", file_lines[-3])
+    with pytest.raises(BadFile, match=f"^Meter half-hours, row {len(file_lines) - 2}: Read Value isn't a number: abc"):
+        run(tmp_path, conn, joined(file_lines))
 
 
 def test_a_file_too_big_to_be_a_meter_file_is_refused(tmp_path, conn, monkeypatch):
