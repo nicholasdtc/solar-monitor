@@ -4762,7 +4762,8 @@
   }
 
   /* Loads the history around a view, unless enough of it is loaded already. A slow answer for an
-     old view must not replace a newer one, hence the request number. */
+     old view must not replace a newer one, hence the request number. Nor must one for an interval
+     the view has left since: going back to the one loaded asks for nothing, so wouldn't overtake it. */
   async function loadAround(v, force = false) {
     const box = $("history-charts");
     if (!force && covers(loaded, v, (v.end - v.start) / 4)) return;
@@ -4773,11 +4774,13 @@
     try {
       const next = await getJson(`/api/history?start=${start}&end=${end}&bucket=${v.bucket}`);
       if (request !== historyRequest) return;
-      loaded = { bucket: next.bucket_seconds, start: next.start, end: next.end, points: next.points };
-      firstReading = next.first_ts ?? null;
-      view = settle(view);
-      // A drag along the charts draws when it's let go. One along the time axis draws as it goes.
-      if (!pan?.moving || pan.axis) renderHistory();
+      if (v.bucket === view.bucket) {
+        loaded = { bucket: next.bucket_seconds, start: next.start, end: next.end, points: next.points };
+        firstReading = next.first_ts ?? null;
+        view = settle(view);
+        // A drag along the charts draws when it's let go. One along the time axis draws as it goes.
+        if (!pan?.moving || pan.axis) renderHistory();
+      }
     } catch {
       if (request === historyRequest) $("history-note").textContent = "Couldn't load the history. Showing the last one loaded.";
     }
