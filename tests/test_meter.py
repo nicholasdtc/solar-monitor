@@ -107,16 +107,16 @@ def run(tmp_path, conn, content, *, apply=True):
     return importer.run(upload, export.database_path(conn), apply=apply)
 
 
-def stored(conn):
-    return conn.execute("SELECT day, slot, occurrence, kw FROM meter_readings ORDER BY day, slot, occurrence").fetchall()
+def stored(conn, table="meter_readings"):
+    return conn.execute(f"SELECT day, slot, occurrence, kw FROM {table} ORDER BY day, slot, occurrence").fetchall()
 
 
-def halves(report):
-    return next(entry for entry in report["tables"] if entry["id"] == "meter_readings")
+def halves(report, table="meter_readings"):
+    return next(entry for entry in report["tables"] if entry["id"] == table)
 
 
-def counts(report):
-    entry = halves(report)
+def counts(report, table="meter_readings"):
+    entry = halves(report, table)
     return entry["in_file"], entry["new"], entry["already_here"], entry["differ"]
 
 
@@ -168,7 +168,8 @@ def test_a_reading_is_kept_as_the_meter_gives_it(tmp_path, conn):
 
 
 def test_nothing_identifying_the_meter_is_kept_or_shown(tmp_path, conn, call):
-    report = run(tmp_path, conn, esb(half_hours(WINTER)))
+    report = run(tmp_path, conn, joined(with_export(half_hours(WINTER))))
+    assert len(stored(conn, "meter_exports")) == 48
     page = call("GET", "/api/meter").text
     saved = b"".join(path.read_bytes() for path in (tmp_path / "here.db", tmp_path / "here.db-wal") if path.exists())
     csv_export = exported(conn, "csv")
@@ -317,18 +318,39 @@ def with_export(readings, export_kw=0.25):
     return file_lines
 
 
-def test_export_rows_are_checked_and_left_out(tmp_path, conn, monkeypatch):
+def test_export_rows_are_kept_apart_from_import(tmp_path, conn, monkeypatch):
     monkeypatch.setattr(importer, "BATCH_ROWS", 7)
     content = joined(with_export(half_hours(WINTER, AUTUMN)))
     preview = run(tmp_path, conn, content, apply=False)
     report = run(tmp_path, conn, content)
+    assert [entry["id"] for entry in report["tables"]] == ["meter_readings", "meter_exports"]
+    assert halves(report, "meter_exports")["label"] == "Meter export half-hours"
     assert counts(report) == (98, 98, 0, 0)
+    assert counts(report, "meter_exports") == (98, 98, 0, 0)
     assert preview["tables"] == report["tables"]
-    note = "Export half-hours, not imported: 98. The app only keeps import for now."
-    assert note in preview["notes"]
-    assert note in report["notes"]
-    assert {kw for *_, kw in stored(conn)} == {0.5}
-    assert [row[:3] for row in stored(conn)] == [row[:3] for row in stored_from(tmp_path, esb(half_hours(WINTER, AUTUMN)))]
+    assert preview["notes"] == report["notes"]
+    assert stored(conn) == stored_from(tmp_path, esb(half_hours(WINTER, AUTUMN)))
+    exports = stored(conn, "meter_exports")
+    assert [row[:3] for row in exports] == [row[:3] for row in stored(conn)]
+    assert {kw for *_, kw in exports} == {0.25}
+    again = run(tmp_path, conn, content)
+    assert again["changes"] is False
+    assert counts(again, "meter_exports") == (98, 0, 98, 0)
+
+
+def test_export_in_the_hour_the_clocks_go_back_is_kept_twice(tmp_path, conn):
+    # Newest first, so the later of each repeated label comes first.
+    seen = set()
+    file_lines = []
+    for line in with_export(half_hours(AUTUMN)):
+        label = line.split(",")[-1]
+        if EXPORT in line and label in ("25-10-2026 01:00", "25-10-2026 01:30"):
+            line = line.replace(f"0.25,{EXPORT}", f"{0.75 if label in seen else 0.5},{EXPORT}")
+            seen.add(label)
+        file_lines.append(line)
+    run(tmp_path, conn, joined(file_lines))
+    repeated = conn.execute("SELECT slot, occurrence, kw FROM meter_exports WHERE slot IN (2, 3) ORDER BY slot, occurrence")
+    assert repeated.fetchall() == [(2, 0, 0.5), (2, 1, 0.75), (3, 0, 0.5), (3, 1, 0.75)]  # Occurrence 1 is the earlier.
 
 
 def stored_from(tmp_path, content):
@@ -340,13 +362,38 @@ def stored_from(tmp_path, content):
         other.close()
 
 
-def test_a_file_of_only_export_rows_adds_nothing(tmp_path, conn):
+def test_a_file_of_only_export_rows_adds_only_export(tmp_path, conn):
     file_lines = [line for line in with_export(half_hours(WINTER)) if EXPORT in line or line == HEADER]
     report = run(tmp_path, conn, joined(file_lines))
-    assert report["changes"] is False
+    assert report["changes"] is True
     assert counts(report) == (0, 0, 0, 0)
-    assert "Export half-hours, not imported: 48. The app only keeps import for now." in report["notes"]
+    assert counts(report, "meter_exports") == (48, 48, 0, 0)
     assert stored(conn) == []
+    assert len(stored(conn, "meter_exports")) == 48
+
+
+def test_a_file_from_before_export_lists_no_export(tmp_path, conn):
+    report = run(tmp_path, conn, esb(half_hours(WINTER)))
+    assert [entry["id"] for entry in report["tables"]] == ["meter_readings"]
+    assert stored(conn, "meter_exports") == []
+
+
+def test_importing_a_file_again_adds_the_export_it_left_out_before(tmp_path, conn):
+    run(tmp_path, conn, esb(half_hours(WINTER)))  # As the version before this one did: import only.
+    report = run(tmp_path, conn, joined(with_export(half_hours(WINTER))))
+    assert report["changes"] is True
+    assert counts(report) == (48, 0, 48, 0)
+    assert counts(report, "meter_exports") == (48, 48, 0, 0)
+
+
+def test_an_export_half_hour_that_reads_differently_keeps_the_one_already_here(tmp_path, conn):
+    run(tmp_path, conn, joined(with_export(half_hours(WINTER))))
+    report = run(tmp_path, conn, joined(with_export(half_hours(WINTER), export_kw=0.3)))
+    assert report["changes"] is False
+    assert counts(report, "meter_exports") == (48, 0, 48, 48)
+    note = "Meter export half-hours that read differently in the file from the ones already here, which were kept: 48."
+    assert note in report["notes"]
+    assert {kw for *_, kw in stored(conn, "meter_exports")} == {0.25}
 
 
 def test_an_import_half_hour_twice_is_refused_beside_export_rows(tmp_path, conn):
@@ -384,14 +431,22 @@ def test_the_route_imports_a_meter_file(call, conn):
 @pytest.mark.parametrize("name", ["csv", "sqlite"])
 def test_meter_half_hours_come_back_from_an_export(tmp_path, conn, name):
     values = {2: 1.0, 3: 1.5, 4: 2.0, 5: 2.5}
-    run(tmp_path, conn, esb(half_hours(WINTER) + [(label, values.get(n, 0.25)) for n, label in enumerate(labels(AUTUMN))]))
+    readings = half_hours(WINTER) + [(label, values.get(n, 0.25)) for n, label in enumerate(labels(AUTUMN))]
+    run(tmp_path, conn, joined(with_export(readings, export_kw=0.125)))
+    with conn:
+        conn.execute("UPDATE meter_exports SET kw = 0.375 WHERE day = ? AND slot = 2 AND occurrence = 1", (AUTUMN.isoformat(),))
     copy = db.connect(tmp_path / "copy.db")
     try:
         report = run(tmp_path, copy, exported(conn, name))
         assert report["format"] == name
         assert counts(report) == (98, 98, 0, 0)
+        assert counts(report, "meter_exports") == (98, 98, 0, 0)
         assert stored(copy) == stored(conn)
-        assert counts(run(tmp_path, copy, exported(conn, name))) == (98, 0, 98, 0)
+        assert stored(copy, "meter_exports") == stored(conn, "meter_exports")
+        assert (AUTUMN.isoformat(), 2, 1, 0.375) in stored(copy, "meter_exports")
+        again = run(tmp_path, copy, exported(conn, name))
+        assert counts(again) == (98, 0, 98, 0)
+        assert counts(again, "meter_exports") == (98, 0, 98, 0)
     finally:
         copy.close()
 
@@ -402,7 +457,7 @@ def without_meter_readings(tmp_path, content, name):
         output = io.BytesIO()
         with zipfile.ZipFile(io.BytesIO(content)) as before, zipfile.ZipFile(output, "w") as after:
             for member in before.namelist():
-                if member != "meter_readings.csv":
+                if member not in ("meter_readings.csv", "meter_exports.csv"):
                     after.writestr(member, before.read(member))
         return output.getvalue()
     path = tmp_path / "edited.db"
@@ -410,6 +465,7 @@ def without_meter_readings(tmp_path, content, name):
     connection = sqlite3.connect(path)
     with connection:
         connection.execute("DROP TABLE meter_readings")
+        connection.execute("DROP TABLE meter_exports")
     connection.close()
     edited = path.read_bytes()
     path.unlink()
@@ -425,7 +481,7 @@ def test_an_export_from_before_the_meter_tab_still_imports(tmp_path, conn, name)
     finally:
         source.close()
     report = run(tmp_path, conn, content)
-    assert "meter_readings" not in [entry["id"] for entry in report["tables"]]
+    assert {"meter_readings", "meter_exports"}.isdisjoint(entry["id"] for entry in report["tables"])
     assert next(entry for entry in report["tables"] if entry["id"] == "samples")["new"] == 1
 
 
@@ -459,7 +515,7 @@ def test_a_bad_meter_half_hour_in_an_export_is_refused(tmp_path, conn, row, prob
 
 
 def test_no_half_hours_yet(conn):
-    assert meter.readings(conn) == {"days": [], "file": None}
+    assert meter.readings(conn) == {"days": [], "file": None, "export": None}
 
 
 def test_each_day_has_its_48_half_hours_in_watts(tmp_path, conn):
@@ -481,6 +537,7 @@ def test_each_day_has_its_48_half_hours_in_watts(tmp_path, conn):
         "gaps": [],
         "gapCount": 0,
     }
+    assert payload["export"] is None
 
 
 def test_each_half_hour_shows_from_its_start_though_the_file_labels_its_end(tmp_path, conn):
@@ -576,6 +633,35 @@ def test_the_clock_change_days_are_marked(tmp_path, conn):
     assert payload["file"]["readings"] == 96
     assert payload["file"]["missing"] == 48 * ((AUTUMN - SPRING).days - 1)  # Every day between.
     assert payload["file"]["gaps"] == [["2026-03-30 00:00", 48 * ((AUTUMN - SPRING).days - 1)]]
+
+
+def test_export_is_shaped_like_import_from_when_the_meter_starts_recording_it(tmp_path, conn):
+    imported = whole_days(WINTER, WINTER + ONE_DAY)
+    sent = dict(imported[30:])  # Export from 15:00 on the first day.
+    sent["14-01-2026 18:30"] = 2.5  # 18:00 to 18:30.
+    del sent["15-01-2026 01:00"]  # 00:30 to 01:00 missing.
+    file_lines = [HEADER] + [f"{MPRN},{SERIAL},{kw},{IMPORT},{label}" for label, kw in reversed(imported)]
+    file_lines += [f"{MPRN},{SERIAL},{kw},{EXPORT},{label}" for label, kw in reversed(list(sent.items()))]
+    run(tmp_path, conn, joined(file_lines))
+    payload = meter.readings(conn)
+    assert len(payload["days"]) == 2
+    sent_out = payload["export"]
+    assert (sent_out["first"], sent_out["last"], sent_out["readings"]) == ("2026-01-14 15:00", "2026-01-15 23:30", 65)
+    assert list(sent_out["days"]) == ["2026-01-14", "2026-01-15"]
+    slots, twice = sent_out["days"]["2026-01-14"]
+    assert slots[:30] == [meter.NOT_A_HALF_HOUR] * 30
+    assert (slots[30], slots[36], twice) == (500, 2500, [])
+    slots, _ = sent_out["days"]["2026-01-15"]
+    assert slots[:3] == [500, None, 500]
+
+
+def test_export_in_the_hour_the_clocks_go_back_shows_both(tmp_path, conn):
+    values = {2: 1.0, 3: 1.5, 4: 2.0, 5: 2.5}
+    readings = [(label, values.get(n, 0.5)) for n, (label, _) in enumerate(whole_days(AUTUMN))]
+    run(tmp_path, conn, joined(with_export(readings, export_kw=0.125)))
+    slots, twice = meter.readings(conn)["export"]["days"]["2026-10-25"]
+    assert twice == [[2, 125, 125], [3, 125, 125]]
+    assert meter.NOT_A_HALF_HOUR not in slots
 
 
 # The tariff's bands, and this app's own readings to compare with.

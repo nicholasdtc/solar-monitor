@@ -106,7 +106,7 @@ def readings(conn: sqlite3.Connection) -> dict[str, object]:
         count += 1
         zeros += kw == 0
     if not labelled:
-        return {"days": [], "file": None}
+        return {"days": [], "file": None, "export": None}
     held = _by_start(labelled)
 
     first_day, last_day = min(held), max(held)
@@ -169,7 +169,47 @@ def readings(conn: sqlite3.Connection) -> dict[str, object]:
             "gaps": gaps,
             "gapCount": gap_count,
         },
+        "export": exports(conn),
     }
+
+
+def exports(conn: sqlite3.Connection) -> dict[str, object] | None:
+    """What went out to the grid, which ESB Networks has from November 2026, or None before any.
+
+    days has [slots, twice] for each day from the first export half-hour to the last, by when they
+    start, as in readings(). Outside that span a slot is NOT_A_HALF_HOUR, so the half-hours from
+    before the meter recorded export aren't taken for gaps.
+    """
+    labelled: dict[str, dict[tuple[int, int], float]] = defaultdict(dict)
+    count = 0
+    for day, slot, occurrence, kw in conn.execute("SELECT day, slot, occurrence, kw FROM meter_exports"):
+        labelled[day][(slot, occurrence)] = kw
+        count += 1
+    if not labelled:
+        return None
+    held = _by_start(labelled)
+    first_day, last_day = min(held), max(held)
+    first_slot, last_slot = min(held[first_day]), max(held[last_day])
+    days: dict[str, list[object]] = {}
+    when = date.fromisoformat(first_day)
+    while (day := when.isoformat()) <= last_day:
+        spring = when == last_sunday(when.year, 3)
+        slots: list[int | None] = []
+        twice = []
+        for slot in range(SLOTS):
+            values = held.get(day, {}).get(slot)
+            outside = (day == first_day and slot < first_slot) or (day == last_day and slot > last_slot)
+            if values:
+                slots.append(round(sum(values) / len(values) * 1000))
+                if len(values) > 1:
+                    twice.append([slot, *(round(kw * 1000) for kw in values)])
+            elif outside or (spring and slot in SKIPPED_SLOTS):
+                slots.append(NOT_A_HALF_HOUR)
+            else:
+                slots.append(None)
+        days[day] = [slots, twice]
+        when += timedelta(days=1)
+    return {"days": days, "first": _label(first_day, first_slot), "last": _label(last_day, last_slot), "readings": count}
 
 
 def tariff(settings: dict[str, float | None]) -> dict[str, object]:

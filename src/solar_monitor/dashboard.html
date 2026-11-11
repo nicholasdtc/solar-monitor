@@ -1124,6 +1124,7 @@
         <div class="tile"><span class="tile-label">Cost at your rates <button type="button" class="help" aria-label="About the cost" data-tip="In the same unit as your rates. No standing charge.">?</button></span><span class="tile-value" id="gm-t-cost"></span><span class="tile-sub" id="gm-t-cost-sub"></span><span class="tile-sub tile-vs" id="gm-t-cost-vs" hidden></span></div>
         <div class="tile"><span class="tile-label">At the night rate</span><span class="tile-value" id="gm-t-night"></span><span class="tile-sub" id="gm-t-night-sub"></span><span class="tile-sub tile-vs" id="gm-t-night-vs" hidden></span></div>
         <div class="tile"><span class="tile-label">Highest half-hour</span><span class="tile-value" id="gm-t-max"></span><span class="tile-sub" id="gm-t-max-sub"></span><span class="tile-sub tile-vs" id="gm-t-max-vs" hidden></span></div>
+        <div class="tile" id="gm-t-export-tile" hidden><span class="tile-label">Exported <button type="button" class="help" aria-label="About export" data-tip="Not taken off the cost">?</button></span><span class="tile-value" id="gm-t-export"></span><span class="tile-sub" id="gm-t-export-sub"></span><span class="tile-sub tile-vs" id="gm-t-export-vs" hidden></span></div>
       </div>
     </div>
 
@@ -1143,7 +1144,7 @@
         <summary>Show as a table</summary>
         <div class="scroll" tabindex="0" role="region" aria-label="Each half-hour, as a table">
           <table>
-            <thead><tr><th>Half-hour</th><th>Band</th><th class="num">Average kW</th><th class="num">kWh</th><th class="num" id="gm-day-vs-col" hidden>Compared kW</th></tr></thead>
+            <thead><tr><th>Half-hour</th><th>Band</th><th class="num">Average kW</th><th class="num">kWh</th><th class="num" id="gm-day-export-col" hidden>Export kW</th><th class="num" id="gm-day-vs-col" hidden>Compared kW</th></tr></thead>
             <tbody id="gm-day-table"></tbody>
           </table>
         </div>
@@ -1165,7 +1166,7 @@
         <summary>Show as a table</summary>
         <div class="scroll" tabindex="0" role="region" aria-label="Import by rate band, as a table">
           <table>
-            <thead><tr><th id="gm-bars-col">Day</th><th class="num">Night kWh</th><th class="num">Day kWh</th><th class="num">Peak kWh</th><th class="num">Total kWh</th><th class="num"><span tabindex="0" data-tip="In the same unit as your rates. No standing charge.">Cost</span></th><th class="num" id="gm-bars-vs-kwh" hidden>Compared kWh</th><th class="num" id="gm-bars-vs-change" hidden>Change</th><th>Notes</th></tr></thead>
+            <thead><tr><th id="gm-bars-col">Day</th><th class="num">Night kWh</th><th class="num">Day kWh</th><th class="num">Peak kWh</th><th class="num">Total kWh</th><th class="num" id="gm-bars-export" hidden>Export kWh</th><th class="num"><span tabindex="0" data-tip="In the same unit as your rates. No standing charge.">Cost</span></th><th class="num" id="gm-bars-vs-kwh" hidden>Compared kWh</th><th class="num" id="gm-bars-vs-change" hidden>Change</th><th>Notes</th></tr></thead>
             <tbody id="gm-bars-table"></tbody>
           </table>
         </div>
@@ -6464,7 +6465,32 @@
           kwh[bandOf[slot]] += (both.get(slot) ?? w) / 2000;
         }
       });
-      return { date, flags, slots, twice, kwh, total: kwh[0] + kwh[1] + kwh[2], missing, present };
+      return { date, flags, slots, twice, kwh, total: kwh[0] + kwh[1] + kwh[2], missing, present, out: exportOf(date) };
+    }
+
+    /* What went out to the grid that day, or null before the meter recorded it. */
+    function exportOf(date) {
+      const entry = meter.export?.days[date];
+      if (!entry) return null;
+      const [slots, twice] = entry;
+      const both = new Map(twice.map(([slot, earlier, later]) => [slot, earlier + later]));
+      let kwh = 0;
+      let present = twice.length;
+      slots.forEach((w, slot) => {
+        if (w === null || w === NOT_A_HALF_HOUR) return;
+        present += 1;
+        kwh += (both.get(slot) ?? w) / 2000;
+      });
+      return { slots, twice, kwh, present };
+    }
+    const hasExport = () => Boolean(meter.export);
+
+    // A half-hour's export readings: one, two when the clocks went back, or null without any.
+    function exportAt(day, slot) {
+      const w = day.out?.slots[slot];
+      if (w === undefined || w === null || w === NOT_A_HALF_HOUR) return null;
+      const twice = day.out.twice.find(([at]) => at === slot);
+      return twice ? twice.slice(1) : [w];
     }
 
     function dayNotes(day) {
@@ -6550,7 +6576,7 @@
     const versusDay = () => (versus === "none" || !oneDay() ? null : days[dayIndex.get(versusRange().from)] ?? null);
 
     /* ---- Adding up days, which may be outside the file ---- */
-    const emptySum = () => ({ kwh: [0, 0, 0], total: 0, present: 0, inFile: 0, inRange: 0, missing: 0, best: null });
+    const emptySum = () => ({ kwh: [0, 0, 0], total: 0, present: 0, inFile: 0, inRange: 0, missing: 0, best: null, exported: 0, exportPresent: 0 });
     function addDay(sum, iso) {
       sum.inRange += 1;
       const day = days[dayIndex.get(iso)];
@@ -6560,6 +6586,10 @@
       sum.total += day.total;
       sum.present += day.present;
       sum.missing += day.missing;
+      if (day.out) {
+        sum.exported += day.out.kwh;
+        sum.exportPresent += day.out.present;
+      }
       day.slots.forEach((w, slot) => {
         if (w > 0 && (!sum.best || w > sum.best.w)) sum.best = { w, day, slot };
       });
@@ -6651,11 +6681,12 @@
         $("gm-t-max").textContent = "—";
         $("gm-t-max-sub").textContent = "Nothing above 0 kW in this range";
       }
+      renderExportTile(main);
 
       const spanText = ({ from, to }) => (from === to ? longDay(from) : `${longDay(from)} to ${longDay(to)}`);
       const shown = oneDay() ? spanText(range) : `${spanText(range)} · ${count(dayCount(range.from, range.to), "day")}`;
       if (versus === "none") {
-        for (const id of ["total", "cost", "night", "max"]) setVs(id, null);
+        for (const id of ["total", "cost", "night", "max", "export"]) setVs(id, null);
         $("gm-range-note").textContent = shown;
         return;
       }
@@ -6666,7 +6697,7 @@
       if (!then.present) {
         how = ". The file has no readings then";
         setVs("total", `${name}: no readings`);
-        for (const id of ["cost", "night", "max"]) setVs(id, null);
+        for (const id of ["cost", "night", "max", "export"]) setVs(id, null);
       } else {
         // Totals only compare fairly when both have as many readings; otherwise compare an average day.
         const perDay = then.present !== present && present > 0;
@@ -6683,8 +6714,34 @@
           : `${name}: ${money(thenCost)}${changeText(cost, thenCost)}`);
         setVs("night", `${name}: ${share(then, then.kwh[0])}`);
         setVs("max", then.best ? `${name}: ${kw(then.best.w)} on ${dayMonthYear(then.best.day.date)}` : null);
+        if (!then.exportPresent) {
+          setVs("export", main.exportPresent ? `${name}: no export readings` : null);
+        } else if (!main.exportPresent) {
+          setVs("export", `${name}: ${kwhText(then.exported)} kWh`);
+        } else {
+          // As with the import, an average day when the two have different amounts of readings.
+          const exportPerDay = then.exportPresent !== main.exportPresent;
+          const sent = (sum) => (exportPerDay ? sum.exported / (sum.exportPresent / 48) : sum.exported);
+          setVs("export", `${name}: ${kwhText(sent(then))} kWh${exportPerDay ? " a day" : ""}${changeText(sent(main), sent(then))}`);
+        }
       }
       $("gm-range-note").textContent = `${shown} · compared with ${spanText(span)}${how}.`;
+    }
+
+    /* What went out to the grid, beside the import. It isn't taken off the cost, which is import only. */
+    function renderExportTile(main) {
+      $("gm-t-export-tile").hidden = !hasExport();
+      if (!hasExport()) return;
+      const rate = meter.rates.export;
+      const firstDay = meter.export.first.slice(0, 10);
+      $("gm-t-export").textContent = main.exportPresent ? `${kwhText(main.exported)} kWh` : "—";
+      const parts = [];
+      if (!main.exportPresent) parts.push(`No export readings in this range. They start on ${longDay(firstDay)}`);
+      else {
+        parts.push(isNum(rate) ? `Worth ${money(main.exported * rate)} at your export rate` : "Set your export rate under Setup");
+        if (range.from < firstDay) parts.push(`Recorded from ${dayMonthYear(firstDay)}`);
+      }
+      $("gm-t-export-sub").textContent = parts.join(" · ");
     }
 
     /* ---- Bars: kWh by band, each day, week, month or year ---- */
@@ -6747,11 +6804,14 @@
       $("gm-bars-vs-kwh").textContent = versusBars ? "Compared kWh" : "";
       $("gm-bars-vs-change").textContent = versusBars ? "Change" : "";
       $("gm-bars-vs-kwh").hidden = $("gm-bars-vs-change").hidden = !versusBars;
+      $("gm-bars-export").textContent = hasExport() ? "Export kWh" : "";
+      $("gm-bars-export").hidden = !hasExport();
       const rows = bars.map((bar, i) => {
         const row = el("tr");
         const name = el("th", "", bar.label);
         name.scope = "row";
         row.append(name, ...[...bar.kwh, bar.total].map((x) => el("td", "num", number(x, 1))));
+        if (hasExport()) row.append(bar.exportPresent ? el("td", "num", number(bar.exported, 1)) : el("td", "num quiet", "—"));
         const cost = costOf(bar.kwh);
         row.append(el("td", "num", cost === null ? "—" : number(cost, 2))); // Every row to the cent, so the column lines up.
         const notes = [...bar.notes];
@@ -6852,6 +6912,7 @@
       ];
       const cost = costOf(bar.kwh);
       if (cost !== null) rows.push({ label: "Cost", value: money(cost) });
+      if (bar.exportPresent) rows.push({ label: "Exported", value: `${number(bar.exported, 1)} kWh` });
       const notes = [...bar.notes];
       const then = versusBars?.[i];
       if (then) {
@@ -7000,6 +7061,8 @@
 
     function slotTip(day, slot, x, y, extra = []) {
       const { rows, notes } = slotRows(day, slot);
+      const sent = exportAt(day, slot);
+      if (sent) rows.push({ label: "Exported", value: sent.map(kw).join(", ") });
       const then = versusDay();
       if (then) {
         const w = then.slots[slot];
@@ -7020,6 +7083,7 @@
       $("gm-day-versus-key").hidden = !then;
       $("gm-day-versus-key-text").textContent = then ? `${versusName()}, ${dayMonthYear(then.date)}` : "";
       $("gm-day-vs-col").hidden = !then;
+      $("gm-day-export-col").hidden = !hasExport();
       const thenCell = (slot) => {
         const w = then.slots[slot];
         return w === null || w === NOT_A_HALF_HOUR ? el("td", "num quiet", "—") : el("td", "num", number(w / 1000, 2));
@@ -7028,7 +7092,8 @@
       day.slots.forEach((w, slot) => {
         const twice = day.twice.find(([at]) => at === slot);
         const readings = twice ? [[", first time", twice[1]], [", second time", twice[2]]] : [["", w]];
-        for (const [which, reading] of readings) {
+        const sent = exportAt(day, slot);
+        readings.forEach(([which, reading], n) => {
           const row = el("tr");
           const name = el("th", "", slotSpan(slot) + which);
           name.scope = "row";
@@ -7040,9 +7105,13 @@
           } else {
             row.append(el("td", "num", number(reading / 1000, 2)), el("td", "num", number(reading / 2000, 2)));
           }
+          if (hasExport()) {
+            const out = sent?.[Math.min(n, sent.length - 1)];
+            row.append(out === undefined ? el("td", "num quiet", "—") : el("td", "num", number(out / 1000, 2)));
+          }
           if (then) row.append(thenCell(slot));
           rows.push(row);
-        }
+        });
       });
       $("gm-day-table").replaceChildren(...rows);
       drawDay();
@@ -7465,7 +7534,9 @@
       if (clocks.length) items.push(["Clock changes", clocks.join(" ")]);
       items.push(
         ["Time zones", "Irish time. The cross-checks need the computer running this app on Irish time too."],
-        ["Export", "Not in the file: import only."],
+        ["Export", meter.export
+          ? `${count(meter.export.readings, "reading")} of what went out to the grid, ${stampText(meter.export.first)} to ${endText(plus30(meter.export.last))}. In the tiles and tables, not the charts. Not taken off the cost.`
+          : "Not in the file: import only. ESB Networks has it from November 2026."],
       );
       let best = null;
       let next = null;

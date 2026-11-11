@@ -94,6 +94,17 @@ CREATE TABLE IF NOT EXISTS meter_readings (
     PRIMARY KEY (day, slot, occurrence)
 ) WITHOUT ROWID;
 
+-- What the meter recorded going out to the grid, from the same ESB Networks file, which has it
+-- since November 2026. Labelled exactly as meter_readings is. A table of its own, so an older copy
+-- of this app importing an export from this one can't take it for import.
+CREATE TABLE IF NOT EXISTS meter_exports (
+    day        TEXT NOT NULL,
+    slot       INTEGER NOT NULL,
+    occurrence INTEGER NOT NULL,
+    kw         REAL NOT NULL,           -- the average kW sent to the grid over the half-hour
+    PRIMARY KEY (day, slot, occurrence)
+) WITHOUT ROWID;
+
 -- How the page shows things, as chosen in its Settings: theme, date format and so on. Kept here
 -- rather than in the browser, so the choices follow each person to every device.
 CREATE TABLE IF NOT EXISTS display_prefs (
@@ -766,7 +777,7 @@ def log_start(conn: sqlite3.Connection) -> int | None:
     first = conn.execute("SELECT MIN(ts) FROM samples").fetchone()[0]
     if first is not None:
         starts.append(int(first))
-    for table in ("daily_counters", "meter_readings"):
+    for table in ("daily_counters", "meter_readings", "meter_exports"):
         day = conn.execute(f"SELECT MIN(day) FROM {table}").fetchone()[0]
         if day is not None:
             starts.append(_day_start(day) - DAY)

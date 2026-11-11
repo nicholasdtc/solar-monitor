@@ -98,6 +98,7 @@ def contents(conn):
         "inverter_writes",
         "setting_writes",
         "meter_readings",
+        "meter_exports",
         "text_settings",
         "weather_warnings",
         "weather_hours",
