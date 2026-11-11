@@ -403,6 +403,20 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
         state.forecast_fetched_at = forecast["fetched_at"] if forecast else None  # type: ignore[assignment]
         for hour in hours:  # type: ignore[union-attr]
             hour["expected_w"] = fit.expected_w(int(hour["hour_start"]), fit.sun_of(hour)) if fit else None
+        # The forecasts before it, each by today's fit, so they differ only in the weather they expected.
+        recent = db.forecasts_since(
+            collector.conn, now - automation.RANGE_HOURS * HOUR, now - now % HOUR, now + 3 * weather_service.DAY
+        )
+        state.forecasts = [
+            {
+                "fetched_at": earlier["fetched_at"],
+                "hours": [
+                    {"hour_start": h["hour_start"], "expected_w": fit.expected_w(int(h["hour_start"]), fit.sun_of(h)) if fit else None}  # type: ignore[call-overload]
+                    for h in earlier["hours"]  # type: ignore[union-attr]
+                ],
+            }
+            for earlier in recent
+        ]
         return hours, state  # type: ignore[return-value]
 
     async def run_automation() -> None:
@@ -719,7 +733,11 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
                 "suggestion": suggestion.to_dict() if suggestion else None,
                 "decision": {"for_ts": decision[0], "decide_ts": decision[1]} if decision else None,
                 "runs": runs[:RUNS_SHOWN],
-                "dry_runs": {"mornings": len(told), "trials": automation.sum_trials(told)},  # type: ignore[arg-type]
+                "dry_runs": {
+                    "mornings": len(told),
+                    "trials": automation.sum_trials(told),  # type: ignore[arg-type]
+                    "forecast": automation.sum_forecasts(told),  # type: ignore[arg-type]
+                },
             })
         return {"rules": rules, "fit_status": state.fit_status}
 

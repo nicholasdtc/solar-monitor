@@ -36,6 +36,9 @@ MIN_LEAD_MINUTES = 5  # Deciding at the start itself would be too late: by then 
 LAST_CHANCE_SECONDS = 3 * CHECK_SECONDS
 TRIAL_DROPS = (5, 10, 20, 30)  # Dry runs: cut-offs this many points below the usual one, checked beside the one set. 5 is one a winter morning can fill.
 RUNS_SUMMED = 400  # The dry runs are summed over this many of the latest decisions, over a year's worth.
+# A decision also notes what each forecast fetched this long before it said about the morning, to
+# show whether the forecast had settled or kept moving.
+RANGE_HOURS = 12
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,9 @@ class State:
     fit_status: str | None = None  # The solar forecast's: learning or ready, None without one.
     sunrises: list[int] = field(default_factory=list)
     forecast_fetched_at: int | None = None
+    # The forecasts fetched in the RANGE_HOURS before, oldest first, each with its fetched_at and
+    # hours, an expected_w in each. Not logged as such: a decision keeps only each one's morning.
+    forecasts: list[dict[str, object]] = field(default_factory=list)
 
     def summary(self) -> dict[str, object]:
         """What a logged run keeps of the state: enough to see why it decided as it did."""
@@ -206,6 +212,7 @@ class SunnyMorning:
                 "pv_kwh": round(sum(h["expected_w"] * h["share"] for h in hours) / 1000, 2),  # type: ignore[operator]
                 "load_kwh": round(sum(h["load_w"] * h["share"] for h in hours) / 1000, 2),  # type: ignore[operator]
             })
+            figures["forecasts"] = self.each_forecast(hours, figures["pv_kwh"], state)  # type: ignore[arg-type]
         if sunny is None:
             return cannot("Sunny cut-off not set")
         if usual is None or not (LOWEST_CUTOFF <= usual <= HIGHEST_CUTOFF and LOWEST_CUTOFF <= sunny <= HIGHEST_CUTOFF):  # type: ignore[operator]
@@ -229,6 +236,20 @@ class SunnyMorning:
         if spare_kwh >= room_kwh:
             return Recommendation(f"TOU {slot} cut-off", current, sunny, f"Sunny morning: {spare_kwh:.1f} kWh spare, {room_kwh:.1f} room", figures)  # type: ignore[arg-type]
         return Recommendation(f"TOU {slot} cut-off", current, usual, f"Not sunny enough: {max(spare_kwh, 0):.1f} of {room_kwh:.1f} kWh", figures)  # type: ignore[arg-type]
+
+    @staticmethod
+    def each_forecast(hours: list[dict[str, object]], pv_kwh: float, state: State) -> list[dict[str, object]]:
+        """The solar each recent forecast expected over the same morning, the latest's included,
+        oldest first. One that doesn't cover every hour of it is left out."""
+        said = [{"fetched_at": state.forecast_fetched_at, "pv_kwh": pv_kwh}]
+        for forecast in state.forecasts:
+            if forecast.get("fetched_at") == state.forecast_fetched_at:
+                continue
+            expected = {int(h["hour_start"]): h.get("expected_w") for h in forecast.get("hours", [])}  # type: ignore[call-overload, union-attr]
+            pv = window_pv(hours, expected)
+            if pv is not None:
+                said.append({"fetched_at": forecast.get("fetched_at"), "pv_kwh": pv})
+        return sorted(said, key=lambda x: x["fetched_at"] or 0)  # type: ignore[arg-type, return-value]
 
     @staticmethod
     def morning(
@@ -263,6 +284,28 @@ class SunnyMorning:
         return rise, midday, hours
 
 
+def window_pv(hours: list[dict[str, object]], expected: dict[int, object]) -> float | None:
+    """The solar in kWh that `expected` (W by hour_start) gives over a morning's hours, each by its
+    share, rounded as the morning's own are. None if it lacks one of them."""
+    total = 0.0
+    for hour in hours:
+        w = expected.get(hour["hour_start"])  # type: ignore[call-overload]
+        if not isinstance(w, (int, float)) or isinstance(w, bool):
+            return None
+        total += round(float(w)) * hour["share"]  # type: ignore[operator]
+    return round(total / 1000, 2)
+
+
+def forecast_range(figures: dict[str, object]) -> tuple[float, float] | None:
+    """The lowest and highest solar the recent forecasts expected for a decision's morning, or None
+    with fewer than two of them, as a decision logged before they were kept has."""
+    said = [x.get("pv_kwh") for x in figures.get("forecasts") or []]  # type: ignore[union-attr]
+    said = [x for x in said if isinstance(x, (int, float))]
+    if len(said) < 2:
+        return None
+    return min(said), max(said)  # type: ignore[type-var, return-value]
+
+
 def forecast_spare(pv_kwh: float, load_kwh: float, margin_pct: float) -> float:
     """The solar the forecast leaves over the load. The margin is a share of the forecast, so it
     comes off the solar, not the load."""
@@ -275,7 +318,11 @@ def outcome(run: dict[str, object], made: dict[str, float | None] | None) -> dic
     None until the morning's over and the log covers it, or for a run without a morning.
 
     Sunny means the solar made over the load covered the room a lower cut-off leaves. If the battery
-    filled, solar may have been held back, so a morning that falls short then can't be told."""
+    filled, solar may have been held back, so a morning that falls short then can't be told.
+
+    Each check is also made on the lowest of the recent forecasts, the cautious call. And the solar
+    made is set beside the forecast: whether the margin covered it, and whether it fell within the
+    range of the recent forecasts."""
     figures: dict[str, object] = run["recommendation"].get("figures") or {}  # type: ignore[union-attr]
     if made is None or figures.get("morning_start") is None:
         return None
@@ -287,17 +334,28 @@ def outcome(run: dict[str, object], made: dict[str, float | None] | None) -> dic
     capacity, usual, sunny_soc = (_number(figures.get(k)) for k in ("capacity_kwh", "usual_soc", "sunny_soc"))
     margin = _number(figures.get("margin_pct"))
     expected_pv, expected_load = _number(figures.get("pv_kwh")), _number(figures.get("load_kwh"))
+    spread = forecast_range(figures)
+
+    def called(pv: float | None, room: float) -> bool | None:
+        if pv is None or expected_load is None or margin is None:
+            return None
+        return forecast_spare(pv, expected_load, margin) >= room
 
     def check(drop: float) -> dict[str, object]:
         room = capacity * drop / 100  # type: ignore[operator]
-        said = None
-        if expected_pv is not None and expected_load is not None and margin is not None:
-            said = forecast_spare(expected_pv, expected_load, margin) >= room
+        said, said_low = called(expected_pv, room), called(spread[0] if spread else None, room)
         was = True if spare >= room else None if full else False
         return {
             "drop": drop, "cutoff": usual - drop, "room_kwh": round(room, 2), "set": drop == own_drop,  # type: ignore[operator]
             "forecast_sunny": said, "sunny": was, "right": None if said is None or was is None else said == was,
+            "forecast_sunny_low": said_low, "right_low": None if said_low is None or was is None else said_low == was,
         }
+
+    def at_least(least: float | None) -> bool | None:
+        """Whether the morning made at least `least`: a full battery that made less can't tell."""
+        if least is None:
+            return None
+        return True if pv >= least else None if full else False  # type: ignore[operator]
 
     trials: list[dict[str, object]] = []
     own_drop = usual - sunny_soc if usual is not None and sunny_soc is not None and sunny_soc < usual else None
@@ -309,9 +367,14 @@ def outcome(run: dict[str, object], made: dict[str, float | None] | None) -> dic
     right = None
     if would is not None and own is not None and own["sunny"] is not None:
         right = own["sunny"] == (would == sunny_soc)
+    covered = at_least(None if expected_pv is None or margin is None else expected_pv * (1 - margin / 100))
+    in_range = None
+    if spread is not None:
+        in_range = False if pv > spread[1] else at_least(spread[0])  # type: ignore[operator]
     return {
         "pv_kwh": pv, "load_kwh": load, "spare_kwh": spare, "soc_max": made.get("soc_max"), "full": full,
         "sunny": own["sunny"] if own else None, "right": right, "trials": trials,
+        "forecast_kwh": expected_pv, "range_kwh": list(spread) if spread else None, "covered": covered, "in_range": in_range,
     }
 
 
@@ -321,14 +384,42 @@ def sum_trials(outcomes: list[dict[str, object]]) -> list[dict[str, object]]:
     by_drop: dict[float, dict[str, object]] = {}
     for result in outcomes:
         for trial in result.get("trials", []):  # type: ignore[union-attr]
-            total = by_drop.setdefault(trial["drop"], {"drop": trial["drop"], "set": False, "mornings": 0, "forecast_sunny": 0, "sunny": 0, "right": 0, "told": 0})
+            total = by_drop.setdefault(trial["drop"], {
+                "drop": trial["drop"], "set": False, "mornings": 0, "forecast_sunny": 0, "sunny": 0, "right": 0, "told": 0,
+                "right_low": 0, "told_low": 0,
+            })
             total["set"] = total["set"] or trial["set"]
             total["mornings"] += 1  # type: ignore[operator]
             total["forecast_sunny"] += trial["forecast_sunny"] is True  # type: ignore[operator]
             total["sunny"] += trial["sunny"] is True  # type: ignore[operator]
             total["right"] += trial["right"] is True  # type: ignore[operator]
             total["told"] += trial["right"] is not None  # type: ignore[operator]
+            # Called on the lowest forecast: only mornings logged with a range of them count.
+            total["right_low"] += trial.get("right_low") is True  # type: ignore[operator]
+            total["told_low"] += trial.get("right_low") is not None  # type: ignore[operator]
     return [by_drop[drop] for drop in sorted(by_drop)]
+
+
+def sum_forecasts(outcomes: list[dict[str, object]]) -> dict[str, object]:
+    """How the forecast for the mornings did over many of them: the solar made beside what was
+    forecast, leaving out mornings the battery filled, which may have held solar back; and of the
+    mornings it could tell, how often the margin covered it and how often it fell within the range
+    of the recent forecasts."""
+    total: dict[str, float] = {
+        "mornings": 0, "forecast_kwh": 0.0, "made_kwh": 0.0, "covered": 0, "covered_told": 0, "in_range": 0, "range_told": 0,
+    }
+    for result in outcomes:
+        forecast = result.get("forecast_kwh")
+        if isinstance(forecast, (int, float)) and not result.get("full"):
+            total["mornings"] += 1
+            total["forecast_kwh"] += forecast
+            total["made_kwh"] += result["pv_kwh"]  # type: ignore[operator]
+        for key, told in (("covered", "covered_told"), ("in_range", "range_told")):
+            if result.get(key) is not None:
+                total[told] += 1
+                total[key] += result[key] is True
+    total["forecast_kwh"], total["made_kwh"] = round(total["forecast_kwh"], 2), round(total["made_kwh"], 2)
+    return total  # type: ignore[return-value]
 
 
 rules = {rule.name: rule for rule in (SunnyMorning(),)}

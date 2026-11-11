@@ -323,6 +323,10 @@ The shape of the automation, so the data, the screens and the log are ready befo
 - Each morning is checked for the cut-off set and, as dry runs, for cut-offs 5, 10, 20 and 30 points below the usual one (5 is one a winter morning can fill). For each: did the forecast, less the margin, call it sunny; was it, from solar made less load; and so was the call right.
 - A battery that reached its ceiling (the run's max charge, or 100%) may have had solar held back, so a morning that fell short of the room then is "can't tell", not wrong.
 - `/api/automation` sums the dry runs over the last 400 decisions, more than a year, and shows the latest 14 in full. The page shows each decision as what V2 would write ("90% → 60%" or "Keep 90%"), the forecast and made solar, the spare, and whether it was right, with a Dry runs table beneath.
+- Each decision also keeps what every forecast fetched in the 12 hours before it said about the same morning, each by today's fit so they differ only in the weather they expected. One that doesn't cover every hour of the morning is left out. The Forecast column shows their range in brackets, so a forecast that kept moving through the evening stands out.
+- Each check is also made on the lowest of those forecasts, the cautious call, shown as "Right on lowest" beside "Right". Decisions logged before the range was kept count towards neither.
+- Beneath the table, how the forecast did: the share of the forecast solar the mornings made, leaving out those the battery filled; how many mornings made at least the forecast less the margin; and how many fell within the range of the forecasts. A full battery that fell short is "can't tell" here too.
+- The Weather tab's charts note that past weather is modelled, not measured, and that expected solar for past hours is what was forecast the day before, so it needn't follow the irradiance shown.
 
 ## V2: lower a TOU charge cut-off before a sunny morning
 

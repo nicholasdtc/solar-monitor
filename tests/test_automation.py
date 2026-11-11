@@ -9,7 +9,8 @@ from datetime import datetime, timedelta
 import httpx
 import pytest
 
-from solar_monitor import automation, db, importer
+from solar_monitor import api as api_module
+from solar_monitor import automation, db, importer, solar_forecast
 from solar_monitor.api import create_app
 from solar_monitor.collector import Collector
 from solar_monitor.schedule import ALL_MONTHS, next_start
@@ -375,6 +376,129 @@ def test_the_dry_runs_add_up():
     ]
 
 
+# --- The forecasts before the decision --------------------------------------------------------
+
+
+def test_each_recent_forecast_says_what_it_expected_of_the_morning():
+    early, later = ts(EVENING) - 9 * HOUR, ts(EVENING) - 5 * HOUR
+    short = morning_forecast(3000)[:-3]  # Lacks the hour from 11:00, the last before midday.
+    rec = automation.evaluate(RULE, morning_forecast(2000), state(
+        forecast_fetched_at=ts(EVENING),
+        forecasts=[
+            {"fetched_at": early, "hours": morning_forecast(1000)},
+            {"fetched_at": later, "hours": short},
+            {"fetched_at": ts(EVENING), "hours": morning_forecast(9999)},  # The latest itself: the one passed in counts.
+        ],
+    ))
+    # Each over the same six hours, sunrise to midday; the one that stops short is left out.
+    assert rec.figures["forecasts"] == [{"fetched_at": early, "pv_kwh": 6.0}, {"fetched_at": ts(EVENING), "pv_kwh": 12.0}]
+    assert automation.forecast_range(rec.figures) == (6.0, 12.0)
+    # The decision itself still goes by the latest.
+    assert (rec.would, rec.figures["pv_kwh"]) == (60, 12.0)
+
+
+def test_the_earlier_forecasts_count_the_hours_by_the_same_shares():
+    rise = ts(SUNRISE) + HOUR // 2
+    rec = automation.evaluate(RULE, morning_forecast(2000), state(
+        sunrises=[rise], forecast_fetched_at=ts(EVENING), forecasts=[{"fetched_at": ts(EVENING) - HOUR, "hours": morning_forecast(1000)}],
+    ))
+    # Half of the first hour, then five whole ones: 5.5 h.
+    assert [x["pv_kwh"] for x in rec.figures["forecasts"]] == [5.5, 11.0]
+
+
+def test_one_forecast_alone_gives_no_range():
+    rec = automation.evaluate(RULE, morning_forecast(2000), state(forecast_fetched_at=ts(EVENING)))
+    assert rec.figures["forecasts"] == [{"fetched_at": ts(EVENING), "pv_kwh": 12.0}]
+    assert automation.forecast_range(rec.figures) is None
+    assert automation.forecast_range({}) is None  # A run logged before the forecasts were kept.
+
+
+def ranged(low=4.0):
+    """A logged run whose forecasts in the 12 hours before ranged from `low` to the latest's 12 kWh."""
+    run = logged()
+    run["recommendation"]["figures"]["forecasts"] = [{"fetched_at": 1, "pv_kwh": low}, {"fetched_at": 2, "pv_kwh": 12.0}]
+    return run
+
+
+def test_the_lowest_forecast_makes_the_cautious_call():
+    # 4 kWh less 20% is 3.2, less 1.8 of load: 1.4 spare, enough for the 5 and 10 point drops only.
+    result = automation.outcome(ranged(), made(3.0, 1.5))  # 1.5 kWh spare.
+    assert [(t["forecast_sunny"], t["right"]) for t in result["trials"]] == [(True, True), (True, True), (True, False), (True, False)]
+    assert [(t["forecast_sunny_low"], t["right_low"]) for t in result["trials"]] == [(True, True), (True, True), (False, True), (False, True)]
+    # On a sunny morning, the cautious call misses the bigger drops.
+    result = automation.outcome(ranged(), made(6.0, 1.5))
+    assert [t["right_low"] for t in result["trials"]] == [True, True, False, False]
+
+
+def test_the_morning_is_set_beside_the_forecast():
+    # The forecast less the 20% margin is 9.6 kWh; the forecasts ranged from 4 to 12.
+    result = automation.outcome(ranged(), made(10.0, 1.5))
+    assert (result["forecast_kwh"], result["range_kwh"], result["covered"], result["in_range"]) == (12.0, [4.0, 12.0], True, True)
+    result = automation.outcome(ranged(), made(6.0, 1.5))
+    assert (result["covered"], result["in_range"]) == (False, True)
+    assert automation.outcome(ranged(), made(13.0, 1.5))["in_range"] is False  # More than any forecast said.
+    assert automation.outcome(ranged(), made(3.0, 1.5))["in_range"] is False
+    # A full battery may have held solar back, so falling short then can't be told.
+    result = automation.outcome(ranged(), made(3.0, 1.5, soc_max=100.0))
+    assert (result["covered"], result["in_range"]) == (None, None)
+    assert automation.outcome(ranged(), made(13.0, 1.5, soc_max=100.0))["in_range"] is False
+
+
+def test_a_run_logged_before_the_forecasts_were_kept_still_tells_what_it_can():
+    run = logged()
+    del run["recommendation"]["figures"]["forecasts"]
+    result = automation.outcome(run, made(6.0, 1.5))
+    assert (result["range_kwh"], result["in_range"], result["covered"]) == (None, None, False)
+    assert all(t["forecast_sunny_low"] is None and t["right_low"] is None for t in result["trials"])
+    assert all(t["right"] is True for t in result["trials"])
+    # Without a margin, the forecast's own figure is still set beside the morning, but not whether it covered it.
+    run["recommendation"]["figures"]["margin_pct"] = None
+    result = automation.outcome(run, made(6.0, 1.5))
+    assert (result["forecast_kwh"], result["covered"]) == (12.0, None)
+
+
+def test_the_cautious_calls_and_the_forecasts_add_up():
+    old = logged()
+    del old["recommendation"]["figures"]["forecasts"]
+    results = [
+        automation.outcome(ranged(), made(10.0, 1.5)),
+        automation.outcome(ranged(), made(3.0, 1.5)),
+        automation.outcome(ranged(), made(3.0, 1.5, soc_max=100.0)),
+        automation.outcome(old, made(6.0, 1.5)),
+    ]
+    totals = automation.sum_trials(results)
+    # Only the mornings logged with a range count for the lowest forecast's calls.
+    assert [(t["drop"], t["right"], t["told"], t["right_low"], t["told_low"]) for t in totals] == [
+        (5, 4, 4, 3, 3),
+        (10, 4, 4, 3, 3),
+        (20, 2, 3, 1, 2),
+        (30, 2, 3, 1, 2),
+    ]
+    # The full one is left out of what was made beside what was forecast.
+    assert automation.sum_forecasts(results) == {
+        "mornings": 3, "forecast_kwh": 36.0, "made_kwh": 19.0, "covered": 1, "covered_told": 3, "in_range": 1, "range_told": 2,
+    }
+    assert automation.sum_forecasts([])["mornings"] == 0
+
+
+def test_forecasts_since_keeps_each_fetch_apart(conn):
+    start = ts(EVENING) - 12 * HOUR
+
+    def fetch(after, ghi):
+        hours = [Hour(hour_start=start + k * HOUR, ghi_wm2=ghi) for k in range(0, 30)]
+        return db.save_forecast(conn, start + after, "made-up", hours)
+
+    fetch(0, 100.0)
+    fetch(4 * HOUR, 200.0)
+    fetch(8 * HOUR, 300.0)
+    found = db.forecasts_since(conn, start + HOUR, start + 10 * HOUR, start + 12 * HOUR)
+    assert [x["fetched_at"] for x in found] == [start + 4 * HOUR, start + 8 * HOUR]
+    assert [[(h["hour_start"] - start) // HOUR for h in x["hours"]] for x in found] == [[10, 11], [10, 11]]
+    assert [x["hours"][0]["ghi_wm2"] for x in found] == [200.0, 300.0]
+    db.add_weather_fetch(conn, start + 9 * HOUR, "made-up", "forecast", "error", "Made up")
+    assert len(db.forecasts_since(conn, start + HOUR, start, start + 30 * HOUR)) == 2
+
+
 def test_typical_load_by_local_hour(conn):
     day = datetime(2030, 6, 10)
     for d in range(2):
@@ -433,7 +557,7 @@ def test_the_api_shows_the_rule(call, collector, conn):
     assert rule["suggestion"]["reason"] == "Sunny cut-off not set"
     assert rule["decision"]["for_ts"] > rule["decision"]["decide_ts"]
     assert [r["outcome"] for r in rule["runs"]] == [None]
-    assert rule["dry_runs"] == {"mornings": 0, "trials": []}
+    assert (rule["dry_runs"]["mornings"], rule["dry_runs"]["trials"], rule["dry_runs"]["forecast"]["mornings"]) == (0, [], 0)
 
 
 def test_the_api_sets_each_run_beside_its_morning(call, collector, conn):
@@ -445,6 +569,26 @@ def test_the_api_sets_each_run_beside_its_morning(call, collector, conn):
     assert (shown["outcome"]["spare_kwh"], shown["outcome"]["right"]) == (4.5, True)
     assert rule["dry_runs"]["mornings"] == 1
     assert [t["right"] for t in rule["dry_runs"]["trials"]] == [1, 1, 1, 1]
+
+
+def test_the_api_sets_the_earlier_forecasts_beside_the_latest(call, collector, conn, monkeypatch):
+    monkeypatch.setattr(api_module.time, "time", lambda: ts(EVENING))
+    collector.latest["schedule"] = schedule()
+    db.save_settings(conn, {"auto_sunny_sunny_soc": 60.0, "auto_sunny_margin_pct": 20.0, "capacity_kwh": 10.0})
+    fit = solar_forecast.Fit(basis="ghi", panels=None, kwp=None, ceiling_w=None, factor=10.0, days=solar_forecast.READY_DAYS)
+    with conn:
+        conn.execute("INSERT INTO solar_fit (id, fitted_at, fit) VALUES (1, ?, ?)", (ts(EVENING), fit.to_json()))
+    minutes(conn, ts(EVENING) - 24 * HOUR, ts(EVENING), 0, 300, step=600)  # A typical load for each hour.
+    # Forecasts for the morning, the last two 100 and then 200 W/m² each hour of it: 1 and 2 kW by the fit.
+    hours = lambda ghi: [Hour(hour_start=ts(EVENING) + k * HOUR, ghi_wm2=ghi) for k in range(0, 20)]
+    db.save_forecast(conn, ts(EVENING) - 13 * HOUR, "made-up", hours(50.0))  # Too long before.
+    db.save_forecast(conn, ts(EVENING) - 6 * HOUR, "made-up", hours(100.0))
+    db.save_forecast(conn, ts(EVENING) - HOUR, "made-up", hours(200.0))
+    [rule] = call("GET", "/api/automation").json()["rules"]
+    figures = rule["suggestion"]["figures"]
+    assert [x["fetched_at"] for x in figures["forecasts"]] == [ts(EVENING) - 6 * HOUR, ts(EVENING) - HOUR]
+    said = [x["pv_kwh"] for x in figures["forecasts"]]
+    assert said[1] == figures["pv_kwh"] and said[1] == 2 * said[0]
 
 
 def test_the_api_changes_the_settings(call, conn):

@@ -454,7 +454,7 @@
   .wx-foot { gap: 4px; }
   .wx-solar { display: grid; gap: 4px; }
   .wx-solar p { margin: 0; }
-  .wx-auto { display: grid; gap: 12px; }
+  .wx-auto { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }  /* A wide table scrolls in its own box, not the page. */
   .wx-auto p { margin: 0; }
   .wx-auto-now { display: grid; gap: 4px; }
   .wx-auto-form { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; }
@@ -1213,6 +1213,7 @@
     <div class="pane" id="wx-charts-pane" hidden>
       <h2>12 hours back, 48 ahead <button type="button" class="help" id="wx-charts-help" aria-label="About these charts" data-tip="">?</button></h2>
       <div class="charts" id="weather-charts"></div>
+      <p class="meta" id="wx-charts-note" hidden>Past hours show the weather as the model has it, not as measured. Expected solar there is what was forecast the day before, so it needn't follow the irradiance shown.</p>
     </div>
     <div class="pane" id="wx-hours-pane" hidden>
       <h2>Hour by hour</h2>
@@ -1255,7 +1256,7 @@
               <th>Period start</th>
               <th>Would <button type="button" class="help" aria-label="About would" data-tip="What V2 would write">?</button></th>
               <th>Why</th>
-              <th>Forecast <button type="button" class="help" aria-label="About the forecast" data-tip="Solar, sunrise to noon">?</button></th>
+              <th>Forecast <button type="button" class="help" aria-label="About the forecast" data-tip="Solar, sunrise to noon&#10;Brackets: 12 h range">?</button></th>
               <th>Made</th>
               <th>Spare <button type="button" class="help" aria-label="About spare" data-tip="Made − load&#10;Full: at least">?</button></th>
               <th>Right <button type="button" class="help" aria-label="About right" data-tip="Spare ≥ room: sunny">?</button></th>
@@ -1274,10 +1275,12 @@
                 <th>Called sunny</th>
                 <th>Was sunny</th>
                 <th>Right <button type="button" class="help" aria-label="About right in the dry runs" data-tip="Of mornings it could tell">?</button></th>
+                <th>Right on lowest <button type="button" class="help" aria-label="About right on the lowest forecast" data-tip="Lowest forecast, last 12 h">?</button></th>
               </tr></thead>
               <tbody id="wx-auto-dry-rows"></tbody>
             </table>
           </div>
+          <p class="meta" id="wx-auto-dry-forecast" hidden></p>
         </div>
       </div>
     </div>
@@ -5947,6 +5950,11 @@
       // The latest decisions, what V2 would have written for each, beside what the morning brought.
       const runs = rule.runs ?? [];
       const yesNo = (x) => (x === true ? "Yes" : x === false ? "No" : "—");
+      // The lowest and highest the forecasts before the decision said, if there were two or more.
+      const rangeText = (f) => {
+        const said = (f.forecasts ?? []).map((x) => x.pv_kwh).filter(isNum);
+        return said.length < 2 ? "" : ` (${number(Math.min(...said), 1)}–${number(Math.max(...said), 1)})`;
+      };
       $("wx-auto-runs-box").hidden = !runs.length;
       $("wx-auto-runs").replaceChildren(...runs.map((run) => {
         const r = run.recommendation;
@@ -5958,7 +5966,7 @@
           el("td", "", dateTime(ms(run.for_ts))),
           el("td", "", would),
           el("td", "why", r.reason ?? ""),
-          el("td", "", isNum(f.pv_kwh) ? kwhOf(f.pv_kwh) : "—"),
+          el("td", "", isNum(f.pv_kwh) ? `${kwhOf(f.pv_kwh)}${rangeText(f)}` : "—"),
           el("td", "", o ? kwhOf(o.pv_kwh) : "—"),
           el("td", "", o ? `${kwhOf(o.spare_kwh)}${o.full ? ", full" : ""}` : "—"),
           el("td", "", o?.full && o.right === null && isNum(r.would) ? "?" : yesNo(o?.right)),
@@ -5972,6 +5980,7 @@
       $("wx-auto-dry-note").textContent = `Each night logs what the forecast says about the morning, and once it's over, what it brought. `
         + `A few lower cut-offs are checked beside the one set: called sunny when the forecast's spare, less the margin, would fill the room each leaves; `
         + `was sunny when the morning's did. A full battery may have held solar back, so a short morning then can't be told. `
+        + `Right on lowest calls each morning on the lowest of the forecasts fetched in the 12 hours before deciding, the cautious way. `
         + `${number(dry.mornings, 0)} ${dry.mornings === 1 ? "morning" : "mornings"} so far. Nothing is sent to the inverter.`;
       $("wx-auto-dry-rows").replaceChildren(...dry.trials.map((t) => {
         const row = el("tr");
@@ -5981,9 +5990,20 @@
           el("td", "", number(t.forecast_sunny, 0)),
           el("td", "", number(t.sunny, 0)),
           el("td", "", t.told ? `${number(t.right, 0)} of ${number(t.told, 0)}` : "—"),
+          el("td", "", t.told_low ? `${number(t.right_low, 0)} of ${number(t.told_low, 0)}` : "—"),
         );
         return row;
       }));
+      // How the forecast for the mornings did, beside what they made.
+      const fc = dry.forecast ?? {};
+      const forecastLines = [];
+      if (fc.mornings && fc.forecast_kwh > 0) {
+        forecastLines.push(`Mornings made ${pct((100 * fc.made_kwh) / fc.forecast_kwh)} of the solar forecast, over ${number(fc.mornings, 0)} the battery didn't fill.`);
+      }
+      if (fc.covered_told) forecastLines.push(`At least the forecast less the margin: ${number(fc.covered, 0)} of ${number(fc.covered_told, 0)} mornings.`);
+      if (fc.range_told) forecastLines.push(`Within the range the forecasts gave in the 12 hours before: ${number(fc.in_range, 0)} of ${number(fc.range_told, 0)}.`);
+      $("wx-auto-dry-forecast").textContent = forecastLines.join(" ");
+      $("wx-auto-dry-forecast").hidden = !forecastLines.length;
     }
 
     {
@@ -6149,7 +6169,11 @@
           ]),
         });
       }
-      $("wx-charts-help").dataset.tip = ["Dashed line: now", "Left: recorded", "Right: forecast", solarChart ? "Solar: expected, made" : has("pv_w") ? "Bars under Sun: solar made" : ""].filter(Boolean).join("\n");
+      $("wx-charts-help").dataset.tip = [
+        "Dashed line: now", "Left: past, right: forecast", "Past weather: modelled",
+        solarChart ? "Expected: day before" : has("pv_w") ? "Bars under Sun: solar made" : "",
+      ].filter(Boolean).join("\n");
+      $("wx-charts-note").hidden = !solarChart;
       if (!charts.length) return box.replaceChildren(el("p", "no-value", "Nothing to chart."));
       const visible = points.filter((point) => point.ts >= start && point.ts < end);
       drawTimeCharts(box, { charts, points, visible, bucket: HOUR, start, end, zoomable: false, marks: [{ ts: now, label: "Now" }], prefix: "weather" });

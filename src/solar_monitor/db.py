@@ -819,6 +819,22 @@ def weather_history(conn: sqlite3.Connection, start: int, end: int) -> list[dict
     return hours
 
 
+def _forecast_hours(conn: sqlite3.Connection, fetch_id: int, since: int, until: int | None = None) -> list[dict[str, object]]:
+    columns = ("hour_start", *HOUR_FIELDS)
+    hours = [
+        dict(zip(columns, values, strict=True))
+        for values in conn.execute(
+            f"SELECT {', '.join(columns)} FROM forecast_hours WHERE fetch_id = ? AND hour_start >= ? "
+            "AND (? IS NULL OR hour_start < ?) ORDER BY hour_start",
+            (fetch_id, since, until, until),
+        )
+    ]
+    for hour in hours:
+        if hour["is_day"] is not None:
+            hour["is_day"] = bool(hour["is_day"])
+    return hours
+
+
 def latest_forecast(conn: sqlite3.Connection, since: int) -> dict[str, object] | None:
     """The newest forecast fetched, with its hours from `since` on, or None before the first."""
     row = conn.execute(
@@ -827,19 +843,21 @@ def latest_forecast(conn: sqlite3.Connection, since: int) -> dict[str, object] |
     ).fetchone()
     if row is None:
         return None
-    columns = ("hour_start", *HOUR_FIELDS)
-    hours = [
-        dict(zip(columns, values, strict=True))
-        for values in conn.execute(
-            f"SELECT {', '.join(columns)} FROM forecast_hours WHERE fetch_id = ? AND hour_start >= ? "
-            "ORDER BY hour_start",
-            (row[0], since),
-        )
+    return {"fetched_at": row[1], "provider": row[2], "hours": _forecast_hours(conn, row[0], since)}
+
+
+def forecasts_since(conn: sqlite3.Connection, fetched_since: int, since: int, until: int) -> list[dict[str, object]]:
+    """Each forecast fetched from `fetched_since` on, oldest first, with what it kept of its hours
+    from `since` up to `until`: to see how the forecast for those hours moved as it was fetched again."""
+    rows = conn.execute(
+        "SELECT id, fetched_at, provider FROM weather_fetches WHERE kind = 'forecast' AND outcome = 'ok' "
+        "AND fetched_at >= ? ORDER BY fetched_at, id",
+        (fetched_since,),
+    ).fetchall()
+    return [
+        {"fetched_at": fetched_at, "provider": provider, "hours": _forecast_hours(conn, fetch_id, since, until)}
+        for fetch_id, fetched_at, provider in rows
     ]
-    for hour in hours:
-        if hour["is_day"] is not None:
-            hour["is_day"] = bool(hour["is_day"])
-    return {"fetched_at": row[1], "provider": row[2], "hours": hours}
 
 
 def typical_load_by_hour(conn: sqlite3.Connection, since: int) -> dict[int, float]:
