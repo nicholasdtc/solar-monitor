@@ -3531,6 +3531,17 @@
     return () => box.querySelectorAll(".chart-zoom")[at]?.focus({ preventScroll: true });
   }
 
+  /*
+    A redraw empties the box and measures it, and the page is shorter for that moment, so the
+    browser pulls the scroll up to fit, to the top on a phone. The box keeps its height until
+    redrawn. Call before clearing the box, and the function it gives back once it's filled.
+  */
+  function holdHeight(box) {
+    if (box.classList.contains("full")) return () => {}; // Already the screen's size.
+    box.style.minHeight = `${box.offsetHeight}px`;
+    return () => box.style.removeProperty("min-height");
+  }
+
   /* The one tooltip. It enhances the charts: every value is also in a table. */
   function showTip(x, y, title, rows, note) {
     const tip = $("chart-tip");
@@ -3999,6 +4010,7 @@
   function drawTimeCharts(box, { charts, points, visible, bucket, start, end, tou = [], full = null, compact = false, zoomable = !compact, marks = [], prefix }) {
     const span = end - start;
     const refocus = keepZoomFocus(box);
+    const release = holdHeight(box);
     box.replaceChildren();
     const { width } = innerSize(box);
     // From zero to the furthest reading on screen, at least 100 apart so a flat night stays readable.
@@ -4120,6 +4132,7 @@
       node.append(svg);
       return { chart, svg, overlay, scale, strip, bottom, plotBottom };
     });
+    release();
     refocus();
 
     const hide = () => {
@@ -4321,6 +4334,7 @@
     const drawnSets = fullSet ? [fullSet] : sets;
     const { width } = innerSize(fullSet?.box ?? box);
     const refocus = drawnSets.map((set) => keepZoomFocus(set.box));
+    const release = drawnSets.map((set) => holdHeight(set.box));
     for (const set of drawnSets) set.box.replaceChildren();
     const shown = drawnSets.flatMap((set) => set.charts.map((chart, i) => ({ set, chart, i }))).filter(({ i }) => !fullSet || i === fullChart.index);
     const planned = shown.map(({ set, chart }) => {
@@ -4380,6 +4394,7 @@
       node.append(svg);
       return { set, chart, svg, under, bottom };
     });
+    for (const done of release) done();
     for (const back of refocus) back();
 
     const hide = () => {
@@ -4552,6 +4567,7 @@
 
     const fullHere = fullChart?.box === "money-charts";
     const refocus = keepZoomFocus(box);
+    const release = holdHeight(box);
     box.replaceChildren();
     const value = (day, key) => day[key] ?? 0;
     const shown = MONEY_CHARTS.map((chart, i) => ({ chart, i })).filter(({ i }) => !fullHere || i === fullChart.index);
@@ -4603,6 +4619,7 @@
       node.append(svg);
       return { chart, svg, under, bottom, band, center, frame };
     });
+    release();
     refocus();
 
     const hide = () => {
@@ -4935,11 +4952,14 @@
   document.fonts.ready.then(() => { renderHistory(); renderDaily(); renderNow(); });
 
   /* Fills the screen with a chart, `next` as in fullChart, or with null goes back to the page. */
+  let pageScroll = 0; // Where the page was scrolled to when a chart began filling the screen.
   function setFullChart(next) {
     const before = fullChart;
     if (!before && !next) return;
     // The button pressed is redrawn, so the focus goes to its counterpart: the same chart's other button.
     const focused = document.activeElement?.closest?.(".charts");
+    // The box leaves the page while it fills the screen, so the page shortens and the browser scrolls it up.
+    if (!before) pageScroll = scrollY;
     fullChart = next;
     for (const id of CHART_BOXES) {
       $(id).classList.toggle("full", next?.box === id);
@@ -4957,6 +4977,7 @@
       // The window may have changed size meanwhile, under the full chart.
       renderHistory();
       renderDaily();
+      scrollTo(0, pageScroll); // Back where it was.
     }
     const box = $((next ?? before).box);
     if (focused === box) box.querySelectorAll(".chart-zoom")[next ? 0 : before.index]?.focus({ preventScroll: true });
