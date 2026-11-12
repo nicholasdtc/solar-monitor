@@ -2268,7 +2268,25 @@
       if (estimate.state === "charging") lines.push(...chargeStop(estimate));
     }
     if (isNum(stopsAt)) lines.push(`Stops discharging at ${stopsAt}%`);
+    const cells = batteryCellsLine();
+    if (cells) lines.push(cells);
+    // The battery's own charge limit, which falls when it's cold or nearly full. Shown bare:
+    // goodwe calls it amps, but at 20 the battery drew a steady 4.5 A, so the unit is unclear.
+    if (isNum(values.battery_charge_limit)) lines.push(`BMS charge limit ${values.battery_charge_limit}`);
     return lines;
+  }
+
+  /* The coldest and warmest cell, or the battery's one temperature if it gives no cell figures. */
+  function batteryCellsLine() {
+    const f = prefs.temperature === "f";
+    const show = (c) => number(Math.round(f ? (c * 9) / 5 + 32 : c), 0);
+    const unit = f ? "°F" : "°C";
+    const low = values.battery_min_cell_temp;
+    const high = values.battery_max_cell_temp;
+    if (isNum(low) && isNum(high)) {
+      return show(low) === show(high) ? `Cells ${show(low)} ${unit}` : `Cells ${show(low)}–${show(high)} ${unit}`;
+    }
+    return isNum(values.battery_temperature) ? `Battery ${show(values.battery_temperature)} ${unit}` : "";
   }
 
   /* Agreement within a tolerance: the larger of a fixed margin and a share of the size. */
