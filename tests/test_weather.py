@@ -100,7 +100,7 @@ def test_open_meteo_wmo_codes_are_all_conditions():
 
 
 def test_open_meteo_asks_for_the_panels_sunshine_only_with_a_tilt():
-    fetch = Saved(sample("open_meteo_forecast.json"))
+    fetch = Saved(sample("open_meteo_two_models.json"))
     provider = open_meteo.OpenMeteo()
     provider.forecast(WHERE, fetch)
     provider.forecast(Location(10.123, 20.456, panel_tilt=30, panel_facing=200), fetch)
@@ -111,6 +111,76 @@ def test_open_meteo_asks_for_the_panels_sunshine_only_with_a_tilt():
     assert (tilted["tilt"], tilted["azimuth"]) == (30, 20)
     assert (tilted["latitude"], tilted["longitude"]) == (10.12, 20.46)
     assert flat["timezone"] == "GMT" and flat["timeformat"] == "unixtime" and flat["forecast_days"] == 7
+    assert flat["models"] == "ukmo_seamless,ecmwf_ifs025"
+
+
+UKMO, ECMWF = open_meteo.OpenMeteo.models
+
+
+def test_open_meteo_hours_from_one_model_of_several():
+    answer = sample("open_meteo_two_models.json")
+    h = answer["hourly"]
+    for model in (UKMO, ECMWF):
+        hours = open_meteo.hours_from(answer, model)
+        assert [x.hour_start for x in hours] == h["time"][:-1]
+        for i, hour in enumerate(hours):
+            # cloud_cover starts cloud_cover_low's name, and each must still find its own.
+            assert hour.cloud_pct == h[f"cloud_cover_{model}"][i]
+            assert hour.cloud_low_pct == h[f"cloud_cover_low_{model}"][i]
+            assert hour.temperature_c == h[f"temperature_2m_{model}"][i]
+            assert hour.ghi_wm2 == h[f"shortwave_radiation_{model}"][i + 1]
+
+
+def test_open_meteo_forecast_takes_all_of_each_hour_from_one_model():
+    answer = sample("open_meteo_two_models.json")
+    hours = open_meteo.OpenMeteo().forecast(WHERE, Saved(answer))
+    ukmo, ecmwf = open_meteo.hours_from(answer, UKMO), open_meteo.hours_from(answer, ECMWF)
+    # The Met Office's sunshine stops partway through the sample.
+    seam = next(i for i, hour in enumerate(ukmo) if hour.ghi_wm2 is None)
+    assert 0 < seam < len(hours)
+    assert hours == ukmo[:seam] + ecmwf[seam:]
+    assert all(hour.ghi_wm2 is not None for hour in hours)
+    assert ukmo[0].cloud_pct != ecmwf[0].cloud_pct  # So the test would see a mix.
+
+
+def two_models(first_sun, second_sun):
+    """A made-up answer from both models, with only their sunshine and cloud."""
+    times = [i * HOUR for i in range(len(first_sun))]
+    return {
+        "hourly": {
+            "time": times,
+            f"shortwave_radiation_{UKMO}": first_sun,
+            f"cloud_cover_{UKMO}": [10] * len(times),
+            f"shortwave_radiation_{ECMWF}": second_sun,
+            f"cloud_cover_{ECMWF}": [90] * len(times),
+        }
+    }
+
+
+def test_open_meteo_never_goes_back_to_a_model_after_its_sunshine_stops():
+    answer = two_models([0, 100, None, 300, 400], [1, 101, 201, 301, 401])
+    hours, model_of = open_meteo.one_model_an_hour(answer, (UKMO, ECMWF))
+    assert [h.ghi_wm2 for h in hours] == [100, 201, 301, 401]
+    assert [h.cloud_pct for h in hours] == [10, 90, 90, 90]
+    assert list(model_of.values()) == [UKMO, ECMWF, ECMWF, ECMWF]
+
+
+def test_open_meteo_keeps_the_last_model_even_without_sunshine():
+    answer = two_models([0, None, None], [1, None, 201])
+    hours, _ = open_meteo.one_model_an_hour(answer, (UKMO, ECMWF))
+    assert [h.ghi_wm2 for h in hours] == [None, 201]
+    assert [h.cloud_pct for h in hours] == [90, 90]
+
+
+@pytest.mark.parametrize("models", [(), ("ecmwf_ifs025",)], ids=["best-match", "one-model"])
+def test_open_meteo_one_model_or_none_has_no_model_on_its_names(models):
+    """Asked for one model, or none, the answer's names have no model on them."""
+    answer = sample("open_meteo_forecast.json")
+    fetch = Saved(answer)
+    hours = open_meteo.OpenMeteo(models=models).forecast(WHERE, fetch)
+    assert hours == open_meteo.hours_from(answer)
+    ((_, params),) = fetch.calls
+    assert params.get("models") == (models[0] if models else None)
 
 
 class TwoAnswers:
@@ -125,8 +195,9 @@ class TwoAnswers:
         if len(self.calls) == 1:
             return self.answer
         doubled = json.loads(json.dumps(self.answer))
-        gti = doubled["hourly"]["global_tilted_irradiance"]
-        doubled["hourly"]["global_tilted_irradiance"] = [None if v is None else v * 2 for v in gti]
+        for name, gti in doubled["hourly"].items():
+            if name.startswith("global_tilted_irradiance"):
+                doubled["hourly"][name] = [None if v is None else v * 2 for v in gti]
         return doubled
 
 
@@ -134,17 +205,18 @@ TWO_FACINGS = Location(10.0, 20.0, panel_tilt=30, panel_facing=90, panel_facing_
 
 
 def test_open_meteo_asks_once_more_for_a_second_facing():
-    fetch = TwoAnswers(sample("open_meteo_forecast.json"))
+    fetch = TwoAnswers(sample("open_meteo_two_models.json"))
     open_meteo.OpenMeteo().forecast(TWO_FACINGS, fetch)
     (url, first), (second_url, second) = fetch.calls
     assert second_url == url == open_meteo.FORECAST_URL
     assert (first["azimuth"], second["azimuth"]) == (-90, 90)
     assert second["hourly"] == "global_tilted_irradiance" and second["tilt"] == 30
-    assert second["forecast_days"] == first["forecast_days"]
+    assert second["forecast_days"] == first["forecast_days"] and second["models"] == first["models"]
 
 
 def test_open_meteo_takes_the_mean_of_the_two_facings():
-    answer = sample("open_meteo_forecast.json")
+    """Each hour's two facings come from the same model: a mix would not be 1.5 times the one."""
+    answer = sample("open_meteo_two_models.json")
     one = open_meteo.OpenMeteo().forecast(Location(10.0, 20.0, panel_tilt=30, panel_facing=90), Saved(answer))
     two = open_meteo.OpenMeteo().forecast(TWO_FACINGS, TwoAnswers(answer))
     assert [h.hour_start for h in two] == [h.hour_start for h in one]
@@ -159,7 +231,7 @@ def test_open_meteo_takes_the_mean_of_the_two_facings():
     ids=["no-tilt", "one-facing"],
 )
 def test_open_meteo_asks_once_without_a_tilt_and_second_facing(where):
-    fetch = Saved(sample("open_meteo_forecast.json"))
+    fetch = Saved(sample("open_meteo_two_models.json"))
     open_meteo.OpenMeteo().forecast(where, fetch)
     assert len(fetch.calls) == 1
 
@@ -184,6 +256,7 @@ def test_open_meteo_past_keeps_only_the_hours_asked_for():
     ((url, params),) = fetch.calls
     assert url == open_meteo.PAST_URL
     assert "precipitation_probability" not in params["hourly"]
+    assert "models" not in params  # Its past is the first hours of each run, which have everything.
     assert params["start_date"] <= params["end_date"]
 
 

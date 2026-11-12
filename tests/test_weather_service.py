@@ -6,7 +6,7 @@ import json
 import pytest
 
 from solar_monitor import db, weather
-from solar_monitor.weather import service
+from solar_monitor.weather import open_meteo, service
 from solar_monitor.weather.base import HOUR, Credit, FetchError, Hour, Location, NotModified, RateLimited, Region
 from solar_monitor.weather.base import Warning as WeatherWarning
 
@@ -211,7 +211,7 @@ def test_the_real_providers_with_saved_answers(conn):
 
     samples = Path(__file__).parent / "weather_samples"
     answers = {
-        "open-meteo": json.loads((samples / "open_meteo_forecast.json").read_text(encoding="utf-8")),
+        "open-meteo": json.loads((samples / "open_meteo_two_models.json").read_text(encoding="utf-8")),
         "met.ie": json.loads((samples / "met_eireann.json").read_text(encoding="utf-8")),
     }
 
@@ -246,12 +246,14 @@ def test_settings_take_only_registered_providers_and_regions():
 
 def canned(now):
     hour = now - now % HOUR
+    # Open-Meteo's answer for its last model only, as if the first had no sunshine for these hours.
+    model = open_meteo.OpenMeteo.models[-1]
     answer = {
         "hourly": {
             "time": [hour + i * HOUR for i in range(4)],
-            "temperature_2m": [8.0, 9.0, 10.0, 11.0],
-            "weather_code": [0, 1, 2, 3],
-            "is_day": [1, 1, 1, 1],
+            f"temperature_2m_{model}": [8.0, 9.0, 10.0, 11.0],
+            f"weather_code_{model}": [0, 1, 2, 3],
+            f"is_day_{model}": [1, 1, 1, 1],
         }
     }
     issued = [

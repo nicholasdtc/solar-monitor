@@ -4,6 +4,11 @@ https://open-meteo.com/en/docs. Values at an instant (temperature, cloud, wind) 
 that instant, and values over an hour (rain, gusts, radiation) by the end of the hour. Each Hour
 here is labelled by its start, so it takes the instant from its start and the rest from the label
 an hour later.
+
+Its "best match" forecast takes each value from whichever model has it. Where the Met Office model
+is its pick, cloud and rain come from that model, but its runs stop giving sunshine two days or so
+ahead, and from there the sunshine comes from another model: an overcast, rainy hour could come
+with bright sunshine. So the forecast asks for set models and takes all of an hour's values from one.
 """
 
 from __future__ import annotations
@@ -90,10 +95,17 @@ class OpenMeteo:
     has_past = True
     min_interval = HOUR  # Its models update hourly at most.
     forecast_days = 7
+    # In order: each forecast hour comes from the first that gives sunshine for it. The Met Office
+    # model gives it for two days or so, and ECMWF's for all seven.
+    models = ("ukmo_seamless", "ecmwf_ifs025")
 
-    def __init__(self, forecast_url: str = FORECAST_URL, past_url: str = PAST_URL) -> None:
+    def __init__(
+        self, forecast_url: str = FORECAST_URL, past_url: str = PAST_URL, models: tuple[str, ...] | None = None
+    ) -> None:
         self.forecast_url = forecast_url
         self.past_url = past_url
+        if models is not None:
+            self.models = models
 
     def _params(self, where: Location, past: bool) -> dict[str, Any]:
         hourly = [*INSTANT, *PRECEDING, *OTHER]
@@ -114,20 +126,28 @@ class OpenMeteo:
         params["hourly"] = ",".join(hourly)
         return params
 
-    def _hours(self, url: str, where: Location, params: dict[str, Any], fetch: Fetch) -> list[Hour]:
+    def _hours(
+        self, url: str, where: Location, params: dict[str, Any], fetch: Fetch, models: tuple[str, ...] = ()
+    ) -> list[Hour]:
         """Fetch and parse. With a second facing, one more request for the sunshine that way, and
-        each hour's tilted sunshine becomes the mean of the two: half the panels face each way."""
-        hours = hours_from(fetch(url, params))
+        each hour's tilted sunshine becomes the mean of the two: half the panels face each way.
+        That hour's model is used for both."""
+        if models:
+            params = {**params, "models": ",".join(models)}
+        hours, model_of = one_model_an_hour(fetch(url, params), models)
         if where.panel_tilt is None or where.panel_facing_2 is None:
             return hours
         other = {**params, "hourly": "global_tilted_irradiance", "azimuth": open_meteo_azimuth(where.panel_facing_2)}
-        second = {h.hour_start: h.gti_wm2 for h in hours_from(fetch(url, other))}
-        return [replace(h, gti_wm2=_mean(h.gti_wm2, second.get(h.hour_start))) for h in hours]
+        answer = fetch(url, other)
+        second = {
+            model: {h.hour_start: h.gti_wm2 for h in hours_from(answer, model)} for model in set(model_of.values())
+        }
+        return [replace(h, gti_wm2=_mean(h.gti_wm2, second[model_of[h.hour_start]].get(h.hour_start))) for h in hours]
 
     def forecast(self, where: Location, fetch: Fetch) -> list[Hour]:
         params = self._params(where, past=False)
         params["forecast_days"] = self.forecast_days
-        return self._hours(self.forecast_url, where, params, fetch)
+        return self._hours(self.forecast_url, where, params, fetch, self.models)
 
     def past(self, where: Location, start: int, end: int, fetch: Fetch) -> list[Hour]:
         """The hours that start from `start` up to `end`, as its past forecasts saw them."""
@@ -145,14 +165,41 @@ def _day(ts: int) -> str:
     return datetime.fromtimestamp(ts, UTC).date().isoformat()
 
 
-def hours_from(answer: Any) -> list[Hour]:
-    """Turn the answer's hourly arrays into Hours labelled by their start."""
+def one_model_an_hour(answer: Any, models: tuple[str, ...]) -> tuple[list[Hour], dict[int, str | None]]:
+    """The answer's Hours, each with all its values from one model, and which model that was.
+
+    The first model is used up to its first hour without sunshine, then the next, and so on,
+    never going back: nights have 0, so a gap means that model's runs end there. With one model
+    or none, the answer's names have no model on them."""
+    if len(models) < 2:
+        hours = hours_from(answer)
+        return hours, {h.hour_start: None for h in hours}
+    each = [hours_from(answer, model) for model in models]
+    level = 0
+    hours: list[Hour] = []
+    model_of: dict[int, str | None] = {}
+    for i, hour in enumerate(each[0]):
+        while level < len(models) - 1 and each[level][i].ghi_wm2 is None:
+            level += 1
+        hours.append(each[level][i])
+        model_of[hour.hour_start] = models[level]
+    return hours, model_of
+
+
+def hours_from(answer: Any, model: str | None = None) -> list[Hour]:
+    """Turn the answer's hourly arrays into Hours labelled by their start. With a model, from its
+    own arrays: an answer for more than one adds `_<model>` to each name."""
     try:
         hourly = answer["hourly"]
         times = [int(t) for t in hourly["time"]]
     except (KeyError, TypeError, ValueError) as error:
         raise bad_answer("no hourly times") from error
-    columns = {name: values for name, values in hourly.items() if isinstance(values, list) and len(values) == len(times)}
+    ending = f"_{model}" if model else ""
+    columns = {
+        name.removesuffix(ending): values
+        for name, values in hourly.items()
+        if name.endswith(ending) and isinstance(values, list) and len(values) == len(times)
+    }
     index = {t: i for i, t in enumerate(times)}
     hours = []
     for i, start in enumerate(times):
