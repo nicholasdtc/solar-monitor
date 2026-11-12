@@ -475,11 +475,11 @@
   #history-charts.loading > * { opacity: .5; }
   #history-charts.panning svg { cursor: grabbing; }
   #history-charts.panning .chart-end { display: none; }
-  /* The time axis under each history chart, dragged to zoom. */
+  /* The time axis under a chart, dragged to zoom. */
   .chart-scale { fill: currentColor; fill-opacity: 0; cursor: ew-resize; }
   @media (hover: hover) { .chart-scale:hover { fill-opacity: .06; } }
-  #history-charts.scaling, #history-charts.scaling svg { cursor: ew-resize; }
-  #history-charts.scaling .chart-scale { fill-opacity: .06; }
+  .scaling, .scaling svg { cursor: ew-resize !important; }
+  .scaling .chart-scale { fill-opacity: .06; }
   .chart { position: relative; }
   .chart-head { display: flex; flex-wrap: wrap; gap: 2px 16px; align-items: baseline; justify-content: space-between; padding-right: 36px; }
   /* The full-screen button, at a chart's top right. Its icon is drawn in CSS: an svg in it would count as the chart. */
@@ -696,7 +696,7 @@
   .btn { min-height: 36px; padding: 4px 12px; cursor: pointer; background: var(--surface); border: 1px solid var(--rule-strong); }
   .btn:hover { background: var(--page); }
   .btn:disabled { color: var(--muted); cursor: default; background: var(--surface); }
-  #gm-bars svg { cursor: pointer; }
+  #gm-bars svg { cursor: pointer; touch-action: pan-y; }
   #gm-day-chart svg { cursor: crosshair; }
   /* Overview shows one day's half-hours, or the bars and carpet for longer. */
   #view-statistics-grid.one-day .gm-many, #view-statistics-grid:not(.one-day) .gm-one { display: none; }
@@ -1013,7 +1013,7 @@
         </div>
       </div>
       <div class="now-head">
-        <h2><button type="button" class="fold-toggle" data-fold="now" aria-expanded="true" aria-controls="now-body">Last 24 hours</button></h2>
+        <h2><button type="button" class="fold-toggle" data-fold="now" aria-expanded="true" aria-controls="now-body" id="now-title">Last 24 hours</button></h2>
         <a href="#statistics">History →</a>
       </div>
       <div class="now-body" id="now-body">
@@ -1050,7 +1050,7 @@
 
   <section class="view page" id="view-statistics-daily" data-tab="statistics" data-sub="daily" data-label="Daily" data-perm="statistics" aria-label="History: Daily" hidden>
     <div class="pane">
-      <h2>Daily energy <button type="button" class="help" aria-label="About these totals" data-tip="From the inverter's lifetime counters. Today's can be up to 5 minutes behind.&#10;The first day counts from its first reading. Days the app wasn't running count toward the next day it ran.">?</button></h2>
+      <h2>Daily energy <button type="button" class="help" aria-label="About these totals" data-tip="From the inverter's lifetime counters. Today's can be up to 5 minutes behind.&#10;The first day counts from its first reading. Days the app wasn't running count toward the next day it ran.&#10;Drag time axis: zoom">?</button></h2>
       <div class="charts" id="daily-weather" hidden></div>
       <div class="charts" id="daily-charts"></div>
       <p class="meta" id="daily-note"></p>
@@ -1211,7 +1211,7 @@
       <p class="meta" id="wx-now-note" aria-live="polite"></p>
     </div>
     <div class="pane" id="wx-charts-pane" hidden>
-      <h2>12 hours back, 48 ahead <button type="button" class="help" id="wx-charts-help" aria-label="About these charts" data-tip="">?</button></h2>
+      <h2><span id="wx-charts-title">12 hours back, 48 ahead</span> <button type="button" class="help" id="wx-charts-help" aria-label="About these charts" data-tip="">?</button></h2>
       <div class="charts" id="weather-charts"></div>
       <p class="meta" id="wx-charts-note" hidden>Past hours show the weather as the model has it, not as measured. Expected solar there is what was forecast the day before, so it needn't follow the irradiance shown.</p>
     </div>
@@ -3300,7 +3300,12 @@
     them, which also matches the SEMS app, so the two can be compared directly.
   */
   const CHART_REFRESH_MS = 60000;
-  const DAILY_DAYS = 14;
+  const DAILY_DAYS = 14; // The daily charts' days, until their time axis is dragged.
+  const DAILY_LEAST = 7;
+  const DAILY_MOST = 366; // The most /api/daily sends.
+  const NOW_LEAST = 2 * 3600; // The dashboard's charts zoom from 2 hours to a week.
+  const NOW_MOST = 7 * 86400;
+  const NOW_MOST_POINTS = 288; // A day at 5 minutes. Longer spans step to a coarser interval.
   const CHART_RIGHT = 12;
   const CHART_TOP = 8;
   const X_AXIS_HEIGHT = 24;
@@ -3397,6 +3402,10 @@
   let firstReading = null;
   let historyFrame = null;
   let daily = null;
+  let dailyDays = DAILY_DAYS; // How many days the daily and money charts show, the latest of those loaded.
+  let dailyMost = DAILY_MOST; // As far back as there are totals, once a load has gone past the first.
+  let dailyRequest = 0;
+  const shownDays = () => daily.days.slice(-dailyDays);
   let dailyWx = new Map(); // Each day's weather, while Preferences shows it.
   let historyRequest = 0;
   let pendingLoad = null;
@@ -3753,6 +3762,69 @@
   }
 
   /*
+    The strip over a chart's time axis, from x `left` to `right` and y `top` to `bottom`, that's dragged
+    to zoom. `plotRight` is where the plot ends and `plotWidth` how wide it is, both within the svg.
+  */
+  function scaleBand(left, right, top, bottom, plotRight, plotWidth) {
+    return svgEl("rect", {
+      x: left, y: top, width: right - left, height: bottom - top, class: "chart-scale",
+      "data-right": plotRight, "data-width": plotWidth, "data-no-swipe": "",
+    });
+  }
+
+  /*
+    Dragging the time axis under a chart zooms, like a trading chart: the right edge stays put and the
+    time grabbed stays under the pointer, so dragging right shows more. It redraws as it goes. For the
+    charts in `box`, begin() is what the drag starts from, or null when they can't zoom yet;
+    zoom(factor, from) shows `factor` times the span `from` showed; end(keep, from) settles it, with
+    keep false when the browser took the drag over, so it goes back to `from`.
+  */
+  let scaling = null; // The box whose time axis is being dragged.
+  function scaleOnAxis(box, { begin, zoom, end }) {
+    let drag = null;
+    box.addEventListener("pointerdown", (event) => {
+      const axis = event.target.closest?.(".chart-scale");
+      if (event.button !== 0 || !axis || drag || scaling) return;
+      const from = begin();
+      if (from === null) return;
+      drag = {
+        id: event.pointerId, x: event.clientX, moving: false, from,
+        right: axis.ownerSVGElement.getBoundingClientRect().left + Number(axis.dataset.right), // The plot's right edge.
+        least: Number(axis.dataset.width) * SCALE_EDGE_SHARE,
+      };
+    });
+    box.addEventListener("pointermove", (event) => {
+      if (!drag || event.pointerId !== drag.id) return;
+      if (!drag.moving) {
+        if (Math.abs(event.clientX - drag.x) < PAN_START_PX) return;
+        drag.moving = true;
+        scaling = box;
+        box.setPointerCapture(event.pointerId);
+        box.classList.add("scaling");
+        if (tipOwner && box.contains(tipOwner.node)) dropTip();
+        $("chart-tip").hidden = true;
+      }
+      const { x, right, least, from } = drag;
+      zoom(Math.max(right - x, least) / Math.max(right - event.clientX, least), from);
+    });
+    const letGo = (event, keep) => {
+      if (!drag || event.pointerId !== drag.id) return;
+      const { moving, from } = drag;
+      drag = null;
+      if (!moving) return;
+      scaling = null;
+      box.classList.remove("scaling");
+      // The click a drag ends with isn't one on whatever is under the pointer.
+      const swallow = (click) => { click.stopPropagation(); click.preventDefault(); };
+      addEventListener("click", swallow, { capture: true, once: true });
+      setTimeout(() => removeEventListener("click", swallow, { capture: true }));
+      end(keep, from);
+    };
+    box.addEventListener("pointerup", (event) => letGo(event, true));
+    box.addEventListener("pointercancel", (event) => letGo(event, false));
+  }
+
+  /*
     For a chart whose items open on a click. With a mouse, pointing at an item reads it and a click
     opens it. On a touch screen a tap reads it and leaves its tooltip up, and a second tap on it, or
     within a fingertip of the first, opens it. at(event) is the item under the pointer or null,
@@ -3860,6 +3932,9 @@
     const [size, unit] = seconds < 3600 ? [seconds / 60, "minute"] : seconds < 86400 ? [seconds / 3600, "hour"] : [seconds / 86400, "day"];
     return `${size} ${unit}${size === 1 ? "" : "s"}`;
   }
+  /* [24, "hour"] or [3, "day"]: a zoomed chart's span, in whole hours up to two days and whole days past that. */
+  const spanParts = (seconds) => (seconds < 48.5 * 3600 ? [Math.round(seconds / 3600), "hour"] : [Math.round(seconds / 86400), "day"]);
+  const spanWords = ([size, unit]) => `${size} ${unit}${size === 1 ? "" : "s"}`;
 
   function formatPoint(point, series) {
     const value = point[series.key];
@@ -4160,7 +4235,7 @@
       drawInsideLabels(svg, frame, scale, plotBottom, chart.inside);
       const overlay = svgEl("g", { class: "history-overlay" });
       svg.append(overlay);
-      if (scalable) svg.append(svgEl("rect", { x: bandLeft, y: bottom, width: bandRight - bandLeft, height: height - bottom, class: "chart-scale" }));
+      if (scalable) svg.append(scaleBand(bandLeft, bandRight, bottom, height, frame.left + plotWidth, plotWidth));
       node.append(svg);
       return { chart, svg, overlay, scale, strip, bottom, plotBottom };
     });
@@ -4173,7 +4248,7 @@
     };
     const show = (index, clientX, clientY) => {
       const point = visible[index];
-      if (!point || pan?.moving) return hide();
+      if (!point || pan?.moving || scaling) return hide();
       const px = x(point.ts);
       for (const { chart, overlay, scale, strip, bottom, plotBottom } of drawn) {
         const dot = (series, y, top, low) => isNum(point[series.key]) && svgEl("circle", {
@@ -4347,7 +4422,7 @@
     if (!daily) return;
     renderMoney(); // On its own page, from the same totals.
     if ($("view-statistics-daily").hidden) return; // Charts need a width, and a hidden box has none.
-    const days = daily.days;
+    const days = shownDays();
     dailyWx = dailyConditions(days);
     const anyData = days.some((day) => Object.keys(day).length > 1);
     const hasFlows = days.some((day) => day.solar_home !== undefined);
@@ -4424,6 +4499,7 @@
         }
       });
       drawInsideLabels(svg, frame, scale, bottom, chart.inside);
+      svg.append(scaleBand(frame.left, width - frame.right, bottom, height, width - frame.right, width - frame.left - frame.right));
       node.append(svg);
       return { set, chart, svg, under, bottom };
     });
@@ -4462,7 +4538,8 @@
     const conditions = new Map();
     if (prefs.stats_icons !== "on" || !days.length) return conditions;
     const [year, month, date] = days[0].day.split("-").map(Number);
-    loadStatsWeather("daily", zonedMs(HOME_ZONE, year, month, date) / 1000, Date.now() / 1000, renderDaily);
+    // Not on every step of a drag along the time axis: its end draws, and loads, again.
+    if (!scaling) loadStatsWeather("daily", zonedMs(HOME_ZONE, year, month, date) / 1000, Date.now() / 1000, renderDaily);
     if (!statsWx.hours.size) return conditions;
     const wanted = new Set(days.map((day) => day.day));
     const byDay = new Map();
@@ -4504,7 +4581,7 @@
 
   function renderDailyTable() {
     const keys = ["pv", "load", "battery_charge", "battery_discharge", "grid_import", "grid_export", "solar_home", "solar_battery", "solar_export", "battery_home", "grid_home"];
-    const recorded = daily.days.filter((day) => Object.keys(day).length > 1).toReversed();
+    const recorded = shownDays().filter((day) => Object.keys(day).length > 1).toReversed();
     $("daily-wx-head").hidden = !dailyWx.size;
     $("daily-table").replaceChildren(...recorded.map((day) => {
       const row = el("tr");
@@ -4564,7 +4641,7 @@
     if (!daily?.tariff || $("view-statistics-money").hidden) return;
     const { rates, bands, bandsSet } = daily.tariff;
     const priced = ["night", "day", "peak", "export"].every((key) => isNum(rates[key]));
-    const days = daily.days.map((day) => moneyDay(day, rates));
+    const days = shownDays().map((day) => moneyDay(day, rates));
     const known = days.filter((day) => day.net !== null);
     $("money-data").hidden = !priced || !known.length;
     $("money-note").textContent = !priced
@@ -4649,6 +4726,7 @@
         if (i % labelEvery === 0) svg.append(svgEl("text", { x: center(i), y: bottom + 17, class: "chart-tick chart-x" }, dayText(day.day)));
       });
       drawInsideLabels(svg, frame, scale, bottom, chart.inside);
+      svg.append(scaleBand(frame.left, width - frame.right, bottom, height, width - frame.right, width - frame.left - frame.right));
       node.append(svg);
       return { chart, svg, under, bottom, band, center, frame };
     });
@@ -4801,7 +4879,7 @@
         firstReading = next.first_ts ?? null;
         view = settle(view);
         // A drag along the charts draws when it's let go. One along the time axis draws as it goes.
-        if (!pan?.moving || pan.axis) renderHistory();
+        if (!pan?.moving) renderHistory();
       }
     } catch {
       if (request === historyRequest) $("history-note").textContent = "Couldn't load the history. Showing the last one loaded.";
@@ -4816,41 +4894,117 @@
     return loadAround(view, view.following);
   }
 
+  /* Loads the daily totals, at least the days shown. A slow answer must not replace a newer one. */
   async function refreshDaily() {
+    const request = ++dailyRequest;
+    const asked = Math.max(DAILY_DAYS, dailyDays);
     try {
-      daily = await getJson(`/api/daily?days=${DAILY_DAYS}`);
+      const next = await getJson(`/api/daily?days=${asked}`);
+      if (request !== dailyRequest) return;
+      daily = next;
+      // Days before the first totals come back empty, so the axis zooms out no further than them.
+      const first = daily.days.findIndex((day) => Object.keys(day).length > 1);
+      if (first > 0) dailyMost = Math.max(DAILY_DAYS, daily.days.length - first);
+      else if (first === 0 && asked >= dailyMost) dailyMost = DAILY_MOST; // Totals reach back further than the last look.
+      dailyDays = Math.min(dailyDays, dailyMost);
       renderDaily();
     } catch {
-      $("daily-note").textContent = "Couldn't load the daily totals. Showing the last ones loaded.";
+      if (request === dailyRequest) $("daily-note").textContent = "Couldn't load the daily totals. Showing the last ones loaded.";
     }
   }
 
-  /* The dashboard's charts: the last day up to now, at the history's first interval. */
+  /*
+    The daily and money charts' time axis zooms, as scaleOnAxis says, from a week to as far back as
+    there are totals. The latest day stays at the right.
+  */
+  {
+    let drawQueued = false;
+    let pendingDaily = null;
+    const loadIfShort = () => { if (daily && dailyDays > daily.days.length) refreshDaily(); };
+    for (const id of ["daily-charts", "flow-charts", "money-charts"]) {
+      scaleOnAxis($(id), {
+        begin: () => (daily ? Math.min(dailyDays, daily.days.length) : null),
+        zoom: (factor, from) => {
+          const next = clamp(Math.round(from * factor), DAILY_LEAST, dailyMost);
+          if (next === dailyDays) return;
+          dailyDays = next;
+          if (!drawQueued) {
+            drawQueued = true;
+            requestAnimationFrame(() => { drawQueued = false; renderDaily(); });
+          }
+          clearTimeout(pendingDaily);
+          pendingDaily = setTimeout(loadIfShort, LOAD_DELAY_MS);
+        },
+        end: (keep, from) => {
+          clearTimeout(pendingDaily);
+          if (!keep) dailyDays = from;
+          renderDaily();
+          loadIfShort();
+        },
+      });
+    }
+  }
+
+  /* The dashboard's charts: from `nowSpan` back up to now, at an interval that keeps them light. */
   let nowData = null; // { bucket, start, end, points }
   let nowRequest = 0;
+  let nowSpan = DEFAULT_VIEW_SECONDS; // How long they show, s, zoomed on their time axis.
+  const nowBucket = (span) => HISTORY_BUCKETS.find((bucket) => span / bucket <= NOW_MOST_POINTS) ?? HISTORY_BUCKETS.at(-1);
+  const nowWords = () => spanWords(spanParts(nowSpan));
   async function refreshNow() {
-    const end = bucketEnd(Date.now() / 1000, DEFAULT_BUCKET);
-    const start = end - DEFAULT_VIEW_SECONDS;
+    const bucket = nowBucket(nowSpan);
+    const end = bucketEnd(Date.now() / 1000, bucket);
+    const start = end - Math.ceil(nowSpan / bucket) * bucket;
     const request = ++nowRequest;
     try {
-      const next = await getJson(`/api/history?start=${start}&end=${end}&bucket=${DEFAULT_BUCKET}`);
+      const next = await getJson(`/api/history?start=${start}&end=${end}&bucket=${bucket}`);
       if (request !== nowRequest) return;
       nowData = { bucket: next.bucket_seconds, start, end, points: next.points };
       $("now-note").textContent = "";
       renderNow();
     } catch {
-      if (request === nowRequest) $("now-note").textContent = "Couldn't load the last 24 hours. Showing the last loaded.";
+      if (request === nowRequest) $("now-note").textContent = `Couldn't load the last ${nowWords()}. Showing the last loaded.`;
     }
   }
 
   function renderNow() {
     const box = $("now-charts");
+    $("now-title").textContent = `Last ${nowWords()}`;
     if (!nowData || $("view-dashboard").hidden || $("now-body").hidden) return; // Charts need a width, and a hidden box has none.
     if (tipOwner && box.contains(tipOwner.node)) dropTip();
-    const { bucket, start, end, points } = nowData;
+    const { bucket, end, points } = nowData;
+    const start = end - nowSpan;
     const visible = points.filter((point) => point.ts + bucket / 2 >= start && point.ts + bucket / 2 <= end);
-    if (!visible.length) return box.replaceChildren(el("p", "no-value", "No readings in the last 24 hours."));
-    drawTimeCharts(box, { charts: HISTORY_CHARTS, points, visible, bucket, start, end, compact: true, prefix: "now" });
+    if (!visible.length) return box.replaceChildren(el("p", "no-value", `No readings in the last ${nowWords()}.`));
+    drawTimeCharts(box, { charts: HISTORY_CHARTS, points, visible, bucket, start, end, compact: true, scalable: true, prefix: "now" });
+  }
+
+  /* The dashboard charts' time axis zooms, as scaleOnAxis says, with now staying at the right. */
+  {
+    let drawQueued = false;
+    let pendingNow = null;
+    // Loaded again when the span needs another interval or reaches past what's loaded.
+    const loadIfNeeded = () => {
+      if (!nowData || nowBucket(nowSpan) !== nowData.bucket || nowData.end - nowSpan < nowData.start) refreshNow();
+    };
+    scaleOnAxis($("now-charts"), {
+      begin: () => (nowData ? nowSpan : null),
+      zoom: (factor, from) => {
+        nowSpan = clamp(from * factor, NOW_LEAST, NOW_MOST);
+        if (!drawQueued) {
+          drawQueued = true;
+          requestAnimationFrame(() => { drawQueued = false; renderNow(); });
+        }
+        clearTimeout(pendingNow);
+        pendingNow = setTimeout(loadIfNeeded, LOAD_DELAY_MS);
+      },
+      end: (keep, from) => {
+        clearTimeout(pendingNow);
+        if (!keep) nowSpan = from;
+        renderNow();
+        loadIfNeeded();
+      },
+    });
   }
 
   /* The controls and the "from … to …" line, for view `v`. */
@@ -4915,10 +5069,8 @@
     layers only slide, and the charts are redrawn with their new axes once it's let go. A vertical
     swipe on a touch screen still scrolls the page.
 
-    Dragging the time axis under a chart zooms, also like a trading chart: the right edge stays put
-    and the time grabbed stays under the pointer, so dragging right shows more. Past the most periods
-    an interval shows, it moves to a coarser one, and back to a finer one under the fewest. Unlike a
-    drag along the charts, this redraws as it goes, as the axis and maybe the interval change.
+    Dragging the time axis zooms, as scaleOnAxis says. Past the most periods an interval shows, it
+    moves to a coarser one, and back to a finer one under the fewest.
   */
   {
     const box = $("history-charts");
@@ -4931,21 +5083,21 @@
       clearTimeout(pendingLoad);
       pendingLoad = setTimeout(() => loadAround(view), LOAD_DELAY_MS);
     };
-    const scaleTo = (clientX) => {
-      const { from, x, right, least } = pan;
-      const span = (from.end - from.start) * Math.max(right - x, least) / Math.max(right - clientX, least);
-      pan.to = view = zoomView(bucketFor(from.bucket, span), span, from.end, from);
-      redrawSoon();
-    };
+    scaleOnAxis(box, {
+      begin: () => (historyFrame && loaded && !pan ? view : null),
+      zoom: (factor, from) => {
+        const span = (from.end - from.start) * factor;
+        view = zoomView(bucketFor(from.bucket, span), span, from.end, from);
+        redrawSoon();
+      },
+      end: (keep, from) => {
+        clearTimeout(pendingLoad); // Loaded now instead.
+        showView(keep ? view : settle(from));
+      },
+    });
     box.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || !event.target.closest("svg") || !historyFrame || !loaded) return;
-      const { left, plotWidth } = historyFrame;
-      pan = {
-        id: event.pointerId, x: event.clientX, moving: false, from: view, to: view,
-        axis: event.target.classList.contains("chart-scale"),
-        right: event.target.closest("svg").getBoundingClientRect().left + left + plotWidth, // The plot's right edge.
-        least: plotWidth * SCALE_EDGE_SHARE,
-      };
+      if (event.button !== 0 || !event.target.closest("svg") || event.target.closest(".chart-scale") || !historyFrame || !loaded || scaling) return;
+      pan = { id: event.pointerId, x: event.clientX, moving: false, from: view, to: view };
     });
     box.addEventListener("pointermove", (event) => {
       if (!pan || event.pointerId !== pan.id) return;
@@ -4954,10 +5106,9 @@
         if (Math.abs(dx) < PAN_START_PX) return;
         pan.moving = true;
         box.setPointerCapture(event.pointerId);
-        box.classList.add(pan.axis ? "scaling" : "panning");
+        box.classList.add("panning");
         hideHistoryTip();
       }
-      if (pan.axis) return scaleTo(event.clientX);
       const span = pan.from.end - pan.from.start;
       pan.to = moveView(pan.from, clamp(-dx / historyFrame.plotWidth * span, -span, span));
       const shift = (pan.from.start - pan.to.start) / span * historyFrame.plotWidth;
@@ -4966,13 +5117,11 @@
     });
     const letGo = (event, keep) => {
       if (!pan || event.pointerId !== pan.id) return;
-      const { moving, from, to, axis } = pan;
+      const { moving, to } = pan;
       pan = null;
-      box.classList.remove("panning", "scaling");
+      box.classList.remove("panning");
       if (!moving) return;
-      if (axis) clearTimeout(pendingLoad); // Loaded now instead.
       if (keep) showView(to);
-      else if (axis) showView(settle(from)); // The view changed as it was dragged.
       else renderHistory();
     };
     box.addEventListener("pointerup", (event) => letGo(event, true));
@@ -4981,7 +5130,7 @@
     /* Ctrl and the scroll wheel, or a pinch, zoom. Scrolling sideways moves. Plain scrolling still scrolls the page. */
     box.addEventListener("wheel", (event) => {
       const svg = event.target.closest("svg");
-      if (!svg || !historyFrame || !loaded || pan) return;
+      if (!svg || !historyFrame || !loaded || pan || scaling) return;
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerHeight : 1;
       const span = view.end - view.start;
       let next;
@@ -5616,6 +5765,9 @@
     const HOUR = 3600;
     const BACK_HOURS = 12;
     const AHEAD_HOURS = 48;
+    // The charts' time axis zooms from 6 hours to a week back and all the forecast ahead.
+    const CHART_LEAST = 6 * HOUR;
+    const CHART_BACK_MOST = 7 * 86400;
     const NIGHT_FOLD_HOURS = 3; // A shorter run of night hours stays open.
     const SUNSHINE_WM2 = 120; // The WMO's measure of sunshine, applied to the direct sun.
     const LEVELS = ["minor", "moderate", "severe", "extreme"];
@@ -5624,11 +5776,13 @@
     const FETCH_NAMES = { forecast: "Forecast", warnings: "Warnings", past: "Past weather" };
 
     let data = null; // /api/weather's answer.
-    let hours = []; // Each hour from the start of today or 12 hours back, recorded then forecast, by hour_start.
+    let hours = []; // Each hour from the start of today or as far back as the charts show, recorded then forecast, by hour_start.
     let solar = new Map(); // What the panels made, average W, by hour_start.
     let dayAhead = new Map(); // Expected solar as recorded the day before, W, by hour_start.
     let automation = null; // /api/automation's answer, for those who may see the schedule.
     let request = 0;
+    let chartSpan = (BACK_HOURS + AHEAD_HOURS) * HOUR; // How long the charts show, s, zoomed on the time axis.
+    let pastFrom = Infinity; // The earliest hour the recorded past was loaded from.
     const openFolds = new Set(); // The first hour of each run of night hours opened.
 
     const cap = (text) => (text ? text[0].toUpperCase() + text.slice(1) : "");
@@ -5743,12 +5897,14 @@
         let made = new Map();
         if (next.located) {
           const today = partsIn(ms(now), shownZone());
-          const from = Math.min(hourStart - BACK_HOURS * HOUR, zonedMs(shownZone(), today.year, today.month, today.day) / 1000);
+          const back = Math.ceil(chartWindow(chartSpan, hourStart).back / HOUR) * HOUR;
+          const from = Math.min(hourStart - Math.max(back, BACK_HOURS * HOUR), zonedMs(shownZone(), today.year, today.month, today.day) / 1000);
           const [past, history] = await Promise.all([
             hourStart > from ? getJson(`/api/weather/history?start=${from}&end=${hourStart}`).catch(() => null) : null,
             getJson(`/api/history?start=${from}&end=${now}&bucket=${HOUR}`).catch(() => null),
           ]);
           if (mine !== request) return;
+          pastFrom = from;
           recorded = past?.hours ?? [];
           for (const point of history?.points ?? []) if (isNum(point.pv_w)) made.set(point.ts, point.pv_w);
         }
@@ -6123,13 +6279,50 @@
       };
     }
 
+    /*
+      Where the charts start and end, `back` s before the hour now begins at and `ahead` s after, for a
+      span of `span` s. Now keeps its place a fifth of the way along, as far as a week back and the
+      forecast's end allow.
+    */
+    function chartWindow(span, hourStart) {
+      const last = (data?.forecast?.hours ?? []).at(-1)?.hour_start;
+      const aheadMost = Math.max(HOUR, isNum(last) ? last + HOUR - hourStart : AHEAD_HOURS * HOUR);
+      const wanted = clamp(span, CHART_LEAST, aheadMost + CHART_BACK_MOST);
+      const ahead = Math.min(wanted * AHEAD_HOURS / (BACK_HOURS + AHEAD_HOURS), aheadMost);
+      const back = Math.min(wanted - ahead, CHART_BACK_MOST);
+      return { span: back + ahead, back, ahead, start: hourStart - back, end: hourStart + ahead };
+    }
+
+    /* Dragging the charts' time axis zooms them, as scaleOnAxis says, with now staying where it is. */
+    {
+      let drawQueued = false;
+      scaleOnAxis($("weather-charts"), {
+        begin: () => (data?.forecast ? chartSpan : null),
+        zoom: (factor, from) => {
+          const now = Math.floor(Date.now() / 1000);
+          chartSpan = chartWindow(from * factor, now - (now % HOUR)).span;
+          if (drawQueued) return;
+          drawQueued = true;
+          requestAnimationFrame(() => { drawQueued = false; drawCharts(); });
+        },
+        end: (keep, from) => {
+          if (!keep) chartSpan = from;
+          drawCharts();
+          // Further back than the past loaded, so load it.
+          const now = Math.floor(Date.now() / 1000);
+          if (chartWindow(chartSpan, now - (now % HOUR)).start < pastFrom) refresh();
+        },
+      });
+    }
+
     function drawCharts() {
       const box = $("weather-charts");
       if (!data?.forecast || $("view-weather").hidden || !box.clientWidth) return;
       if (tipOwner && box.contains(tipOwner.node)) dropTip();
       const now = Math.floor(Date.now() / 1000);
-      const start = now - (now % HOUR) - BACK_HOURS * HOUR;
-      const end = start + (BACK_HOURS + AHEAD_HOURS) * HOUR;
+      const { back, ahead, start, end } = chartWindow(chartSpan, now - (now % HOUR));
+      const [backLong, aheadLong] = [spanParts(back), spanParts(ahead)];
+      $("wx-charts-title").textContent = `${spanWords(backLong)} back, ${backLong[1] === aheadLong[1] ? aheadLong[0] : spanWords(aheadLong)} ahead`;
       const points = hours.filter((h) => h.hour_start >= start && h.hour_start < end).map(chartPoint);
       const has = (key) => points.some((point) => isNum(point[key]));
       const keep = (series) => series.filter((s) => has(s.key));
@@ -6188,13 +6381,13 @@
         });
       }
       $("wx-charts-help").dataset.tip = [
-        "Dashed line: now", "Left: past, right: forecast", "Past weather: modelled",
+        "Dashed line: now", "Left: past, right: forecast", "Past weather: modelled", "Drag time axis: zoom",
         solarChart ? "Expected: day before" : has("pv_w") ? "Bars under Sun: solar made" : "",
       ].filter(Boolean).join("\n");
       $("wx-charts-note").hidden = !solarChart;
       if (!charts.length) return box.replaceChildren(el("p", "no-value", "Nothing to chart."));
       const visible = points.filter((point) => point.ts >= start && point.ts < end);
-      drawTimeCharts(box, { charts, points, visible, bucket: HOUR, start, end, zoomable: false, marks: [{ ts: now, label: "Now" }], prefix: "weather" });
+      drawTimeCharts(box, { charts, points, visible, bucket: HOUR, start, end, zoomable: false, scalable: true, marks: [{ ts: now, label: "Now" }], prefix: "weather" });
     }
 
     /* The day each hour falls on, as a heading: today, tomorrow or a date. */
@@ -6838,6 +7031,7 @@
       $("gm-bars-help").dataset.tip = (matchMedia("(pointer: fine)").matches
         ? `Click a ${group} to see its ${OPENS_TO[group]}.`
         : `Tap a ${group} to read it. Tap again to see its ${OPENS_TO[group]}.`)
+        + "\nDrag time axis: zoom"
         + (versusBars ? `\nThe dark tick is ${lowerFirst(versusName())}: its ${group}s in the same order.` : "");
       $("gm-bars-col").textContent = GROUP_NAMES[group];
       $("gm-versus-key").hidden = !versusBars;
@@ -6940,6 +7134,7 @@
         lastX = x;
         lastBelow = below;
       });
+      nodes.push(scaleBand(m.l, width - m.r, m.t + plotHeight, height, width - m.r, plotWidth));
 
       barsSvg.replaceChildren(...nodes, barsFocus);
       if (document.activeElement === barsSvg && barsSvg.matches(":focus-visible") && barFocus >= 0) focusBar();
@@ -7636,6 +7831,38 @@
       cellFocus = null;
       fitGroup();
       showRange();
+    }
+    /*
+      Dragging the bars' time axis zooms, as scaleOnAxis says: the last day stays put and the range
+      takes in more days or fewer, from two to the start of the file. Let go, it's a range like one
+      whose dates were entered.
+    */
+    {
+      let drawQueued = false;
+      let wanted = null;
+      scaleOnAxis($("gm-bars"), {
+        begin: () => (days.length && range && !oneDay() ? { range, preset, zooms, group, groupChosen } : null),
+        zoom: (factor, from) => {
+          const { to } = from.range;
+          const n = clamp(Math.round(dayCount(from.range.from, to) * factor), 2, dayCount(days[0].date, to));
+          wanted = { from: addDays(to, 1 - n), to };
+          if (drawQueued || wanted.from === range.from) return;
+          drawQueued = true;
+          requestAnimationFrame(() => {
+            drawQueued = false;
+            if (scaling && wanted.from !== range.from) setRange(wanted, null);
+          });
+        },
+        end: (keep, from) => {
+          if (keep) {
+            if (wanted && wanted.from !== range.from) setRange(wanted, null);
+          } else {
+            ({ range, preset, zooms, group, groupChosen } = from);
+            showRange();
+          }
+          wanted = null;
+        },
+      });
     }
     $("gm-range").addEventListener("click", (event) => {
       const button = event.target.closest("button");
@@ -8793,7 +9020,7 @@
   setInterval(() => {
     // Redrawing would drop the tooltip and keyboard focus from under someone reading a chart.
     // A full-screen button keeps its focus through a redraw.
-    if (pan || !$("chart-tip").hidden || document.activeElement?.closest(".charts svg")) return;
+    if (pan || scaling || !$("chart-tip").hidden || document.activeElement?.closest(".charts svg")) return;
     if (onHistory(shownPage())) {
       refreshHistory();
       refreshDaily();
