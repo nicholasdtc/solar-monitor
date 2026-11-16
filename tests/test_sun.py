@@ -41,3 +41,24 @@ def test_no_rise_or_set_in_the_polar_night_or_midnight_sun():
     assert sun.times(80.0, 20.0, start, start + 3 * DAY) == {"rises": [], "sets": []}
     start = at("2026-06-15T00:00")
     assert sun.times(80.0, 20.0, start, start + 3 * DAY) == {"rises": [], "sets": []}
+
+
+def test_the_sun_is_overhead_at_noon_on_the_equator_at_the_equinox():
+    elevation, _ = sun.position(0.0, 0.0, at("2026-03-20T12:07"))
+    assert elevation > 89
+
+
+def test_the_sun_at_forty_north_in_june():
+    # About 73.5° up and due south at local noon, which at 0° is near 12:02 UTC.
+    elevation, azimuth = sun.position(40.0, 0.0, at("2026-06-21T12:02"))
+    assert abs(elevation - 73.5) < 0.5
+    assert abs(azimuth - 180) < 2
+    morning_elevation, morning_azimuth = sun.position(40.0, 0.0, at("2026-06-21T07:00"))
+    assert 0 < morning_elevation < 40 and 60 < morning_azimuth < 100
+    evening = sun.position(40.0, 0.0, at("2026-06-21T17:00"))
+    assert 260 < evening[1] < 300
+
+
+def test_the_sun_is_below_the_horizon_at_midnight():
+    elevation, _ = sun.position(40.0, 0.0, at("2026-06-21T00:00"))
+    assert elevation < 0

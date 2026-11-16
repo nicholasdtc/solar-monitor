@@ -14,6 +14,8 @@ the app has a log for: a month at a time, newest first, then once a night for th
 
 The expected solar output is refitted to the log once a night, and at once when the panels or their
 rating change, and each forecast saved keeps what it expects for tomorrow (see solar_forecast.py).
+The output a clear sky would give is refitted on the same nights (see clear_sky.py), its sums done
+on a worker thread.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from solar_monitor import db, solar_forecast, weather
+from solar_monitor import clear_sky, db, solar_forecast, weather
 from solar_monitor.collector import log
 from solar_monitor.weather.base import HOUR, Fetch, FetchError, Location, NotModified, RateLimited
 
@@ -55,6 +57,7 @@ class State:
     warnings: Job = field(default_factory=Job)
     past: Job = field(default_factory=Job)
     solar: Job = field(default_factory=Job)  # refitting the expected output
+    clear_sky: Job = field(default_factory=Job)  # refitting the output under a clear sky
     # Hours of past weather already asked for since the last night, so ones the provider doesn't
     # have aren't asked for again and again.
     past_tried: set[int] = field(default_factory=set)
@@ -223,6 +226,24 @@ def _refit_solar(conn: sqlite3.Connection, now: float, state: State, settings: d
     return job.due
 
 
+async def _refit_clear_sky(conn: sqlite3.Connection, now: float, state: State, where: Location) -> float:
+    """Refit the output under a clear sky if it's due, and say when it's next due."""
+    job = state.clear_sky
+    if _is_due(job, (where,), now):  # Due at the start too.
+        try:
+            rows = clear_sky.read(conn, int(now))
+            calibration = await asyncio.to_thread(lambda: clear_sky.fit(clear_sky.decode(rows), where, int(now)))
+            clear_sky.save(conn, calibration)
+            job.failures = 0
+        except Exception as error:  # A bug in the sums mustn't redo them every minute.
+            log(f"Clear sky fit failed, will try again: {type(error).__name__}: {error}")
+            job.failures += 1
+            job.due = now + _backoff(job.failures)
+            return job.due
+        job.due = next_night(now, state.minute)
+    return job.due
+
+
 def _save_forecast(conn: sqlite3.Connection, at: int, name: str, hours: list[object], panels: str | None) -> None:
     fetch_id = db.save_forecast(conn, at, name, hours, panels)
     solar_forecast.record_day_ahead(conn, fetch_id, at, hours, solar_forecast.load_fit(conn))
@@ -233,9 +254,13 @@ async def run_once(conn: sqlite3.Connection, now: float, fetch: Fetch, state: St
     settings = db.get_settings(conn)
     where = location(settings)
     if where is None:  # Nothing is fetched until there's a location.
-        state.forecast.key = state.warnings.key = state.past.key = state.solar.key = None
+        state.forecast.key = state.warnings.key = state.past.key = state.solar.key = state.clear_sky.key = None
         return now + CHECK_SECONDS
-    wakes = [now + CHECK_SECONDS, _refit_solar(conn, now, state, settings, where)]
+    wakes = [
+        now + CHECK_SECONDS,
+        _refit_solar(conn, now, state, settings, where),
+        await _refit_clear_sky(conn, now, state, where),
+    ]
 
     name = str(settings.get("forecast_provider") or weather.DEFAULT_FORECAST)
     forecaster = weather.FORECASTS.get(name)

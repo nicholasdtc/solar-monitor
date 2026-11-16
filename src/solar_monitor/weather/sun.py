@@ -1,4 +1,4 @@
-"""Sunrise and sunset, worked out from the location: no service needed.
+"""Sunrise, sunset and where the sun is, worked out from the location: no service needed.
 
 NOAA's solar calculator method, good to about a minute away from the poles. Rise and set are when
 the sun's centre is 0.833° below the horizon, which allows for refraction and the sun's radius.
@@ -12,10 +12,8 @@ DAY = 86400
 ZENITH = 90.833
 
 
-def _events(lat: float, lon: float, day_start: int) -> tuple[int | None, int | None]:
-    """The rise and set for the UTC day starting at `day_start`, or None when the sun doesn't rise
-    or doesn't set that day."""
-    julian_day = day_start / DAY + 2440587.5 + 0.5  # At noon UTC.
+def _terms(julian_day: float) -> tuple[float, float]:
+    """The sun's declination, in radians, and the equation of time, in minutes, at a Julian day."""
     t = (julian_day - 2451545.0) / 36525.0
     mean_long = (280.46646 + t * (36000.76983 + t * 0.0003032)) % 360
     anomaly = 357.52911 + t * (35999.05029 - 0.0001537 * t)
@@ -41,6 +39,26 @@ def _events(lat: float, lon: float, day_start: int) -> tuple[int | None, int | N
         - 0.5 * y * y * math.sin(4 * l0)
         - 1.25 * eccentricity * eccentricity * math.sin(2 * m)
     )
+    return declination, equation_of_time
+
+
+def position(lat: float, lon: float, ts: float) -> tuple[float, float]:
+    """Where the sun is at `ts`: its elevation above the horizon and its compass bearing (180 south),
+    in degrees, without refraction."""
+    declination, equation_of_time = _terms(ts / DAY + 2440587.5)
+    minutes = ts % DAY / 60 + equation_of_time + 4 * lon  # Local solar time.
+    hour_angle = math.radians(minutes / 4 - 180)
+    phi = math.radians(lat)
+    sin_elevation = math.sin(phi) * math.sin(declination) + math.cos(phi) * math.cos(declination) * math.cos(hour_angle)
+    elevation = math.asin(max(-1.0, min(1.0, sin_elevation)))
+    bearing = math.atan2(math.sin(hour_angle), math.cos(hour_angle) * math.sin(phi) - math.tan(declination) * math.cos(phi))
+    return math.degrees(elevation), (math.degrees(bearing) + 180) % 360
+
+
+def _events(lat: float, lon: float, day_start: int) -> tuple[int | None, int | None]:
+    """The rise and set for the UTC day starting at `day_start`, or None when the sun doesn't rise
+    or doesn't set that day."""
+    declination, equation_of_time = _terms(day_start / DAY + 2440587.5 + 0.5)  # At noon UTC.
     phi = math.radians(lat)
     cos_angle = math.cos(math.radians(ZENITH)) / (math.cos(phi) * math.cos(declination)) - math.tan(phi) * math.tan(
         declination

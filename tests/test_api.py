@@ -562,3 +562,21 @@ def test_the_commit_is_found_from_a_worktree(tmp_path):
 def test_no_checkout_folder_means_no_commit(tmp_path):
     from solar_monitor.api import code_commit
     assert code_commit(tmp_path) is None
+
+
+def test_latest_gives_the_share_of_clear_sky_once_there_is_a_fit(call, collector, monkeypatch):
+    from solar_monitor import clear_sky
+    from solar_monitor.weather.base import Location
+
+    live(collector, ppv1=300, ppv2=1500, ppv=1800)
+    assert call("GET", "/api/latest").json()["clear_sky"] is None  # No location or fit yet.
+    db.save_settings(collector.conn, {"latitude": 45.0, "longitude": 10.0, "panel_tilt_deg": 30, "panel_azimuth_deg": 180})
+    where = Location(45.0, 10.0, panel_tilt=30, panel_facing=180)
+    term = clear_sky.Term(("ppv1", "ppv2"), (180,), 4.0, 100)
+    clear_sky.save(collector.conn, clear_sky.Calibration(where, (term,), 12, 0))
+    noon = 1_781_000_000 // 86400 * 86400 + 11 * 3600 + 20 * 60  # A June noon there.
+    monkeypatch.setattr(time, "time", lambda: noon)
+    found = call("GET", "/api/latest").json()["clear_sky"]
+    assert found["made_w"] == 1800 and 0 < found["pct"] < 100 and found["days"] == 12
+    collector.latest["error"] = "TimeoutError: no answer"
+    assert call("GET", "/api/latest").json()["clear_sky"] is None

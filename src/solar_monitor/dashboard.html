@@ -375,7 +375,7 @@
   .flow-soc-track { fill: var(--rule); }
   .flow-soc { fill: var(--flow-battery); }
   .flow-soc-tick { fill: var(--ink); }
-  /* Over the battery box, for its tooltip. */
+  /* Over the solar and battery boxes, for their tooltips. */
   .flow-hit {
     position: absolute; padding: 0; border: 0; background: none; cursor: help;
     -webkit-tap-highlight-color: transparent;
@@ -996,6 +996,7 @@
       </div>
       <div class="stage" id="stage" data-swipe>
         <svg id="flow-diagram" role="img" aria-label="Waiting for readings."></svg>
+        <button type="button" class="flow-hit" id="solar-tip" data-tip="" aria-label="Solar" hidden></button>
         <button type="button" class="flow-hit" id="battery-tip" data-tip="" aria-label="Battery" hidden></button>
       </div>
       <button type="button" class="help flow-help" aria-label="About the paths" data-tip="Each box's total is measured. The split between paths is estimated: solar feeds the house first, then the battery, then the grid.">?</button>
@@ -1932,6 +1933,9 @@
     return node;
   }
 
+  const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  const compass = (deg) => (isNum(deg) ? COMPASS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16] : "—");
+
   /*
     Power flow: each box shows that node's own measured power, and each source and destination
     pair has its own path. The inverter doesn't report how much goes from solar to the battery,
@@ -1987,6 +1991,7 @@
     point so that paths sharing a box stay apart.
   */
   let flowSize = "";
+  let flowCompact = false; // A phone's narrower boxes, with shorter states.
   let flowPathNodes = {};
 
   function buildFlow() {
@@ -2000,6 +2005,7 @@
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     svg.replaceChildren();
     const compact = W < 520;
+    flowCompact = compact;
     const boxW = clamp(W * 0.25, 112, 200);
     const boxH = compact ? 92 : 112;
     const battW = Math.max(boxW, 156); // Wider, so "11 h 55 min to 100%" stays inside the box.
@@ -2087,8 +2093,9 @@
     b.eta_ = svgEl("text", { x: battery.x + pad, y: battery.y + batt.eta, class: "flow-eta" }, "");
     b.node.append(b.socTrack_, b.socFill_, b.socTick_, b.eta_);
     // The svg is drawn 1:1 with the stage, so the box's place in it is its place on the page.
-    const hit = $("battery-tip");
-    Object.assign(hit.style, { left: `${battery.x}px`, top: `${battery.y}px`, width: `${battW}px`, height: `${battH}px` });
+    for (const [id, box] of [["battery-tip", battery], ["solar-tip", place.solar]]) {
+      Object.assign($(id).style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
+    }
     renderFlow();
   }
 
@@ -2147,10 +2154,9 @@
       const toward = flowWatts(flow);
       const known = toward !== null;
       const active = known && Math.abs(toward) >= flow.minW;
-      const outward = known && toward < 0;
       flow.node.classList.toggle("active", active);
       flow.value_.textContent = known ? livePower(Math.abs(toward)) : "—";
-      flow.state_.textContent = !known ? "No data" : !active ? flow.idle : outward ? flow.away : flow.toward;
+      flow.state_.textContent = flowState(flow, toward);
     }
     const paths = flowPaths();
     for (const [key, node] of Object.entries(flowPathNodes)) {
@@ -2168,15 +2174,49 @@
     b.socTick_.toggleAttribute("hidden", !isNum(stopsAt));
     if (isNum(stopsAt)) b.socTick_.setAttribute("x", b.bar_.x + b.bar_.w * clamp(stopsAt, 0, 100) / 100 - 1);
 
-    // The details the box has no room for, in its tooltip.
-    const lines = batteryTipLines();
-    const hit = $("battery-tip");
+    // The details the boxes have no room for, in their tooltips.
+    flowTip($("battery-tip"), "Battery", batteryTipLines());
+    flowTip($("solar-tip"), "Solar", solarTipLines());
+  }
+
+  function flowTip(hit, label, lines) {
     const tip = lines.join("\n");
     hit.hidden = !lines.length;
-    hit.setAttribute("aria-label", lines.length ? `Battery: ${lines.join(". ")}.` : "Battery");
+    hit.setAttribute("aria-label", lines.length ? `${label}: ${lines.join(". ")}.` : label);
     if (hit.dataset.tip === tip) return;
     hit.dataset.tip = tip;
     if (helpShown(hit)) tip ? showHelp(hit) : dropTip(); // Up to date while it's being read.
+  }
+
+  /* A box's state. Solar's says how it compares with a clear sky, once that's known. */
+  function flowState(flow, toward) {
+    if (toward === null) return "No data";
+    if (Math.abs(toward) < flow.minW) return flow.idle;
+    const pct = latest?.clear_sky?.pct;
+    if (flow === FLOWS.solar && isNum(pct)) return `${number(pct, 0)}% ${flowCompact ? "" : "of "}clear sky`;
+    return toward < 0 ? flow.away : flow.toward;
+  }
+
+  /* The solar box's tooltip: what a clear sky would give now, and how each facing compares. */
+  function solarTipLines() {
+    const c = latest?.clear_sky;
+    if (!c || !isNum(c.clear_w)) return [];
+    const lines = [`Clear sky ${livePower(c.clear_w)}`];
+    if (c.parts.length > 1) {
+      for (const part of c.parts) {
+        const name = stringsName(part);
+        const facing = part.facings.length === 1 ? ` ${compass(part.facings[0] ?? 180)}` : "";
+        const pct = part.clear_w > 0 ? `${number(Math.round((100 * part.made_w) / part.clear_w), 0)}%` : "—";
+        lines.push(`${name}${facing} ${pct}`);
+      }
+    }
+    lines.push("100% = 30-day best");
+    return lines;
+  }
+
+  /* The inverter's names for a clear-sky part's strings, such as "PV1" or "PV1+PV3". */
+  function stringsName(part) {
+    return part.readings.map((r) => r.replace(/^ppv/, "PV")).join("+");
   }
 
   /* The short form of the time remaining, or nothing while the battery is idle. */
@@ -2195,7 +2235,7 @@
       const toward = flowWatts(flow);
       const label = name === "battery" && isNum(soc) ? `Battery ${soc}%` : flow.label;
       if (toward === null) return `${label}: no data.`;
-      const state = Math.abs(toward) < flow.minW ? flow.idle : toward < 0 ? flow.away : flow.toward;
+      const state = flowState(flow, toward);
       const eta = name === "battery" ? batteryEta() : "";
       return `${label}: ${livePower(Math.abs(toward))}, ${state.toLowerCase()}${eta ? `, ${eta}` : ""}.`;
     }).join(" ");
@@ -2563,8 +2603,8 @@
 
     const live = FLOW_TEST || (latest !== null && !latest.error && age !== null && age <= staleAfter);
     $("flow").classList.toggle("frozen", !live);
-    // The battery's tooltip goes with the box, which isn't live either.
-    if (!live && helpShown($("battery-tip"))) dropTip();
+    // The boxes' tooltips go with them, and they aren't live either.
+    if (!live && (helpShown($("battery-tip")) || helpShown($("solar-tip")))) dropTip();
     $("flow-diagram").setAttribute("aria-label", live
       ? `${flowNumbers()} ${flowSummary()}`
       : Object.keys(values).length ? "Not live. Showing the last reading received." : "Waiting for readings.");
@@ -5772,7 +5812,6 @@
     const SUNSHINE_WM2 = 120; // The WMO's measure of sunshine, applied to the direct sun.
     const LEVELS = ["minor", "moderate", "severe", "extreme"];
     const WIND_UNITS = { ms: [1, "m/s"], kmh: [3.6, "km/h"], mph: [2.23694, "mph"], kn: [1.94384, "kn"] };
-    const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
     const FETCH_NAMES = { forecast: "Forecast", warnings: "Warnings", past: "Past weather" };
 
     let data = null; // /api/weather's answer.
@@ -5798,7 +5837,6 @@
     const rainDigits = () => (prefs.rain === "in" ? 2 : 1);
     const rainText = (mm) => (isNum(mm) ? number(rainIn(mm), rainDigits()) : "—");
     const percent = (x) => (isNum(x) ? `${number(Math.round(x), 0)}%` : "—");
-    const compass = (deg) => (isNum(deg) ? COMPASS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16] : "—");
     const sunWm2 = (h) => h.gti_wm2 ?? h.ghi_wm2;
     const httpLink = (url) => typeof url === "string" && /^https?:\/\//i.test(url);
     const ms = (seconds) => seconds * 1000;
@@ -6071,6 +6109,18 @@
         isNum(s.ratio) ? `performance ratio ${number(s.ratio, 2)}` : "",
         isNum(s.ceiling_w) ? `capped at ${number(s.ceiling_w / 1000, 1)} kW` : "",
       ].filter(Boolean).join(", ") + ".");
+      const c = data.clear_sky;
+      if (c) {
+        lines.push(`The solar box's % of clear sky compares the output with the most these panels have made in a clear sky's sunshine`
+          + ` over the last 30 days, so it can go over 100%. Learned from ${number(c.days, 0)} day${c.days === 1 ? "" : "s"}.`);
+        const rough = c.parts.filter((part) => part.rough).map((part) => {
+          const facing = part.facings.length === 1 ? ` (${compass(part.facings[0] ?? 180)})` : "";
+          return `${stringsName(part)}${facing}`;
+        });
+        if (rough.length) {
+          lines.push(`${new Intl.ListFormat("en").format(rough)} still rough: ${rough.length === 1 ? "it has" : "they have"} had little clear sun to learn from yet.`);
+        }
+      }
       box.replaceChildren(...lines.map((line) => el("p", "meta", line)));
     }
 

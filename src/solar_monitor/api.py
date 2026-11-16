@@ -37,6 +37,7 @@ from solar_monitor import (
     accounts,
     auth,
     automation,
+    clear_sky,
     config,
     control,
     db,
@@ -538,6 +539,13 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
             "overhead": known_overhead,
         }
 
+    def clear_sky_now() -> dict[str, object] | None:
+        """The output now as a share of what a clear sky would give, while there are readings."""
+        if collector.latest.get("error") or not collector.latest.get("readings"):
+            return None
+        where = weather_service.location(db.get_settings(collector.conn))
+        return clear_sky.now(clear_sky.load(collector.conn, where), time.time(), readings())
+
     # Not async, as it reads a file, so it mustn't touch the database: the user was read by auth.py.
     @app.get("/")
     def page(request: Request) -> HTMLResponse:
@@ -555,6 +563,7 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
             **collector.latest,
             "battery_estimate": battery_estimate(),
             "overhead": {**overhead(), "now": overhead_now()},
+            "clear_sky": clear_sky_now(),
         }
         return Response(json.dumps(body, default=str), media_type="application/json")
 
@@ -652,8 +661,8 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
         """The latest forecast from the start of this hour on, the chosen warnings that haven't
         ended, the sources' credits, how each kind's last fetch went, and the sunrises and sunsets
         from two days ago to nine days ahead, and the expected solar output: for each forecast hour,
-        and as expected the day before for yesterday and today, with how well that has done. Not the
-        location itself."""
+        and as expected the day before for yesterday and today, with how well that has done, and what
+        the share of a clear sky is learned from. Not the location itself."""
         now = int(time.time())
         settings = db.get_settings(collector.conn)
         where = weather_service.location(settings)
@@ -664,6 +673,7 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
             "located": where is not None,
             "forecast": forecast,
             "solar": solar_forecast.summary(collector.conn, now, forecast["hours"] if forecast else None),  # type: ignore[arg-type]
+            "clear_sky": clear_sky.summary(clear_sky.load(collector.conn, where)),
             "warnings": db.current_warnings(collector.conn, warner.name, now) if warner else [],
             "credits": [_credit(p) for p in (forecaster, warner) if p is not None],
             "fetches": db.last_weather_fetches(collector.conn),

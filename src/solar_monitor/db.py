@@ -204,6 +204,13 @@ CREATE TABLE IF NOT EXISTS solar_fit (
     fit        TEXT NOT NULL
 );
 
+-- The latest fit of the output a clear sky would give, from clear_sky.py.
+CREATE TABLE IF NOT EXISTS clear_sky_fit (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    fitted_at  INTEGER NOT NULL,        -- Unix seconds
+    fit        TEXT NOT NULL
+);
+
 -- The output expected for each hour by the last forecast of the day before, to score against
 -- what was made. Labelled by when the hour starts, in Unix seconds.
 CREATE TABLE IF NOT EXISTS solar_expected (
