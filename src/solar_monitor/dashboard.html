@@ -4325,7 +4325,7 @@
     const box = $("history-charts");
     $("chart-tip").hidden = true;
     showHistoryControls(view);
-    if (!loaded || $("view-statistics-charts").hidden) return; // Charts need a width, and a hidden box has none.
+    if (!loaded || $("view-statistics-charts").hidden || !box.clientWidth) return; // Charts need a width: a hidden box, or a page with no room yet, has none.
     // Until a new interval loads, the old one's points stay up, dimmed, in the new view.
     const { bucket } = loaded;
     const points = historyPoints();
@@ -4461,7 +4461,7 @@
     const box = $("daily-charts");
     if (!daily) return;
     renderMoney(); // On its own page, from the same totals.
-    if ($("view-statistics-daily").hidden) return; // Charts need a width, and a hidden box has none.
+    if ($("view-statistics-daily").hidden || !box.clientWidth) return; // Charts need a width: a hidden box, or a page with no room yet, has none.
     const days = shownDays();
     dailyWx = dailyConditions(days);
     const anyData = days.some((day) => Object.keys(day).length > 1);
@@ -4678,7 +4678,7 @@
 
   function renderMoney() {
     const box = $("money-charts");
-    if (!daily?.tariff || $("view-statistics-money").hidden) return;
+    if (!daily?.tariff || $("view-statistics-money").hidden || !box.clientWidth) return; // Charts need a width.
     const { rates, bands, bandsSet } = daily.tariff;
     const priced = ["night", "day", "peak", "export"].every((key) => isNum(rates[key]));
     const days = shownDays().map((day) => moneyDay(day, rates));
@@ -5010,7 +5010,7 @@
   function renderNow() {
     const box = $("now-charts");
     $("now-title").textContent = `Last ${nowWords()}`;
-    if (!nowData || $("view-dashboard").hidden || $("now-body").hidden) return; // Charts need a width, and a hidden box has none.
+    if (!nowData || $("view-dashboard").hidden || $("now-body").hidden || !box.clientWidth) return; // Charts need a width: a hidden box, or a page with no room yet, has none.
     if (tipOwner && box.contains(tipOwner.node)) dropTip();
     const { bucket, end, points } = nowData;
     const start = end - nowSpan;
