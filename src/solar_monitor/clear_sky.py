@@ -288,8 +288,15 @@ def now(calibration: Calibration | None, ts: float, readings: dict[str, object])
         "made_w": round(made_w),
         "pct": round(100 * made_w / clear_w) if clear_w > 0 else None,
         "parts": [
-            {"readings": list(term.readings), "facings": list(term.facings), "clear_w": round(c), "made_w": round(m)}
-            for term, (_, c, m) in zip(calibration.terms, parts, strict=True)
+            {
+                "readings": list(term.readings),
+                "facings": list(term.facings),
+                "clear_w": round(c),
+                "made_w": round(m),
+                # A facing in too little sunshine to tell, such as one the sun isn't on, has no share.
+                "pct": round(100 * m / c) if sun_wm2 >= MIN_SUNSHINE else None,
+            }
+            for term, (sun_wm2, c, m) in zip(calibration.terms, parts, strict=True)
         ],
         "days": calibration.days,
     }

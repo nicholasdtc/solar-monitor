@@ -2206,7 +2206,7 @@
       for (const part of c.parts) {
         const name = stringsName(part);
         const facing = part.facings.length === 1 ? ` ${compass(part.facings[0] ?? 180)}` : "";
-        const pct = part.clear_w > 0 ? `${number(Math.round((100 * part.made_w) / part.clear_w), 0)}%` : "—";
+        const pct = isNum(part.pct) ? `${number(part.pct, 0)}%` : "—";
         lines.push(`${name}${facing} ${pct}`);
       }
     }

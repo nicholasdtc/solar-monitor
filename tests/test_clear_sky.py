@@ -96,9 +96,25 @@ def test_now_gives_the_percentage_of_clear_sky():
     half = clear_sky.now(calibration, noon, {k: v / 2 for k, v in full.items()})
     assert 48 <= half["pct"] <= 51 and half["clear_w"] == result["clear_w"]
     assert [part["readings"] for part in result["parts"]] == [["ppv2"], ["ppv1"]]
+    assert all(97 <= part["pct"] <= 101 for part in result["parts"])
     assert clear_sky.now(calibration, at("2026-06-11T23:00"), full) is None
     assert clear_sky.now(calibration, noon, {"ppv1": 100}) is None  # Missing a string.
     assert clear_sky.now(None, noon, full) is None
+
+
+def test_a_facing_in_too_little_sunshine_has_no_share_of_its_own():
+    rows = samples(TWO_WAYS, [("ppv1", 260, 5.0), ("ppv2", 100, 4.0)])
+    calibration = clear_sky.fit(rows, TWO_WAYS, START + 10 * DAY)
+    morning = next(
+        ts for ts in range(at("2026-06-11T03:00"), at("2026-06-11T09:00"), 600)
+        if clear_sky.on_panels(clear_sky.sky(45.0, 10.0, ts), 30, 100) >= 300
+    )
+    s = clear_sky.sky(45.0, 10.0, morning)
+    assert clear_sky.on_panels(s, 30, 260) < clear_sky.MIN_SUNSHINE  # The sun is on the east panels only.
+    result = clear_sky.now(calibration, morning, {"ppv1": 400, "ppv2": 4.0 * clear_sky.on_panels(s, 30, 100)})
+    east, west = result["parts"]
+    assert 97 <= east["pct"] <= 101 and west["pct"] is None
+    assert west["clear_w"] > 0 and result["pct"] is not None
 
 
 def test_a_fit_is_kept_and_only_used_for_the_same_place_and_panels(tmp_path):
