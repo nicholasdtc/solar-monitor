@@ -13,6 +13,18 @@ decision is logged in automation_runs with what it was made from, so it can be s
 actually happened. Those logged decisions are dry runs: what the rule would have done, kept even
 on a night it can't decide, so the forecast can be checked against the morning it was for. A few
 lower cut-offs than the one set are checked beside it, from the same figures.
+
+Is the sunny morning rule worth acting on? Checked 17 Nov 2026, from the ESB meter's import and
+export and the inverter's counters: not yet. Each kWh it leaves out of the night charge saves the
+night rate, but the sun that refills the battery would otherwise have been exported, so it gives
+up the export rate as well. With night 19.58c and export 19.5c, a right forecast saves only the
+charging losses, about 1-2c per kWh, under 10c even on the best export day so far (3.65 kWh). A
+wrong one makes that kWh come in at the day or peak rate (30.47c, 34.12c), losing 11-15c per kWh.
+The forecast was then 15-33% out, so acting would likely cost money. It pays only when the export
+rate is well below the night rate, when the sun would be curtailed rather than exported (a full
+battery behind an export limit), or once the forecast has learned to be close. Check again in
+summer 2027 from the dry runs, and whenever the rates change (they're expected to rise after the
+first year): the sum is the night rate minus the export rate, against the forecast's error.
 """
 
 from __future__ import annotations
