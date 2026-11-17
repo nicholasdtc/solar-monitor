@@ -435,7 +435,7 @@ def test_every_page_but_the_dashboard_and_weather_needs_a_permission(app):
     # Each tab's pages come together, in the bar's order, so a swipe goes through them tab by tab.
     order = list(dict.fromkeys(view["data-tab"] for view in views))
     assert order == tabs
-    assert [view["data-sub"] for view in views if view["data-tab"] == "statistics"][-2:] == ["grid", "grid-about"]
+    assert [view["data-sub"] for view in views if view["data-tab"] == "statistics"][-3:] == ["grid", "grid-about", "savings"]
 
 
 def test_old_links_open_a_page_that_exists(app):

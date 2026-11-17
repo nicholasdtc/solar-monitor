@@ -88,7 +88,7 @@ LABELS = {
     "settings": "Settings",
     "meter_readings": "Meter half-hours",
     "meter_exports": "Meter export half-hours",
-    "text_settings": "Weather choices",
+    "text_settings": "Weather choices and system start",
     "weather_warnings": "Weather warnings",
     "weather_hours": "Weather by the hour",
 }

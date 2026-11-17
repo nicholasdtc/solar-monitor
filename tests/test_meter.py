@@ -773,3 +773,127 @@ def test_the_route_sends_settings_changed_since_it_last_sent(call):
     call("GET", "/api/meter")
     call("PUT", "/api/settings", json={"tariff_day": 0.31})
     assert call("GET", "/api/meter").json()["rates"]["day"] == 0.31
+
+
+# Savings: what the grid cost before the system and since.
+
+RATES = {"tariff_day": 0.3, "tariff_night": 0.15, "tariff_peak": 0.4, "tariff_export": 0.2}
+
+
+def meter_day(day, w=1000, *, flags="", twice=()):
+    """A day as readings() gives it: 48 half-hours at w watts."""
+    return [str(day), flags, [w] * 48, [list(entry) for entry in twice]]
+
+
+def shaped(*days, export=None):
+    return {"days": list(days), "export": export}
+
+
+def test_a_day_is_priced_by_band_at_todays_rates():
+    result = meter.savings(shaped(meter_day("2025-11-03")), RATES, {})
+    (period,) = result["periods"]
+    # 1 kW for each half-hour is 0.5 kWh: 18 at night (23:00 to 08:00), 4 at peak (17:00 to 19:00), 26 by day.
+    assert period["kwh"] == {"night": 9.0, "day": 13.0, "peak": 2.0}
+    assert period["cost"] == pytest.approx(9 * 0.15 + 13 * 0.3 + 2 * 0.4)
+    assert (period["from"], period["to"], period["after"], period["days"]) == ("2025-11-03", "2025-11-03", False, 1)
+    assert result["start"] is None
+    assert result["years"] == []
+    assert result["priced"] is True
+
+
+def test_only_whole_days_of_the_meter_count():
+    gap = meter_day("2025-11-04")
+    gap[2][10] = None
+    days = [meter_day("2025-11-02", flags="b"), meter_day("2025-11-03"), gap, meter_day("2025-11-05", flags="p")]
+    (period,) = meter.savings(shaped(*days), RATES, {})["periods"]
+    assert (period["from"], period["to"], period["days"]) == ("2025-11-03", "2025-11-03", 1)
+
+
+def test_a_half_hour_that_came_twice_counts_both_and_one_that_never_came_none():
+    autumn = meter_day(AUTUMN, twice=[(2, 1000, 3000)])
+    autumn[2][2] = 2000  # Their average.
+    spring = meter_day(SPRING)
+    spring[2][2:4] = [meter.NOT_A_HALF_HOUR] * 2
+    result = meter.savings(shaped(spring, autumn), RATES, {})
+    assert result["periods"][0]["kwh"]["night"] == 8.0
+    assert result["periods"][1]["kwh"]["night"] == 9.0 - 0.5 + 2.0  # 01:00 to 01:30 twice: 0.5 and 1.5 kWh.
+
+
+def test_each_year_compares_the_same_dates_where_both_are_whole():
+    before = [meter_day(f"2025-11-0{n}", 2000) for n in (1, 2, 3)]
+    before[1][2][0] = None  # 2 Nov 2025 has a gap, so 2 Nov 2026 has nothing to compare with.
+    after = [meter_day(f"2026-11-0{n}") for n in (1, 2, 3)]
+    sent = {"2026-11-01": [[500] * 48, []]}
+    export = {"days": sent, "first": "2026-11-01 00:00", "last": "2026-11-01 23:30", "readings": 48}
+    use = {"2026-11-01": 30.0, "2026-11-03": 28.0}
+    result = meter.savings(shaped(*before, *after, export=export), {**RATES, "system_start": "2026-11-01"}, use)
+    assert (result["start"], result["startSet"], result["exportFrom"]) == ("2026-11-01", True, "2026-11-01")
+    (year,) = result["years"]
+    assert (year["back"], year["days"], year["from"], year["to"]) == (1, 2, "2026-11-01", "2026-11-03")
+    day_cost = 9 * 0.15 + 13 * 0.3 + 2 * 0.4
+    assert year["before"]["kwh"] == {"night": 36.0, "day": 52.0, "peak": 8.0}
+    assert year["before"]["cost"] == pytest.approx(4 * day_cost)
+    assert year["after"]["cost"] == pytest.approx(2 * day_cost)
+    assert (year["after"]["exported"], year["after"]["earned"]) == (12.0, pytest.approx(2.4))
+    assert (year["after"]["use"], year["after"]["useDays"]) == (58.0, 2)
+    assert [(p["from"], p["after"], p["days"]) for p in result["periods"]] == [
+        ("2025-11-01", False, 2),
+        ("2026-11-01", True, 3),
+    ]
+
+
+def test_the_start_defaults_to_this_apps_first_whole_day_and_splits_its_month():
+    days = [meter_day(f"2025-11-0{n}") for n in (5, 6, 7)] + [meter_day(f"2026-11-0{n}") for n in (5, 6, 7)]
+    result = meter.savings(shaped(*days), RATES, {"2026-11-06": 20.0, "2026-11-07": 21.0})
+    assert (result["start"], result["startSet"], result["exportFrom"]) == ("2026-11-06", False, None)
+    assert [(p["from"], p["to"], p["after"]) for p in result["periods"]] == [
+        ("2025-11-05", "2025-11-07", False),
+        ("2026-11-05", "2026-11-05", False),
+        ("2026-11-06", "2026-11-07", True),
+    ]
+    (year,) = result["years"]
+    assert year["days"] == 2
+    assert year["after"]["exported"] is None and year["after"]["earned"] is None
+
+
+def test_a_date_compared_with_must_be_before_the_start():
+    days = [meter_day("2025-11-01"), meter_day("2025-11-02"), meter_day("2026-11-01"), meter_day("2026-11-02")]
+    (year,) = meter.savings(shaped(*days), {**RATES, "system_start": "2025-11-02"}, {})["years"]
+    assert (year["days"], year["from"]) == (1, "2026-11-01")  # 2 Nov 2025 was after the start already.
+
+
+def test_further_years_back_are_each_compared_on_their_own():
+    days = [meter_day("2024-11-01", 3000), meter_day("2025-11-01", 2000), meter_day("2026-11-01")]
+    years = meter.savings(shaped(*days), {**RATES, "system_start": "2026-11-01"}, {})["years"]
+    assert [(year["back"], year["before"]["kwh"]["day"]) for year in years] == [(1, 26.0), (2, 39.0)]
+
+
+def test_29_february_is_compared_with_the_28th():
+    days = [meter_day("2027-02-28", 2000), meter_day("2028-02-29")]
+    (year,) = meter.savings(shaped(*days), {**RATES, "system_start": "2028-02-29"}, {})["years"]
+    assert year["before"]["kwh"]["day"] == 26.0
+
+
+def test_no_cost_without_all_three_rates():
+    result = meter.savings(shaped(meter_day("2025-11-03")), {"tariff_day": 0.3}, {})
+    assert result["priced"] is False
+    assert result["periods"][0]["cost"] is None
+
+
+@pytest.mark.parametrize("value", ["2026-11-04", None])
+def test_the_system_start_is_saved(call, value):
+    assert call("PUT", "/api/settings", json={"system_start": value}).status_code == 200
+    body = call("GET", "/api/savings").json()
+    assert (body["start"], body["startSet"]) == (value, value is not None)
+
+
+@pytest.mark.parametrize("value", ["2026-02-30", "4 Nov 2026", "2026-11-4", 20261104])
+def test_a_system_start_that_isnt_a_day_is_refused(call, value):
+    assert call("PUT", "/api/settings", json={"system_start": value}).status_code == 422
+
+
+def test_the_savings_route_reads_the_imported_file(call, conn):
+    call("POST", "/api/import?apply=true", content=esb(whole_days(WINTER, kw=1.0)), headers=BINARY)
+    call("PUT", "/api/settings", json={"tariff_day": 0.3, "tariff_night": 0.15, "tariff_peak": 0.4})
+    body = call("GET", "/api/savings").json()
+    assert [(p["from"], p["kwh"]) for p in body["periods"]] == [("2026-01-14", {"night": 9.0, "day": 13.0, "peak": 2.0})]

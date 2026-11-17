@@ -308,6 +308,7 @@ TEXT_SETTINGS = (
     "forecast_provider",  # a name in weather.FORECASTS
     "warnings_provider",  # a name in weather.WARNINGS, or unset for no warnings
     "warnings_region",  # one of that provider's region codes, or unset for all of them
+    "system_start",  # the day the solar and battery started, as YYYY-MM-DD, or unset for the app's first whole day
 )
 
 # How long an older forecast keeps its hours, from when it was fetched. The newest keeps them all.

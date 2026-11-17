@@ -237,30 +237,150 @@ def _near_midnight(conn: sqlite3.Connection, midnight: datetime, cache: dict[dat
     return cache[midnight]
 
 
-def app_days(conn: sqlite3.Connection, today: date | None = None) -> dict[str, object]:
-    """This app's own record of the grid: the span of its readings, and each whole day's import in kWh.
+def whole_days(conn: sqlite3.Connection, counter: str, today: date | None = None) -> dict[str, float]:
+    """Each whole day's kWh on one of this app's counters, such as "grid_import" or "load".
 
-    A day's import runs from the previous day's latest reading to its own, so it's only a whole
+    A day's energy runs from the previous day's latest reading to its own, so it's only a whole
     day when both of those were taken just before midnight. Gaps during the day don't matter,
-    because the counter is a lifetime one and catches up.
+    because the counters are lifetime ones and catch up.
     """
-    first_ts, last_ts = conn.execute("SELECT (SELECT MIN(ts) FROM samples), (SELECT MAX(ts) FROM samples)").fetchone()
     today = today or date.today()
-    imports = {day: kwh for day, counter, kwh in db.daily_totals(conn) if counter == "grid_import"}
+    totals = {day: kwh for day, name, kwh in db.daily_totals(conn) if name == counter}
     near: dict[datetime, bool] = {}
-    whole = []
-    for day, kwh in imports.items():
+    whole = {}
+    for day, kwh in totals.items():
         when = date.fromisoformat(day)
         start = datetime.combine(when, datetime.min.time())
         if (
             when < today
-            and (when - timedelta(days=1)).isoformat() in imports
+            and (when - timedelta(days=1)).isoformat() in totals
             and _near_midnight(conn, start, near)
             and _near_midnight(conn, start + timedelta(days=1), near)
         ):
-            whole.append([day, kwh])
+            whole[day] = kwh
+    return whole
+
+
+def app_days(conn: sqlite3.Connection, today: date | None = None) -> dict[str, object]:
+    """This app's own record of the grid: the span of its readings, and each whole day's import in kWh."""
+    first_ts, last_ts = conn.execute("SELECT (SELECT MIN(ts) FROM samples), (SELECT MAX(ts) FROM samples)").fetchone()
 
     def local(ts: int | None) -> str | None:
         return None if ts is None else datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
 
-    return {"first": local(first_ts), "last": local(last_ts), "days": whole}
+    imports = whole_days(conn, "grid_import", today)
+    return {"first": local(first_ts), "last": local(last_ts), "days": [[day, kwh] for day, kwh in imports.items()]}
+
+
+BAND_NAMES = ("night", "day", "peak")
+
+
+def _in_band(minutes: int, start: int, end: int) -> bool:
+    """Whether a time of day is in a band, which may run past midnight, as the page has it."""
+    if start == end:
+        return False
+    return start <= minutes < end if start < end else minutes >= start or minutes < end
+
+
+def _years_back(when: date, years: int) -> date:
+    """The same date some years earlier, with 29 February as the 28th."""
+    try:
+        return when.replace(year=when.year - years)
+    except ValueError:
+        return when.replace(year=when.year - years, day=28)
+
+
+def savings(read: dict[str, object], settings: dict[str, object], use: dict[str, float]) -> dict[str, object]:
+    """What the grid cost before the system and since, from the meter's half-hours, at today's rates.
+
+    read is what readings() gives, and use is the house's whole days of use on this app's own load
+    counter. The system counts from the setting system_start, or else from this app's first whole
+    day of use. Only whole days of the meter count: none with a gap, and none it starts or stops
+    partway through. Each year compares the days since the start with the same dates that many
+    years earlier, before the start, where both are whole. Export counts from when the meter has
+    it; a day before that earns nothing.
+    """
+    found = tariff(settings)
+    rates, bands = found["rates"], found["bands"]
+    priced = all(rates[band] is not None for band in BAND_NAMES)
+    band_of = [
+        "peak"
+        if _in_band(slot * 30, bands["peak_start"], bands["peak_end"])
+        else "night"
+        if _in_band(slot * 30, bands["night_start"], bands["night_end"])
+        else "day"
+        for slot in range(SLOTS)
+    ]
+    start = settings.get("system_start") or (min(use) if use else None)
+
+    def kwh_of(slots: list[int | None], twice: list[list[int]]) -> dict[str, float]:
+        both = {slot: earlier + later for slot, earlier, later in twice}  # A half-hour that came twice counts both.
+        kwh = dict.fromkeys(BAND_NAMES, 0.0)
+        for slot, w in enumerate(slots):
+            if w is not None and w != NOT_A_HALF_HOUR:
+                kwh[band_of[slot]] += both.get(slot, w) / 2000
+        return kwh
+
+    exports_by_day = (read.get("export") or {}).get("days") or {}
+    whole: dict[str, dict[str, float]] = {}
+    exported: dict[str, float] = {}
+    for day, flags, slots, twice in read["days"]:
+        if "b" in flags or "p" in flags or None in slots:
+            continue
+        whole[day] = kwh_of(slots, twice)
+        if day in exports_by_day:
+            exported[day] = sum(kwh_of(*exports_by_day[day]).values())
+
+    def summed(chosen: list[str]) -> dict[str, object]:
+        kwh = {band: round(sum(whole[day][band] for day in chosen), 3) for band in BAND_NAMES}
+        cost = round(sum(kwh[band] * rates[band] for band in BAND_NAMES), 4) if priced else None
+        out = [exported[day] for day in chosen if day in exported]
+        sent = round(sum(out), 3) if out else None
+        earned = round(sent * rates["export"], 4) if sent is not None and rates["export"] is not None else None
+        return {"kwh": kwh, "cost": cost, "exported": sent, "earned": earned}
+
+    # By month, with the month the system started in split at the start.
+    grouped: dict[tuple[str, bool], list[str]] = defaultdict(list)
+    for day in sorted(whole):
+        grouped[(day[:7], start is not None and day >= start)].append(day)
+    periods = [
+        {"from": chosen[0], "to": chosen[-1], "after": after, "days": len(chosen), **summed(chosen)}
+        for (_, after), chosen in grouped.items()
+    ]
+
+    years = []
+    since = sorted(day for day in whole if start is not None and day >= start)
+    first = min(whole, default=None)
+    back = 1
+    while since and _years_back(date.fromisoformat(since[-1]), back).isoformat() >= first:
+        pairs = []
+        for day in since:
+            earlier = _years_back(date.fromisoformat(day), back).isoformat()
+            if earlier in whole and earlier < start:
+                pairs.append((day, earlier))
+        if pairs:
+            after = [day for day, _ in pairs]
+            used = [use[day] for day in after if day in use]
+            before = summed([earlier for _, earlier in pairs])
+            years.append(
+                {
+                    "back": back,
+                    "days": len(pairs),
+                    "from": after[0],
+                    "to": after[-1],
+                    "before": {"kwh": before["kwh"], "cost": before["cost"]},
+                    "after": {**summed(after), "use": round(sum(used), 3) if used else None, "useDays": len(used)},
+                }
+            )
+        back += 1
+
+    export_from = (read.get("export") or {}).get("first")
+    return {
+        "start": start,
+        "startSet": bool(settings.get("system_start")),
+        "priced": priced,
+        "rates": rates,
+        "exportFrom": export_from[:10] if export_from else None,
+        "periods": periods,
+        "years": years,
+    }

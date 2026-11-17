@@ -233,6 +233,7 @@ SETTING_LABELS = {
     "forecast_provider": "Forecast from",
     "warnings_provider": "Warnings from",
     "warnings_region": "Warnings region",
+    "system_start": "System started",
     "auto_sunny_slot": "Sunny morning: TOU period",
     "auto_sunny_usual_soc": "Sunny morning: usual cut-off (%)",
     "auto_sunny_sunny_soc": "Sunny morning: sunny cut-off (%)",
@@ -884,6 +885,15 @@ def create_app(collector: Collector, fetch: Fetch | None = None) -> FastAPI:
             "app": meter.app_days(collector.conn),
         }
         return Response(json.dumps(body, separators=(",", ":")), media_type="application/json")
+
+    @app.get("/api/savings")
+    async def api_savings() -> dict[str, object]:
+        """What the grid cost before the system and since, by the meter, at today's rates."""
+        nonlocal meter_readings
+        if meter_readings is None:
+            meter_readings = meter.readings(collector.conn)
+        collector.flush()
+        return meter.savings(meter_readings, db.get_settings(collector.conn), meter.whole_days(collector.conn, "load"))
 
     @app.get("/api/export")
     async def api_export() -> dict[str, object]:

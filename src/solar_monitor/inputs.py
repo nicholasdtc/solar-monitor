@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
@@ -76,6 +77,16 @@ class SettingsIn(BaseModel):
         codes = {region.code for provider in weather.WARNINGS.values() for region in provider.regions}
         if value is not None and value not in codes:
             raise ValueError("no such region")
+        return value
+
+    # The day the solar and battery started, which the savings count from.
+    system_start: Annotated[str, StringConstraints(pattern=r"^\d{4}-\d{2}-\d{2}$")] | None = None
+
+    @field_validator("system_start")
+    @classmethod
+    def _real_day(cls, value: str | None) -> str | None:
+        if value is not None:
+            date.fromisoformat(value)  # A ValueError, as for 2026-02-30, is a validation error.
         return value
 
 
