@@ -6392,8 +6392,9 @@
           ]),
         });
       }
-      if (sun.length) {
-        const bars = has("pv_w") && !solarChart;
+      /* Expected is the irradiance times a learned factor, so the same curve; irradiance only stands in until then. */
+      if (sun.length && !solarChart) {
+        const bars = has("pv_w");
         charts.push({
           title: sun[0].label, unit: "W/m²", height: 200, floor: 0, series: sun,
           strip: bars ? { key: "pv_w", label: "Solar made", unit: "W", color: "--flow-solar" } : undefined,
