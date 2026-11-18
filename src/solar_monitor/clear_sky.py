@@ -1,4 +1,4 @@
-"""How the solar output now compares with what a clear sky would give: "% of clear sky".
+"""How the solar output now compares with what a clear sky would give: the solar box's "% of best".
 
 The sunshine a cloudless sky would put on the panels comes from where the sun is and a simple
 clear-sky model (Ineichen-Perez at sea level, with a Linke turbidity of 3, typical of a clean
