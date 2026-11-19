@@ -2219,13 +2219,14 @@
     if (helpShown(hit)) tip ? showHelp(hit) : dropTip(); // Up to date while it's being read.
   }
 
-  /* A box's state. Solar's says how it compares with the best these panels have done lately in this
-     much sunshine, once that's known. Not "% clear sky": it can go over 100%, and a sky can't. */
+  /* A box's state. Solar's says how it compares with sunny weather at this time of day, once that's
+     known. Not "% clear sky", since it can go over 100% and a sky can't, and not "% of best", which
+     reads like a share of the panels' capacity. */
   function flowState(flow, toward) {
     if (toward === null) return "No data";
     if (Math.abs(toward) < flow.minW) return flow.idle;
     const pct = latest?.clear_sky?.pct;
-    if (flow === FLOWS.solar && isNum(pct)) return `${number(pct, 0)}% of best`;
+    if (flow === FLOWS.solar && isNum(pct)) return `${number(pct, 0)}% of sunny`;
     return toward < 0 ? flow.away : flow.toward;
   }
 
@@ -2233,7 +2234,7 @@
   function solarTipLines() {
     const c = latest?.clear_sky;
     if (!c || !isNum(c.clear_w)) return [];
-    const lines = [`Best now ${livePower(c.clear_w)}`];
+    const lines = [`Sunny now ${livePower(c.clear_w)}`];
     if (c.parts.length > 1) {
       for (const part of c.parts) {
         const name = stringsName(part);
@@ -6143,8 +6144,9 @@
       ].filter(Boolean).join(", ") + ".");
       const c = data.clear_sky;
       if (c) {
-        lines.push(`The solar box's % of best compares the output with the most these panels have made in this much sunshine`
-          + ` under a clear sky over the last 30 days, so a bright, cold day can go over 100%. Learned from ${number(c.days, 0)} day${c.days === 1 ? "" : "s"}.`);
+        lines.push(`The solar box's % of sunny compares the output with what these panels make in sunny weather at this time of day:`
+          + ` the most they've made in this much sunshine under a clear sky over the last 30 days, so a bright, cold day can go over 100%.`
+          + ` Learned from ${number(c.days, 0)} day${c.days === 1 ? "" : "s"}.`);
         const rough = c.parts.filter((part) => part.rough).map((part) => {
           const facing = part.facings.length === 1 ? ` (${compass(part.facings[0] ?? 180)})` : "";
           return `${stringsName(part)}${facing}`;
